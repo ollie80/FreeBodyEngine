@@ -4,8 +4,8 @@ import moderngl
 import numpy as np
 import pygame
 from pygame.math import Vector2 as vector
-import engine
-import engine.data
+import FreeBodyEngine as engine
+import FreeBodyEngine.data
 from typing import Type
 
 CHUNK_VERT = """

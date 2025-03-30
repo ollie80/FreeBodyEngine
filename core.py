@@ -10,7 +10,7 @@ import threading
 
 import moderngl
 
-import engine
+import FreeBodyEngine as engine
 
 import random 
 from sys import exit
@@ -19,10 +19,9 @@ from typing import Literal
 from pygame.math import Vector2 as vector
 
 
-import engine.data
-import engine.debug
-import engine.devtools
-import engine.files
+import FreeBodyEngine.data
+import FreeBodyEngine.debug
+import FreeBodyEngine.files
 
 
 class Timer:

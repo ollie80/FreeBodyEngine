@@ -1,7 +1,7 @@
 import math
 from pygame import Vector2
 import numpy
-import engine
+import FreeBodyEngine as engine
 from perlin_noise import PerlinNoise
 
 class LayeredNoise:

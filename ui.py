@@ -1,4 +1,4 @@
-import engine
+import FreeBodyEngine as engine
 import pygame
 import random
 
