@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-import engine
+import FreeBodyEngine as engine
 import pygame
 import sys
 import ast

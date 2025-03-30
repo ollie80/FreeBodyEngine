@@ -7,7 +7,7 @@ import pygame
 import moderngl
 import OpenGL.GL as gl
 
-import engine
+import FreeBodyEngine as engine
 from pygame import Vector2 as vector
 import numpy as np
 import math
@@ -16,7 +16,7 @@ import freetype
 
 from dataclasses import dataclass
 
-import engine.data
+import FreeBodyEngine.data
 
 DEFAULT_NORMAL = "#8080ff"
 
