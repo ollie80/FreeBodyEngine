@@ -4,6 +4,7 @@ import FreeBodyEngine as engine
 import pygame
 import sys
 import ast
+from pygame import Vector2 as vector
 
 import os
 
@@ -17,9 +18,9 @@ class FileManager:
         self.shader_cache: dict[str, str] = {}
         self.scene: engine.core.Scene = scene
 
-    def get_image(self, location: str, name: str, file_type: str = ".png"):
+    def get_image(self, location: str, name: str, file_type: str = ".png", normal=None):
         if file_type == ".png":
-            return self.parse_image(location, name, file_type)
+            return self.parse_image(location, name, file_type, normal)
         if file_type == 'tex':
             return self.load_image(f"{self.path}/assets/graphics/{location}/{name}.png")
         if file_type == ".animation":
@@ -27,12 +28,23 @@ class FileManager:
         if file_type == ".composite":
             return self.parse_composite(location, name)
 
-    def parse_image(self, location, name, file_type):
+    def parse_image(self, location, name, file_type, normal:str|None=None):
         path = location+"/"+name
         
         file_path = os.path.abspath(self.path + "/assets" + "/graphics/image/" + path + file_type)
-        image = self.load_image(file_path)
-        return image
+        tex = self.load_image(file_path)
+
+        if normal == None:
+            normal_path = os.path.abspath(self.path + '/assets' + '/graphics/image/' + path + "_normal" + file_type)
+        else:
+            normal_path = os.path.abspath(self.path + '/assets' + '/graphics/image/' + normal + file_type)
+            
+        normal_tex = None
+        if os.path.exists(normal_path):
+            normal_tex = self.load_image(normal_path)
+        else:
+            print("no file at path at: " + normal_path)
+        return engine.graphics.Image(tex, name, self.scene, tex.size, normal=normal_tex)
     
     def parse_composite(self, location, name):
         path = self.path + f"/assets/graphics/image/{location}/{name}.composite"
@@ -47,11 +59,32 @@ class FileManager:
 
             image_name = split[1].split('.')[0]
             image_filetype = split[1].split('.')[1]
-            images.append(self.get_image(image_location, image_name, image_filetype))
-            
-            shader: engine.graphics.Shader = self.get_shader(image['shader'].split('/')[0], image['shader'].split('/')[1])
-            images[i].set_shader(shader)
-            images[i].offset = image['offset']
+
+            normal_path = None
+            if 'normal' in image.keys():
+                normal_path = image['normal']
+            images.append(self.get_image(image_location, image_name, '.' + image_filetype, normal_path))
+            if 'shader' in image.keys():
+                shader_data = image['shader']
+
+                if 'location' in shader_data:
+                    shader_location = shader_data['location']
+                else:
+                    shader_location = image_location
+
+                if 'vert' in shader_data:
+                    vert = self.load_shader(shader_location, shader_data['vert'])
+                else:
+                    vert = images[i].shader.vert
+
+                if 'frag' in shader_data:
+                    frag = self.load_shader(shader_location, shader_data['frag'])
+                else:
+                    frag = images[i].shader.frag
+                
+                shader: engine.graphics.Shader = self.parse_shader(shader_location, vert, frag)
+                images[i].set_shader(shader)
+                images[i].offset = vector(image['offset'])
 
             i+=1
 
@@ -59,21 +92,21 @@ class FileManager:
 
     def parse_animation(self, location, name):
         anim_data = self.load_animation(location, name)
-        anims = []
+        anims = {}
         for animation in anim_data:
-            anims.append(engine.graphics.Animation(animation))
-        
+            anims[animation] = engine.graphics.Animation(anim_data[animation])
         player = engine.graphics.AnimationPlayer(self.get_spritesheet(location, name), anims)
-        return engine.graphics.AnimatedImage(player, name, self)
+        return engine.graphics.AnimatedImage(player, name, self.scene)
 
+    def parse_shader(self, location, vert, frag):
 
-    def get_shader(self, location, name):
+        return engine.graphics.Shader(self.scene, vert, frag)
+
+    def load_shader(self, location, name):
         path = location + "/" + name
-
         if self.shader_cache.get(path) != None:
             return self.shader_cache[path]
         else:
-
             file_path = os.path.abspath(self.path  + "/assets" + "/graphics/shader/" + path + ".glsl")
 
             try:
@@ -83,8 +116,9 @@ class FileManager:
                 self.shader_cache[path] = text 
                 return text
             except:
+
                 print("couldn't shader file with path: " + file_path)
-                return engine.graphics.WORLD_VERT_SHADER
+            
 
     def load_image(self, path):
         img = pygame.image.load(path).convert_alpha()
@@ -119,7 +153,7 @@ class FileManager:
         return json.loads(txt)
 
     def load_animation(self, location, name):
-        path = os.path.abspath(self.path + "/assets/graphics/animation/" + location + "/" + name + ".json")
+        path = os.path.abspath(self.path + "/assets/graphics/animation/" + location + "/" + name + ".animation")
         text = self.load_text(path)
         return json.loads(text)
 

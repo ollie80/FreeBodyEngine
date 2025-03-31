@@ -94,6 +94,32 @@ void main() {
 }
 '''
 
+
+
+ANIMATION_FRAG = """
+#version 330 core
+
+in vec2 uv;
+out vec4 frag_albedo;
+out vec4 frag_normal;
+
+uniform sampler2D albedo;
+uniform sampler2D normal;
+
+uniform vec2 spritesheet_size;
+uniform vec2 img_size;
+uniform vec2 img_pos;
+
+void main() {
+    spritesheet_size;
+    vec2 tile_pos = vec2(img_size * img_pos)/ spritesheet_size;
+    vec2 tile_percentage = vec2(img_size/ spritesheet_size * uv);
+    vec2 sample_pos = vec2(tile_pos + tile_percentage);
+    frag_albedo = vec4(texture(albedo, sample_pos).rgba); 
+    frag_normal = vec4(texture(normal, sample_pos).rgba); 
+}
+"""
+
 def surf_to_texture(surf, ctx: moderngl.Context, aa = moderngl.NEAREST):
     tex = ctx.texture(surf.get_size(), 4)
     tex.filter = (aa, aa)
@@ -152,20 +178,21 @@ class AnimationPlayer:
         self.current_animation = "none"
         self.index = 0
         self.on_change: callable = None
+        self.set_animation(list(self.animations.keys())[0])
 
     def set_animation(self, name: str):
         self.current_animation = name
         self.index = 0
-        self.anim_timer.duration = self.animations[self.current_animation]['frames'][self.index]['duration']
+        self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration']
         self.anim_timer.activate()
 
     def update_image(self):
         if self.current_animation != "none":
             if self.anim_timer.complete:
                 self.index += 1
-                if self.index > len(self.animations[self.current_animation]['frames']) - 1:
+                if self.index > len(self.animations[self.current_animation].frames) - 1:
                     self.index = 0
-                self.anim_timer.duration = self.animations[self.current_animation]['frames'][self.index]['duration']
+                self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration']
                 self.anim_timer.activate()
                 if self.on_change != None:
                     self.on_change()
@@ -173,11 +200,9 @@ class AnimationPlayer:
             elif (not self.anim_timer.active) and (self.current_animation != None):
                 self.anim_timer.activate()
 
-    def get_normal(self):
-        return self.spritesheet.get_image(self.animations[self.current_animation]['frames'][self.index]['pos'], "normal")
-
-    def get_image(self):
-        return self.spritesheet.get_image(self.animations[self.current_animation]['frames'][self.index]['pos'])
+    def get_pos(self):
+        return self.animations[self.current_animation].frames[self.index]['pos']
+        
 
     def update(self, dt):
         self.anim_timer.update(dt)
@@ -201,15 +226,17 @@ class Shader:
                 self.program[uniform].write(self.image.scene.camera.proj_matrix.tobytes())
 
             if uniform == 'view':
-
                 self.program[uniform].write(self.image.scene.camera.view_matrix.tobytes())
+            
             if uniform == 'position':
-
-                self.program[uniform] = ((self.image.position.x + self.image.offset.x), -(self.image.position.y + self.image.offset.y)) 
+                 self.program[uniform] = ((self.image.position.x + self.image.offset.x), -(self.image.position.y + self.image.offset.y)) 
+            
             if uniform == 'time':
                 self.program[uniform] = pygame.time.get_ticks()
+            
             if uniform == 'tex':
                 self.program[uniform] = self.image.scene.texture_locker.get_value(self.image.name)
+            
             if uniform == 'normal_tex':
                 self.program[uniform] = self.image.scene.texture_locker.get_value(self.image.normal_name)
 
@@ -252,6 +279,8 @@ class Image:
         self.position = vector(0, 0)
         self.z = z 
 
+        self.set_shader(DefaultShader(self.scene))
+
     def set_shader(self, shader: Shader):
         self.shader = shader
         self.shader.initialize(self)
@@ -290,6 +319,29 @@ class Image:
         self.scene.texture_locker.remove(self.name)
         self.scene.texture_locker.remove(self.normal_name)
 
+class AnimatedShader(Shader):
+    def __init__(self, scene):
+        super().__init__(scene, WORLD_VERT_SHADER, ANIMATION_FRAG)
+        self.image: AnimatedImage
+
+    def set_frag_uniforms(self):
+        albedo = self.image.scene.texture_locker.add(self.image.name)
+        normal = self.image.scene.texture_locker.add(self.image.normal_name)
+
+        self.image.animation_player.spritesheet.general.use(albedo)
+        self.image.animation_player.spritesheet.normal.use(normal)
+
+        self.program['albedo'] = albedo
+        self.program['normal'] = normal
+
+        self.program['spritesheet_size'] = self.image.animation_player.spritesheet.general.size
+        self.program['img_size'] = self.image.size
+        self.program['img_pos'] = self.image.animation_player.get_pos()
+
+        self.image.scene.texture_locker.remove(self.image.name)
+        self.image.scene.texture_locker.remove(self.image.normal_name)
+        
+
 class AnimatedImage(Image):
     def __init__(self, animation_player: AnimationPlayer, name: str, scene: engine.core.Scene, z=1):
         self.animation_player = animation_player
@@ -298,33 +350,19 @@ class AnimatedImage(Image):
         self.normal_name = self.name + "_normal"
         self.size = vector(*self.animation_player.spritesheet.size)
         
-        self.texture: moderngl.Texture = surf_to_texture(self.animation_player.get_image(), self.scene.glCtx)
-        self.texture.use(self.scene.texture_locker.add(self.name))
-        
-        
-        if self.animation_player.use_normal:
-            self.normal_surf = self.animation_player.get_normal()
-            self.normal = surf_to_texture(self.normal_surf, self.scene.glCtx)
-            self.normal.use(self.scene.texture_locker.add(self.normal_name))
 
         self.position = vector(0, 0)
+        self.offset = vector(0, 0)
         self.z = z
 
-    def update_image(self):
-        self.texture.release()
-        self.texture = surf_to_texture(self.animation_player.get_image(), self.scene.glCtx)
-        self.texture.use(self.scene.texture_locker.get_value(self.name))
-        if self.animation_player.spritesheet.normal:
-            self.normal.release()
-            self.normal = surf_to_texture(self.animation_player.get_normal(), self.scene.glCtx)
-            self.normal.use(self.scene.texture_locker.get_value(self.normal_name))
+        self.set_shader(AnimatedShader(self.scene))
 
     def update(self, dt):
         self.animation_player.update(dt)
 
     def draw(self):
-        self.animation_player.on_change = self.update_image
-        super().draw()
+        self.shader.set_uniforms()
+        self.render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
 class CompositeImage(Image):
     def __init__(self, name: str, images: list[Image],  scene: engine.core.Scene, z=1):
@@ -333,14 +371,17 @@ class CompositeImage(Image):
         self.scene = scene
         self._pos = vector(0, 0)
         
+        self.z = z
+
     @property
     def position(self):
         return self._pos
 
     @position.setter
-    def position(self):
+    def position(self, new):
+        self._pos = new
         for image in self.images:
-            image.position = self.position
+            image.position = self._pos
 
     def draw(self):
         for image in self.images:
