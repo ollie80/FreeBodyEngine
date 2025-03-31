@@ -387,6 +387,10 @@ class CompositeImage(Image):
         for image in self.images:
             image.draw()
 
+    def update(self, dt):
+        for image  in self.images:
+            image.update(dt)
+
     def remove(self):
         for image in self.images:
             image.remove()
