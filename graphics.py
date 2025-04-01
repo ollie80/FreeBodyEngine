@@ -658,7 +658,7 @@ class ShadowCaster(engine.core.Component):
 
         self.render_object.render()
 
-RENDERING_MODES = ["full", "general", "normal", "wireframe"]
+RENDERING_MODES = ["full", "general", "normal"]
 
 class Graphics:
     def __init__(self, scene: engine.core.Scene, ctx: moderngl.Context):
@@ -767,14 +767,6 @@ class Graphics:
         if self.rendering_mode == "normal":
             self.draw_general()
             self.draw_debug("normal")
-        if self.rendering_mode == "wireframe":
-            self.ctx.polygon_mode = moderngl.LINES
-            self.draw_general()
-            self.draw_debug("general")
-            
-
-
-
 
     
     def draw_ui(self):
