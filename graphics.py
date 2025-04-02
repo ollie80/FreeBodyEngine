@@ -20,7 +20,19 @@ import FreeBodyEngine.data
 
 DEFAULT_NORMAL = "#8080ff"
 
-plain_vert_shader = """
+empty_vert_shader = '''
+#version 330 core
+
+in vec2 vert;
+in vec2 texCoord;
+
+void main() {
+    
+    gl_Position = vec4(vert, texCoord.x, 1.0);
+}
+'''
+
+uv_vert_shader = """
 #version 330 core
 
 in vec2 vert;
@@ -404,11 +416,15 @@ class Camera(engine.core.Entity):
         self.rotation = 0
         self.zoom = zoom
         self.camera_id = 1
+        self.background_color = "#FFFFFF"
 
         self.update_view_matrix()
         self.update_projection_matrix()
 
     def on_resize(self):
+        self.update_projection_matrix()
+
+    def on_update(self, dt):
         self.update_projection_matrix()
 
     def on_draw(self):
@@ -658,6 +674,21 @@ class ShadowCaster(engine.core.Component):
 
         self.render_object.render()
 
+CLEAR_FRAG_SHADER = """
+#version 330 core
+
+uniform vec3 normal_color;
+uniform vec3 albedo_color;
+
+out vec4 frag_albedo;
+out vec4 frag_normal;
+
+void main() {
+    frag_albedo = vec4(albedo_color, 1.0);
+    frag_normal = vec4(normal_color, 1.0);
+}
+"""
+
 RENDERING_MODES = ["full", "general", "normal"]
 
 class Graphics:
@@ -673,6 +704,8 @@ class Graphics:
         self.shadow_key = "_ENGINE_shadow"
         self.ui_key = "_ENGINE_ui"
 
+        self.background_normal = (0.5, 0.5, 1.0)
+        
         self.scene.texture_locker.add(self.albedo_key)
         self.scene.texture_locker.add(self.normal_key)
         self.scene.texture_locker.add(self.shadow_key)
@@ -686,19 +719,21 @@ class Graphics:
         self.lights: list[Light] = []
         self.directional_lights: list[DirectionalLight] = []
         self.global_light_level = hex_to_rgb("#505050")
-        self.lighting_program = self.ctx.program(plain_vert_shader, LIGHT_FRAG_SHADER)
+        self.lighting_program = self.ctx.program(uv_vert_shader, LIGHT_FRAG_SHADER)
+        
+        self.clear_program = self.ctx.program(empty_vert_shader, CLEAR_FRAG_SHADER)
 
-        self.ui_program = self.ctx.program(plain_vert_shader, texture_frag_shader)
+        self.ui_program = self.ctx.program(uv_vert_shader, texture_frag_shader)
 
         self.lighting_program["albedo_texture"] = self.scene.texture_locker.get_value(self.albedo_key)
         self.lighting_program["normal_texture"] = self.scene.texture_locker.get_value(self.normal_key)
         #self.lighting_program["shadow_texture"] = self.scene.texture_locker.get_value(self.shadow_key)
 
-        
-        self.debug_program = self.ctx.program(plain_vert_shader, DEBUG_FRAG_SHADER)
+        self.debug_program = self.ctx.program(uv_vert_shader, DEBUG_FRAG_SHADER)
 
         self.ui_program["tex"] = self.scene.texture_locker.get_value(self.ui_key)
 
+        self.clear_vao = create_fullscreen_quad(self.ctx, self.clear_program)
         self.lighting_vao = create_fullscreen_quad(self.ctx, self.lighting_program)
         self.ui_vao = create_fullscreen_quad(self.ctx, self.ui_program)
         self.debug_vao = create_fullscreen_quad(self.ctx, self.debug_program)
@@ -767,7 +802,6 @@ class Graphics:
         if self.rendering_mode == "normal":
             self.draw_general()
             self.draw_debug("normal")
-
     
     def draw_ui(self):
         self.ui_program['tex'] = self.scene.texture_locker.get_value(self.ui_key)
@@ -786,7 +820,10 @@ class Graphics:
     def draw_general(self):
         self.general_framebuffer.use()  # Render to the G-buffer
 
-        self.ctx.clear(0.0, 0.0, 0.0, 1.0)  # Clear framebuffer
+        bg = hex_to_rgb(self.scene.camera.background_color)
+        self.clear_program['albedo_color'] = bg
+        self.clear_program['normal_color'] = self.background_normal
+        self.clear_vao.render()
 
         self.general_images.sort(key=lambda img: img.z)
         for image in self.general_images:

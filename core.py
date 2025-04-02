@@ -66,12 +66,8 @@ class Entity:
     def center(self, new_center):
         self.position = new_center - (self.size / 2)  # Adjusts position based on new center
 
-    def initialize(self, scene):
-        self.scene = scene
-        self.on_initialize()
-
     def kill(self):
-        self.scene.remove(self)
+        self.scene.entities.remove(self)
         self.on_kill()
 
     def update(self, dt):
@@ -81,8 +77,6 @@ class Entity:
             component.update(dt)
         self.on_post_update()     
 
-    def on_initialize(self):
-        pass
     
     def on_event_loop(self, event):
         pass
@@ -431,8 +425,6 @@ class Scene:
 
 
     def draw(self):
-        self.glCtx.clear(0.0, 0.0, 0.0, 1.0)
-
         self.on_draw()
 
         for entity in self.entities:
@@ -440,10 +432,6 @@ class Scene:
         
         self.ui.update()
         self.graphics.draw()
-
-
-        if self.SDL:
-            self.main.screen.blit(pygame.transform.scale(self.display, self.main.window_size))
 
     def on_draw(self):
         pass
@@ -457,8 +445,6 @@ class Scene:
         self.on_update(dt)
         self.ui.update()
         self.draw()
-
-
 
 
 class Main: 
