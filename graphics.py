@@ -416,7 +416,7 @@ class Camera(engine.core.Entity):
         self.rotation = 0
         self.zoom = zoom
         self.camera_id = 1
-        self.background_color = "#FFFFFF"
+        self.background_color = "#b4befe"
 
         self.update_view_matrix()
         self.update_projection_matrix()
@@ -521,7 +521,7 @@ uniform int light_count;
 
 uniform DirectionalLight dirLights[MAX_LIGHTS];
 uniform int dir_light_count;
-
+uniform vec3 global_light;
 
 uniform mat4 view;
 uniform mat4 proj;
@@ -545,7 +545,7 @@ void main() {
     frag_pos_world /= frag_pos_world.w; // Perspective divide
 
     // Start with global ambient lighting
-    vec3 lighting = vec3(0.0, 0.0, 0.0);
+    vec3 lighting = global_light;
 
     // Process each light
     if (light_count > 0) {
@@ -718,9 +718,10 @@ class Graphics:
 
         self.lights: list[Light] = []
         self.directional_lights: list[DirectionalLight] = []
-        self.global_light_level = hex_to_rgb("#505050")
+        self.global_light = "#505050" 
         self.lighting_program = self.ctx.program(uv_vert_shader, LIGHT_FRAG_SHADER)
         
+
         self.clear_program = self.ctx.program(empty_vert_shader, CLEAR_FRAG_SHADER)
 
         self.ui_program = self.ctx.program(uv_vert_shader, texture_frag_shader)
@@ -845,6 +846,7 @@ class Graphics:
         
         self.ctx.screen.use()  # Switch to rendering on the screen
 
+        self.lighting_program['global_light'] = hex_to_rgb(self.global_light)
         self.lighting_program["view"].write(self.scene.camera.view_matrix)
         self.lighting_program["proj"].write(self.scene.camera.proj_matrix) 
         #self.lighting_program["zoom"] = self.scene.camera.zoom
