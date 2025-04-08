@@ -237,19 +237,19 @@ class Shader:
             if uniform == 'proj':
                 self.program[uniform].write(self.image.scene.camera.proj_matrix.tobytes())
 
-            if uniform == 'view':
+            elif uniform == 'view':
                 self.program[uniform].write(self.image.scene.camera.view_matrix.tobytes())
             
-            if uniform == 'position':
+            elif uniform == 'position':
                  self.program[uniform] = ((self.image.position.x + self.image.offset.x), -(self.image.position.y + self.image.offset.y)) 
             
-            if uniform == 'time':
+            elif uniform == 'time':
                 self.program[uniform] = pygame.time.get_ticks()
             
-            if uniform == 'tex':
+            elif uniform == 'tex':
                 self.program[uniform] = self.image.scene.texture_locker.get_value(self.image.name)
             
-            if uniform == 'normal_tex':
+            elif uniform == 'normal_tex':
                 self.program[uniform] = self.image.scene.texture_locker.get_value(self.image.normal_name)
 
     def set_frag_uniforms(self):
@@ -494,6 +494,8 @@ void main() {
 }
 """
 
+
+
 LIGHT_FRAG_SHADER = """
 #version 330 core
 #define MAX_LIGHTS 100
@@ -501,6 +503,15 @@ LIGHT_FRAG_SHADER = """
 struct Light {
     vec2 position;
     vec3 color;
+    float intensity;
+    float radius;
+};
+
+struct SpotLight {
+    vec2 position;
+    vec2 direction;
+    vec3 color;
+    float angle;
     float intensity;
     float radius;
 };
@@ -519,8 +530,12 @@ uniform vec2 screen_size;
 uniform Light lights[MAX_LIGHTS];
 uniform int light_count;
 
+uniform SpotLight spotLights[MAX_LIGHTS];
+uniform int spot_light_count;
+
 uniform DirectionalLight dirLights[MAX_LIGHTS];
 uniform int dir_light_count;
+
 uniform vec3 global_light;
 
 uniform mat4 view;
@@ -550,13 +565,34 @@ void main() {
     // Process each light
     if (light_count > 0) {
         for (int i = 0; i < dir_light_count; i++) {
-
-            
             vec3 light_vec = normalize(vec3(dirLights[i].direction, 1.0));
             float diff = max(dot(normal, light_vec), 0.0);
 
             lighting += dirLights[i].color * diff * dirLights[i].intensity;
         }
+
+        for (int i = 0; i < spot_light_count; i++) {
+            vec2 light_pos_world = spotLights[i].position;
+            vec2 to_frag = normalize(frag_pos_world.xy - light_pos_world);
+            vec2 spot_dir = normalize(spotLights[i].direction);
+
+            // Calculate spotlight effect
+            float angle_diff = dot(to_frag, spot_dir);
+            float spot_effect = smoothstep(cos(spotLights[i].angle), cos(spotLights[i].angle * 0.9), angle_diff);
+
+            // Compute attenuation
+            float dist = length(light_pos_world - frag_pos_world.xy);
+            if (dist > spotLights[i].radius) continue;
+            float attenuation = 1.0 - (dist / spotLights[i].radius);
+            attenuation = max(attenuation, 0.0);
+
+            // Diffuse lighting
+            vec3 light_vec = normalize(vec3(to_frag, 1.0));
+            float diff = max(dot(normal, light_vec), 0.0);
+
+            lighting += spotLights[i].color * diff * spotLights[i].intensity;
+        }
+        
         for (int i = 0; i < light_count; i++) {
             // Light position is already in world space
             vec2 light_pos_world = lights[i].position;
@@ -576,7 +612,6 @@ void main() {
         }
     }
 
-
     frag_color = vec4(albedo * lighting, 1.0);
 }
 """
@@ -584,36 +619,132 @@ void main() {
 class DirectionalLight(engine.core.Entity):
     def __init__(self, scene: engine.core.Scene, color: str, intensity: int, angle: int):
         super().__init__(vector(0, 0), scene, vector(1, 1))
-        self.intensity = intensity
-        self.color = color
-        self.angle = angle
-        print(self.direction)
-        
+        self.data = {
+            "intensity": intensity,
+            "color": color,
+            "angle": angle
+        }
 
+    @property 
+    def intensity(self) -> float:
+        return self.data['intensity']
+    
+    @intensity.setter
+    def intensity(self, new):
+        self.data['intensity'] = new
+    
+    @property 
+    def color(self) -> str:
+        return self.data['color']
+    
+    @color.setter
+    def color(self, new):
+        self.data['color'] = new
+    
     @property
-    def direction(self) -> vector:
-        return vector(1 * math.cos(self.angle), 1 * math.sin(self.angle))
+    def angle(self) -> float:
+        return self.data['angle']
 
+    @angle.setter
+    def angle(self, new):
+        self.data['angle'] = new
     
     def on_draw(self):
         self.scene.graphics.add_directional_light(self)
 
-class Light(engine.core.Entity):
+class PointLight(engine.core.Entity):
     def __init__(self, position, scene, radius: int, color: str, intensity: int):
         super().__init__(position, scene)
 
-        self.intensity = intensity
-        self.radius = radius
-        self.color = color
-        
-        self.light_data = [
-                self.position.x, self.position.y,
-                self.color[0], self.color[1], self.color[2],
-                self.intensity, self.radius
-            ]
+        self.data = {
+            "intensity": intensity,
+            "color": color,
+            "radius": radius
+        }
+
+    
+    @property 
+    def intensity(self) -> float:
+        return self.data['intensity']
+    
+    @intensity.setter
+    def intensity(self, new):
+        self.data['intensity'] = new
+    
+    @property 
+    def color(self) -> str:
+        return self.data['color']
+    
+    @color.setter
+    def color(self, new):
+        self.data['color'] = new
+    
+    @property
+    def radius(self) -> float:
+        return self.data['radius']
+
+    @radius.setter
+    def radius(self, new):
+        self.data['radius'] = new
 
     def on_draw(self):
         self.scene.graphics.add_light(self)
+
+class SpotLight(engine.core.Entity):
+    def __init__(self, position, scene, radius: int, color: str, intensity: int, angle, direction):
+        super().__init__(position, scene)
+
+        self.data = {
+            "intensity": intensity,
+            "color": color,
+            "radius": radius,
+            "angle": angle,
+            "direction": direction
+        }
+
+    @property 
+    def intensity(self) -> float:
+        return self.data['intensity']
+    
+    @intensity.setter
+    def intensity(self, new):
+        self.data['intensity'] = new
+    
+    @property 
+    def color(self) -> str:
+        return self.data['color']
+    
+    @color.setter
+    def color(self, new):
+        self.data['color'] = new
+    
+    @property
+    def angle(self) -> float:
+        return self.data['angle']
+
+    @angle.setter
+    def angle(self, new):
+        self.data['angle'] = new
+
+    @property
+    def direction(self) -> vector:
+        return self.data['direction']
+
+    @direction.setter
+    def direction(self, new):
+        self.data['direction'] = new
+
+    @property
+    def radius(self) -> vector:
+        return self.data['radius']
+
+    @radius.setter
+    def radius(self, new):
+        self.data['radius'] = new
+
+
+    def on_draw(self):
+        self.scene.graphics.add_spotlight(self)
 
 shadow_vert_shader = """
 #version 330 core
@@ -689,7 +820,38 @@ void main() {
 }
 """
 
-RENDERING_MODES = ["full", "general", "normal"]
+RENDERING_MODES = ["full",  "general", "normal", "light"]
+
+class PostProcessLayer:
+    def __init__(self, scene: engine.core.Scene, frag: str):
+        self.scene = scene
+        
+        self.program = self.scene.glCtx.program(uv_vert_shader, frag)
+        self.vao = create_fullscreen_quad(self.scene.glCtx, self.program)
+
+    def set_uniforms(self):
+        self.set_generic_uniforms()
+        self.on_set_uniforms()
+
+    def on_set_uniforms(self):
+        pass
+
+    def set_generic_uniforms(self):
+        for uniform in self.program:
+            if uniform == 'albedo_tex':
+                self.program[uniform] = self.scene.texture_locker.get_value(self.scene.graphics.albedo_key)
+            elif uniform == 'normal_tex':
+                self.program[uniform] = self.scene.texture_locker.get_value(self.scene.graphics.normal_key)
+            elif uniform == 'lighting_tex':
+                self.program[uniform] = self.scene.texture_locker.get_value(self.scene.graphics.lighting_key)
+            elif uniform == 'post_tex':
+                self.program[uniform] = self.scene.texture_locker.get_value(self.scene.graphics.post_key)
+            elif uniform == 'time':
+                self.program[uniform] = pygame.time.get_ticks()
+
+    def draw(self):
+        self.set_uniforms()
+        self.vao.render()
 
 class Graphics:
     def __init__(self, scene: engine.core.Scene, ctx: moderngl.Context):
@@ -702,6 +864,8 @@ class Graphics:
         self.albedo_key = "_ENGINE_albedo"
         self.normal_key = "_ENGINE_normal"
         self.shadow_key = "_ENGINE_shadow"
+        self.lighting_key = "_ENGINE_lighting"
+        self.post_key = "_ENGINE_post"
         self.ui_key = "_ENGINE_ui"
 
         self.background_normal = (0.5, 0.5, 1.0)
@@ -710,14 +874,18 @@ class Graphics:
         self.scene.texture_locker.add(self.normal_key)
         self.scene.texture_locker.add(self.shadow_key)
         self.scene.texture_locker.add(self.ui_key)
+        self.scene.texture_locker.add(self.lighting_key)
+        self.scene.texture_locker.add(self.post_key)
         self.rendering_mode = "full"
 
         self.general_images: list[Image] = []
         self.shadow_casters: list[ShadowCaster] = []
         
+        self.post_layers: list[PostProcessLayer] = []
 
-        self.lights: list[Light] = []
+        self.lights: list[PointLight] = []
         self.directional_lights: list[DirectionalLight] = []
+        self.spot_lights: list[SpotLight] = []
         self.global_light = "#505050" 
         self.lighting_program = self.ctx.program(uv_vert_shader, LIGHT_FRAG_SHADER)
         
@@ -730,14 +898,15 @@ class Graphics:
         self.lighting_program["normal_texture"] = self.scene.texture_locker.get_value(self.normal_key)
         #self.lighting_program["shadow_texture"] = self.scene.texture_locker.get_value(self.shadow_key)
 
-        self.debug_program = self.ctx.program(uv_vert_shader, DEBUG_FRAG_SHADER)
+        self.screen_program = self.ctx.program(uv_vert_shader, texture_frag_shader)
 
         self.ui_program["tex"] = self.scene.texture_locker.get_value(self.ui_key)
+
 
         self.clear_vao = create_fullscreen_quad(self.ctx, self.clear_program)
         self.lighting_vao = create_fullscreen_quad(self.ctx, self.lighting_program)
         self.ui_vao = create_fullscreen_quad(self.ctx, self.ui_program)
-        self.debug_vao = create_fullscreen_quad(self.ctx, self.debug_program)
+        self.screen_vao = create_fullscreen_quad(self.ctx, self.screen_program)
 
         self.fonts: dict[str, freetype.Face] = {}
         self.on_resize()
@@ -745,7 +914,6 @@ class Graphics:
     def on_resize(self):
         width = self.scene.main.window_size[0]
         height = self.scene.main.window_size[1]
-        self.scene.main.window_size[1]
 
         self.general_framebuffer = self.ctx.framebuffer(
             color_attachments=[
@@ -760,6 +928,18 @@ class Graphics:
             ]
         )
 
+        self.lighting_framebuffer = self.ctx.framebuffer(
+            color_attachments=[
+                self.ctx.texture((width, height), 3)
+            ]
+        )
+
+        self.post_framebuffer = self.ctx.framebuffer(
+            color_attachments=[
+                self.ctx.texture((width, height), 3)
+            ]
+        )
+
     def add_general(self, image): # draws a general image (actors, objects, etc.)
         self.general_images.append(image)
 
@@ -769,6 +949,9 @@ class Graphics:
     def add_directional_light(self, light):
         self.directional_lights.append(light)
 
+    def add_spotlight(self, light):
+        self.spot_lights.append(light)
+
     def add_shadow(self, image):
         self.shadow_casters.append(image)
 
@@ -776,6 +959,7 @@ class Graphics:
         self.general_images.clear()
         self.lights.clear()
         self.directional_lights.clear()
+        self.spot_lights.clear()
 
     def add_font(self, key, name):
         """Creates a font that can be used to render text. Must be a TTF file"""
@@ -797,26 +981,36 @@ class Graphics:
         if self.rendering_mode == "full":
             self.draw_general()
             self.draw_lighting()
+            self.draw_post_processing()
+            self.draw_screen()
+
+        if self.rendering_mode == 'light':
+            self.draw_general()
+            self.draw_lighting()
+            self.draw_screen()
+
         if self.rendering_mode == "general":
             self.draw_general()
-            self.draw_debug("general")
+            self.draw_screen()
+
         if self.rendering_mode == "normal":
             self.draw_general()
-            self.draw_debug("normal")
+            self.draw_screen()
     
     def draw_ui(self):
         self.ui_program['tex'] = self.scene.texture_locker.get_value(self.ui_key)
         self.ui_vao.render()
 
-    def draw_debug(self, type: str):
-        self.ctx.screen.use()
-        if type == "general":
-            self.debug_program['tex'] = self.scene.texture_locker.get_value(self.albedo_key)
+    def draw_post_processing(self):
+        self.post_framebuffer.use()
         
-        if type == "normal":
-            self.debug_program['tex'] = self.scene.texture_locker.get_value(self.normal_key)
+        self.lighting_framebuffer.color_attachments[0].use(self.scene.texture_locker.get_value(self.post_key))
+
+        for layer in self.post_layers:
+            layer.draw()
+
+            self.post_framebuffer.color_attachments[0].use(self.scene.texture_locker.get_value(self.post_key))
             
-        self.debug_vao.render(moderngl.TRIANGLE_STRIP)
 
     def draw_general(self):
         self.general_framebuffer.use()  # Render to the G-buffer
@@ -834,17 +1028,9 @@ class Graphics:
         self.general_framebuffer.color_attachments[0].use(self.scene.texture_locker.get_value(self.albedo_key))  # Albedo
         self.general_framebuffer.color_attachments[1].use(self.scene.texture_locker.get_value(self.normal_key))  # Normal
 
-    def draw_shadows(self):
-        self.general_framebuffer.use()  # Render to the G-buffer
-        self.ctx.clear(0.0, 0.0, 0.0, 1.0)  # Clear framebuffer
-
-        for shadow in self.shadow_casters:
-            shadow.draw(self.lights)
-
-
     def draw_lighting(self):
         
-        self.ctx.screen.use()  # Switch to rendering on the screen
+        self.lighting_framebuffer.use()  # Switch to rendering on the screen
 
         self.lighting_program['global_light'] = hex_to_rgb(self.global_light)
         self.lighting_program["view"].write(self.scene.camera.view_matrix)
@@ -852,41 +1038,64 @@ class Graphics:
         #self.lighting_program["zoom"] = self.scene.camera.zoom
 
         self.lighting_program["light_count"].value = len(self.lights)
+        self.lighting_program["dir_light_count"] = len(self.directional_lights)
+        self.lighting_program["spot_light_count"] = len(self.spot_lights)
         
         i = 0
         for light in self.directional_lights:
-            self.lighting_program["dir_light_count"] = len(self.directional_lights)
             self.lighting_program[f"dirLights[{i}].color"] = hex_to_rgb(light.color)
             self.lighting_program[f"dirLights[{i}].direction"] = light.direction
             self.lighting_program[f"dirLights[{i}].intensity"] = light.intensity
             
             i+=1
-
+        
+        i = 0
+        for light in self.spot_lights:
+            self.lighting_program[f"spotLights[{i}].color"] = hex_to_rgb(light.color)
+            self.lighting_program[f"spotLights[{i}].direction"] = (math.sin(light.direction), math.cos(light.direction))
+            self.lighting_program[f"spotLights[{i}].intensity"] = light.intensity
+            self.lighting_program[f"spotLights[{i}].radius"] = light.radius
+            self.lighting_program[f"spotLights[{i}].angle"] = light.angle
+            self.lighting_program[f"spotLights[{i}].position"] = (light.position.x, -light.position.y)
+            i+=1
+ 
         i = 0
         for light in self.lights:
-            # Set the color for light[i]
-            self.lighting_program[f"lights[{i}].color"] = light.color
-            
-            # Set the intensity for light[i]
+            self.lighting_program[f"lights[{i}].color"] = hex_to_rgb(light.color)
             self.lighting_program[f"lights[{i}].intensity"] = light.intensity
-            
-            # Set the position for light[i]
-            self.lighting_program[f"lights[{i}].position"] = light.position
-            
-            # Set the radius for light[i]
+            self.lighting_program[f"lights[{i}].position"] = (light.position.x, -light.position.y)
             self.lighting_program[f"lights[{i}].radius"] = light.radius
             i+=1
 
-
-
         self.lighting_program["screen_size"].value = self.scene.main.window_size
-
-
-        self.shadow_framebuffer.color_attachments[0].use(self.scene.texture_locker.get_value(self.shadow_key))  # Normal
+        self.lighting_framebuffer.color_attachments[0].use(self.scene.texture_locker.get_value(self.lighting_key))  # Normal
 
         # Render a fullscreen quad to apply lighting
         self.lighting_vao.render(moderngl.TRIANGLES)
     
+    def draw_screen(self):
+        self.ctx.screen.use()
+
+        if self.rendering_mode == 'full':
+            self.screen_program['tex'] = self.scene.texture_locker.get_value(self.post_key)          
+        
+            self.screen_vao.render()
+
+        if self.rendering_mode == 'light':
+            self.screen_program['tex'] = self.scene.texture_locker.get_value(self.lighting_key)
+        
+            self.screen_vao.render()
+        
+        if self.rendering_mode == 'general':
+            self.screen_program['tex'] = self.scene.texture_locker.get_value(self.albedo_key)
+            self.screen_vao.render()
+
+        if self.rendering_mode == 'normal':
+            self.screen_program['tex'] = self.scene.texture_locker.get_value(self.normal_key)
+            self.screen_vao.render()
+
+
+
     def check_hotkeys(self):
         if self.scene.input.check_action("CYCLE_RENDERING_MODE") and self.rendering_mode_cooldown.complete:
             i = RENDERING_MODES.index(self.rendering_mode) 

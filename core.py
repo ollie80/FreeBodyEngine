@@ -47,6 +47,121 @@ class Timer:
             self.deactivate()
             self.complete = True
 
+class Component:
+    def __init__(self, name: str, entity: "Entity"):
+        self.name = str
+        self.entity = entity
+    
+    def remove(self):
+        pass
+
+    def update(self, dt):
+        pass
+
+class Transform:
+    """
+    Basic 2D transform object.
+    """
+    def __init__(self, position: vector = vector(0, 0), rotation: int = 0, scale: vector = vector(0, 0)):
+        super().__init__()
+        self.position = position
+        self.rotation = rotation
+        self.scale = scale
+
+class Physics(Component):
+    def __init__(self, name, entity):
+        super().__init__(name, entity)
+        self.vel = vector(0, 0)
+
+    def integrate_forces(self):        
+        self.entity.transform.position += self.vel
+
+    def update(self):
+        self.integrate_forces()
+
+class ColliderShape:
+    def __init__(self):
+        pass
+
+    def get_bounds(self):
+        pass
+
+    def check_collision(self, other):
+        pass
+
+class Collider(Component):
+    """
+    The collider component. Requires a Collider Shape.
+    """
+    def __init__(self, name: str, entity: "Entity", shape: "ColliderShape", collision_type: str = "passive"):
+        super().__init__(name, entity)
+        self.collision_type = "passive"
+        self.shape = shape
+
+
+
+    def update(self, dt):
+        self.check_collisions()
+
+class _Entity:
+    """
+    A base class for objects that exist in a scene.
+    """
+    def __init__(self, scene: "Scene", name: str, position: vector = vector(0, 0), rotation: int = 0, scale: vector = vector(1, 1)):
+        self.scene: "Scene" = scene
+        self.name = name
+        self.components: dict[str, Component] = []
+        self.transform: Transform = Transform(position, rotation, scale)
+
+    def add(self, *components):
+        """
+        Adds any amount of components. 
+        """
+        for component in components:
+            self.components[component.name] = component
+
+    def remove(self, name: str):
+        """
+        Removes the compnent with the given name.
+        """
+        if name in self.components.keys():
+            self.components[name].remove()
+            del self.components[name]
+        
+    def kill(self):
+        """
+        Removes the entity from its scene.
+        """
+        self.scene.entities.remove(self)
+        self.on_kill()
+    
+    def update(self):
+        pass
+
+    def __repr__(self):
+        return f"Entity(scene={self.scene}, name={self.name})"
+    
+    def __str__(self):
+        return f"\"{self.name}\" in scene: {self.scene}"
+
+    def on_kill(self):
+        """
+        Called when the entity is killed.
+        """
+        pass
+    
+    def on_draw(self):
+        """
+        Called when the scene is drawn.
+        """
+        pass
+
+    def on_update(self):
+        """
+        Called when the entity is updated.
+        """
+        pass
+    
 class Entity:
     def __init__(self, position: vector, scene, size=vector(32, 32), tag='none', anchor="center"):
         self.scene: Scene = scene
@@ -93,23 +208,27 @@ class Entity:
     def on_update(self, dt):
         pass
 
-
 # A drawn entity with basics physics 
 class Actor(Entity):
     def __init__(self, pos: vector, scene, name: str, size: vector = vector(32, 32), collision_type="passive"):
         super().__init__(pos, scene, size)
         self.name = name
+        
         self.vel = vector(0, 0)
         self.collision_type = collision_type
         self.rect = pygame.FRect(self.position.x, self.position.y, size.x, size.y)
         self.image: None | engine.graphics.Image = None 
 
+    def on_collision(self, other: "Actor"):
+        pass
 
-    # no complicated systems are needed, since there aren't many Actors in each scene
+    def integrate_forces(self, dt):
+        self.position += (self.vel * dt)
+    
     def check_collisions(self, dt):
         for actor in (e for e in self.scene.entities if isinstance(e, Actor)):
             if actor != self and actor.rect.colliderect(self.rect):
-                self.resolve_collision(actor)    
+                self.resolve_collision(actor)
 
     def resolve_collision(self, other: "Actor"):
         if self.collision_type == "active":
@@ -127,15 +246,12 @@ class Actor(Entity):
                 else:
                     self.position.y = other.rect.bottom # Push down
             self.on_collision(other)
+        
+        if self.collision_type == "fixed":
+            self.on_collision(other)
 
         if self.collision_type == "passive":
             self.on_collision(other)
-
-    def on_collision(self, other: "Actor"):
-        pass
-
-    def integrate_forces(self, dt):
-        self.position += (self.vel * dt)
 
     def on_draw(self):
         if self.image:
@@ -157,22 +273,6 @@ class Actor(Entity):
             self.image.update(dt)
         
         self.on_post_update()
-
-
-class Component:
-    def __init__(self, entity: Entity):
-        self.id = pygame.time.get_ticks()
-        self.entity = entity
-    
-    def remove(self):
-        i = 0
-        for component in self.entity.components:
-            if component.id == self.id:
-                del self.entity.components[i]
-            i+=1
-
-    def update(self, dt):
-        pass
 
 class Fire(Component):
     def __init__(self, entity):
@@ -336,8 +436,6 @@ class Camera(Entity):
 
         self.scene.main.screen.blit(pygame.transform.scale_by(self.zoom_surf, self.zoom), (0, 0))
 
-
-
 class Scene:
     def __init__(self, main: "Main"):
         self.SDL = main.SDL
@@ -446,7 +544,6 @@ class Scene:
         self.ui.update()
         self.draw()
 
-
 class Main: 
     def __init__(self, SDL, window_size: tuple = [800, 800], starting_scene: Scene = None, flags=pygame.RESIZABLE, fps: int = 60, display: int = 0):
         pygame.init()
@@ -524,8 +621,6 @@ class Main:
                 self.active_scene.update(dt)
             pygame.display.flip() 
             
-            
-
 class InputManager: # im very sorry for what you're about to read
     def __init__(self):
         self.file_path = "settings/actions.json"
