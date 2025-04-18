@@ -3,6 +3,7 @@ from pygame import Vector2
 import numpy
 import FreeBodyEngine as engine
 from perlin_noise import PerlinNoise
+from typing import Iterable
 
 class LayeredNoise:
     def __init__(self, layers: int, seed: int, start_octaves: int = 3):
@@ -34,6 +35,7 @@ def vector_towards(start: Vector2, to: Vector2, magnitude):
 
 def is_even(x):
     return x % 2 == 0
+
 
 
 def clamp(min, value, max):

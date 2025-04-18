@@ -241,6 +241,11 @@ class Color:
         """
         return (self.float_normalized_a[0], self.float_normalized_a[1], self.float_normalized_a[2])
 
+    def __iter__(self):
+        return iter(self.float_normalized_a)
+    
+    def __len__(self):
+        return len(self.float_normalized_a)
 @dataclass
 class Frame:
     duration: int
@@ -932,14 +937,12 @@ class Graphics:
         self.shadow_key = "_ENGINE_shadow"
         self.lighting_key = "_ENGINE_lighting"
         self.post_key = "_ENGINE_post"
-        self.ui_key = "_ENGINE_ui"
 
         self.background_normal = Color((0.5, 0.5, 1.0))
         
         self.scene.texture_locker.add(self.albedo_key)
         self.scene.texture_locker.add(self.normal_key)
         self.scene.texture_locker.add(self.shadow_key)
-        self.scene.texture_locker.add(self.ui_key)
         self.scene.texture_locker.add(self.lighting_key)
         self.scene.texture_locker.add(self.post_key)
         self.rendering_mode = "full"
@@ -958,7 +961,6 @@ class Graphics:
 
         self.clear_program = self.ctx.program(empty_vert_shader, CLEAR_FRAG_SHADER)
 
-        self.ui_program = self.ctx.program(uv_vert_shader, texture_frag_shader)
 
         self.lighting_program["albedo_texture"] = self.scene.texture_locker.get_value(self.albedo_key)
         self.lighting_program["normal_texture"] = self.scene.texture_locker.get_value(self.normal_key)
@@ -966,16 +968,13 @@ class Graphics:
 
         self.screen_program = self.ctx.program(uv_vert_shader, texture_frag_shader)
 
-        self.ui_program["tex"] = self.scene.texture_locker.get_value(self.ui_key)
 
 
         self.clear_vao = create_fullscreen_quad(self.ctx, self.clear_program)
         self.lighting_vao = create_fullscreen_quad(self.ctx, self.lighting_program)
-        self.ui_vao = create_fullscreen_quad(self.ctx, self.ui_program)
         self.screen_vao = create_fullscreen_quad(self.ctx, self.screen_program)
 
         self.on_resize()
-
 
     def on_resize(self):
         width = self.scene.main.window_size[0]
@@ -1017,7 +1016,6 @@ class Graphics:
 
     def add_spotlight(self, light):
         self.spot_lights.append(light)
-
 
     def add_shadow(self, image):
         self.shadow_casters.append(image)
@@ -1063,10 +1061,9 @@ class Graphics:
         if self.rendering_mode == "normal":
             self.draw_general()
             self.draw_screen()
+        
+        self.scene.ui.draw()
     
-    def draw_ui(self):
-        self.ui_program['tex'] = self.scene.texture_locker.get_value(self.ui_key)
-        self.ui_vao.render()
 
     def draw_post_processing(self):
         self.post_framebuffer.use()
@@ -1078,7 +1075,6 @@ class Graphics:
 
             self.post_framebuffer.color_attachments[0].use(self.scene.texture_locker.get_value(self.post_key))
             
-
     def draw_general(self):
         self.general_framebuffer.use()  # Render to the G-buffer
 
@@ -1160,8 +1156,6 @@ class Graphics:
         if self.rendering_mode == 'normal':
             self.screen_program['tex'] = self.scene.texture_locker.get_value(self.normal_key)
             self.screen_vao.render()
-
-
 
     def check_hotkeys(self):
         if self.scene.input.check_action("CYCLE_RENDERING_MODE") and self.rendering_mode_cooldown.complete:

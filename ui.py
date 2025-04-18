@@ -1,15 +1,265 @@
+import numpy as np
 import FreeBodyEngine as engine
 import pygame
 import random
+import moderngl
 
+UIELEMENT_FRAG_SHADER = """
+#version 330 core
+
+in vec2 uv;
+out vec4 f_color;
+
+
+void main() {
+    
+
+    f_color = vec4(uv, 1.0, 1.0);
+}
+"""
+
+UIELEMENT_VERT_SHADER = """
+#version 330 core
+
+in vec2 texCoord;
+in vec2 vert;
+out vec2 uv;
+
+uniform vec3 rot;
+
+void main() {
+    uv = texCoord;
+
+    // Rotation matrices
+    float cx = cos(rot.x);
+    float sx = sin(rot.x);
+    float cy = cos(rot.y);
+    float sy = sin(rot.y);
+    float cz = cos(rot.z);
+    float sz = sin(rot.z);
+
+    // Rotation around X-axis
+    mat3 rotX = mat3(
+        1.0, 0.0,  0.0,
+        0.0,  cx, -sx,
+        0.0,  sx,  cx
+    );
+
+    // Rotation around Y-axis
+    mat3 rotY = mat3(
+         cy, 0.0, sy,
+         0.0, 1.0, 0.0,
+        -sy, 0.0, cy
+    );
+
+    // Rotation around Z-axis
+    mat3 rotZ = mat3(
+        cz, -sz, 0.0,
+        sz,  cz, 0.0,
+        0.0, 0.0, 1.0
+    );
+
+    // Combine rotations: Z * Y * X (standard order)
+    mat3 rotation = rotZ * rotY * rotX;
+
+    vec3 rotatedVert = rotation * vec3(vert, 0.0);
+
+    gl_Position = vec4(rotatedVert, 1.0);
+}
+"""
 
 class UIAnimation:
-    def __init__(self):
+    def __init__(self, element: "UIElement", target_style: str, duration: int, end_val: any):
+        self.element: UIElement = element
+        self.target_style = target_style
+        
+        self.elapsed = 0
+        self.duration = duration
+
+        self.start = self.element[target_style]
+        self.end = end_val
+
+        if not (self.start.__class__ == self.end.__class__):
+            raise ValueError(f"UIAnimation with target style: {self.target_style}. Start value ({self.start.__class__}) is not the same type as end value {self.start.__class__}.")
+
+    def update(self, dt):
+        self.elapsed += dt
+        t = self.duration / self.elapsed
+        self.element.draw()
+
+class UIElement:
+    def __init__(self, manager: "UIManager", style: dict[str, any]):
+        self.animations: list[UIAnimation] = []
+        
+        self.parent = UIElement
+        self.children: list[UIElement] = []
+        
+        self.manager: UIManager = manager
+
+        self.style = style
+
+        # graphics
+        self.program = self.manager.graphics.ctx.program(UIELEMENT_VERT_SHADER, UIELEMENT_FRAG_SHADER)
+        
+    
+        #rects
+        self.container: pygame.FRect
+        
+        self.rect: pygame.FRect
+        self.interior_rect: pygame.FRect
+        
+
+    def _calculate_rect(self):
+        size = self.style.get("size", (50, 50))
+    
+        width, height = (((size[0] / 100)*self.container.size[0]) * 2, ((size[1] / 100)*self.container.size[1]) * 2)
+
+        pos = self.style.get("pos", (0, 0))
+        center = ((pos[0] / self.container.size[0]) * 200, (pos[1] / self.container.size[1]) * 200)
+
+        left, top = ((center[0] - width/2) + self.container.centerx, (center[1] - height/2) + self.container.centery)
+        
+        self.rect = pygame.FRect(left, top, width, height)
+
+        
+    def _calculate_interior(self):
+        style = self._get_padding()
+        padding = (style[0] * self.rect.size[0], style[1] * self.rect.size[0], style[2] * self.rect.size[1], style[3]* self.rect.size[1])
+        
+        left, top = (self.rect.left + padding[0], self.rect.top + padding[2]) 
+        width, height = (self.rect.size[0] - padding[0] - padding[1], self.rect.size[1] - padding[2] - padding[3])
+
+        self.interior_rect = pygame.FRect(left, top, width, height)
+
+    def _apply_style(self):
+        for uniform in self.program:
+            if uniform == "rot":
+                self.program['rot'] = self.style.get("rotation", (0, 0, 0))
+
+    def _get_padding(self):
+        style = self.style.get("padding", 0)
+        if isinstance(style, tuple):
+            if len(style) == 2:
+                x = style[0]
+                y = style[1]
+                return (x, x, y, y)
+            elif len(style) == 4:
+                return style
+            
+            else:
+                ValueError("Incorect padding format, must be (x, y) or (left, right, top, bottom)")
+        
+        elif isinstance(style, int) or isinstance(style, float):
+            return (style, style, style, style)
+    
+    def _calculate_grid(self):
         pass
 
-class Element:
+    def _calculate_layout(self):
+        self._calculate_rect()
+        self._calculate_interior()
+        
+    def _generate_graphics_objects(self):
+        left = self.rect.left / 100
+        right = self.rect.right / 100
+        top = self.rect.top / 100
+        bottom = self.rect.bottom / 100 
+
+        vbo = self.manager.graphics.ctx.buffer(data=np.array([
+            # position (x, y), uv coords (u, v)
+            left, -top, 0.0, 0.0,       
+            right, -top, 1.0, 0.0,      
+            right, -bottom, 1.0, 1.0, 
+            left, -bottom, 0.0, 1.0        
+        ], dtype="f4"))
+        
+        indices = self.manager.graphics.ctx.buffer(np.array([
+        0, 1, 2,  # First triangle
+        2, 3, 0   # Second triangle
+        ], dtype="i4"))
+
+
+        self.vao = self.manager.graphics.ctx.vertex_array(self.program, [(vbo, '2f 2f',  'vert', 'texCoord')], indices)
+
+    def _draw_to_screen(self):
+        self.manager.start_draw()
+        self._calculate_layout()
+        self._generate_graphics_objects()
+        self._apply_style()
+        self.vao.render(moderngl.TRIANGLE_STRIP)
+        print(self.rect)
+        self.manager.end_draw()
+
+    def draw(self):
+        self._draw_to_screen()
+        for child in self.children:
+            child.draw()
+
+    def update(self, dt):
+        for anim in self.animations:
+            anim.update(dt)
+        for child in self.children:
+            child.update(dt)
+
+class UIRootElement:
     def __init__(self):
-        pass
+        self.children: list[UIElement] = []
+        self.rect = pygame.FRect(-50, -50, 100, 100)
+
+    def add(self, element: UIElement):
+        self.children.append(element)
+        element.container = self.rect
+        element.draw()
+    def draw(self):
+        for element in self.children:
+            element.container = self.rect
+            element.draw()
+            
+
+    def update(self, dt):
+        for element in self.children:
+            element.update(dt)
+
+class UIManager:
+    def __init__(self, scene: engine.core.Scene):
+        self.key = "_ENGINE_ui"
+        self.scene = scene
+        self.graphics = self.scene.graphics
+        self.root = UIRootElement()
+
+        # graphics
+        self.on_resize()
+        self.program = self.graphics.ctx.program(engine.graphics.uv_vert_shader, engine.graphics.texture_frag_shader)
+        self.vao = engine.graphics.create_fullscreen_quad(self.graphics.ctx, self.program)
+
+    def on_resize(self):
+        size = self.scene.main.window_size
+        self.fbo = self.graphics.ctx.framebuffer((self.graphics.ctx.texture((size[0], size[1]), 4)))
+        self.root.draw()
+        
+    def start_draw(self):
+        self.fbo.use()
+
+    def end_draw(self):
+        self.graphics.ctx.screen.use()
+
+
+    def draw(self):
+        self.graphics.ctx.screen.use()
+        key = self.scene.texture_locker.add(self.key)
+        
+        self.fbo.color_attachments[0].use(key)
+        self.program['tex'] = key
+        self.scene.texture_locker.remove(self.key)
+        self.vao.render(moderngl.TRIANGLE_STRIP)
+
+    def add(self, element: UIElement):
+        self.root.add(element)
+        
+
+    def update(self, dt):
+        self.root.update(dt)
+    
 
 class _Element:
     def __init__(self, tag="none", style_overide: dict[str, str] = {}, type="none", text = ""):
@@ -334,7 +584,7 @@ class _Element:
             print("clicked")
         self.on_update()
 
-class TextInput(Element):
+class _TextInput(_Element):
     def __init__(self, tag="", style_overide={}, type="", text="Hello"):
         super().__init__(tag, style_overide, type, text) 
         self.set_styles({"height": 50, "width": 400, "border-width": 2, "border-color": "#000000", "padding": [20, 0, 4, 0], "bg-color": "#FFFFFF", "border-radius":24, "placeholder": "Placeholder", "placeholder-font": "@deafult", "placeholder-bold": False, "placeholder-italic": False, "placeholder-color": "#000000", "placeholder-size": "%vi100", "font-size": "%vi100", "font-color": "#000000", "hover-cursor": 1, "font-align-x": "left", "font-align-y": "center"})
@@ -384,7 +634,7 @@ class TextInput(Element):
         self.update_text()
         self.draw_text_cursor()
 
-class UIManager:
+class _UIManager:
     def __init__(self):
         self.elements: list[Element] = []
         self.index = 0
@@ -430,11 +680,11 @@ class UIManager:
                 return element.get_element(tag)
         return None
 
-    def add(self, element: Element):
+    def add(self, element: _Element):
         self.elements.append(element)
         element.initialize(self, None)
 
-    def remove(self, element: Element):
+    def remove(self, element: _Element):
         self.elements.remove(element)
     
     # Really shitty solution for figuring out which element is focused but im too lazy rn so i will fix it later

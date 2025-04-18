@@ -186,5 +186,4 @@ if __name__ == "__main__":
     if not is_devmode:
         build_code()
 
-    print("\nDone! Your executable and game assets should be in the 'dist' folder.")
     
