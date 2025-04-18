@@ -12,8 +12,7 @@ from pygame import Vector2 as vector
 import numpy as np
 import math
 
-import freetype
-
+from typing import Union, Iterable
 from dataclasses import dataclass
 
 import FreeBodyEngine.data
@@ -106,8 +105,6 @@ void main() {
 }
 '''
 
-
-
 ANIMATION_FRAG = """
 #version 330 core
 
@@ -139,14 +136,6 @@ def surf_to_texture(surf, ctx: moderngl.Context, aa = moderngl.NEAREST):
     tex.write(surf.get_view('1'))
     return tex
 
-def hex_to_rgb(hex_color):
-    """Convert hex color (#RRGGBB or RRGGBB) to an RGB tuple (R, G, B)."""
-    hex_color = hex_color.lstrip("#")  
-    if len(hex_color) != 6:
-        raise ValueError("Hex color must be 6 characters long.")
-    
-    return tuple((int(hex_color[i:i+2], 16)/255) for i in (0, 2, 4))
-
 def create_fullscreen_quad(ctx, shader, size=vector(1, 1)):
     quad_vertices = np.array([
         -1.0, -1.0,  0.0, 0.0,  # Bottom-left
@@ -170,6 +159,87 @@ def create_fullscreen_quad(ctx, shader, size=vector(1, 1)):
     )
 
     return vao
+
+class Color:
+    def __init__(self, value: str | tuple | list):
+        if isinstance(value, (tuple, list)):
+            if isinstance(value[0], float):
+                if len(value) == 3:
+                    self.float_normalized_a = tuple(value) + (1.0,)
+                elif len(value) == 4:
+                    self.float_normalized_a = tuple(value)
+            
+            elif isinstance(value[0], int):
+                self.float_normalized_a = self._rgb_to_fn(value)
+        
+        elif isinstance(value, str):
+            self.float_normalized_a = self._hex_to_fn(value)
+
+    def _hex_to_fn(self, hex_value: str):
+        hex_value = hex_value.lstrip('#')
+        
+        if len(hex_value) == 6:
+            return tuple(int(hex_value[i:i+2], 16) / 255.0 for i in range(0, 6, 2)) + (1.0,)
+        elif len(hex_value) == 8:
+            return tuple(int(hex_value[i:i+2], 16) / 255.0 for i in range(0, 8, 2))
+        else:
+            raise ValueError("Invalid hex string. It must be either 6 (RGB) or 8 (RGBA) characters long.")
+
+    def _rgb_to_fn(self, rgb_value: tuple):
+        if len(rgb_value) == 3: 
+            return tuple(c / 255.0 for c in rgb_value) + (1.0,)
+        elif len(rgb_value) == 4:
+            return tuple(c / 255.0 for c in rgb_value)
+        else:
+            raise ValueError("Invalid tuple length. It must have 3 (RGB) or 4 (RGBA) values.")
+
+    def _fn_to_rgb(self, val: tuple, alpha: bool = False):
+        rgb = tuple(round(c * 255) for c in val[:3])
+        if not alpha:
+            return rgb
+        else:
+            return rgb + (round(val[3] * 255),)
+
+    def _fn_to_hex(self, val: tuple, alpha: bool = False):
+        hex_color = ''.join(f'{int(c):02x}' for c in val[:3])
+        if alpha:
+            hex_color += f'{int(val[3] * 255):02x}'
+        return f'#{hex_color}'
+
+    @property
+    def rgb(self) -> tuple[int, int, int]:
+        """
+        (R, G, B)
+        """
+        return self._fn_to_rgb(self.float_normalized_a)
+
+    @property
+    def rgba(self) -> tuple[int, int, int, int]:
+        """
+        (R, G, B, A)
+        """
+        return self._fn_to_rgb(self.float_normalized_a, True)
+
+    @property
+    def hex(self) -> str:
+        """
+        #RRGGBB
+        """
+        return self._fn_to_hex(self.float_normalized_a)
+        
+    @property
+    def hexa(self) -> str:
+        """
+        #RRGGBBAA
+        """
+        return self._fn_to_rgb(self.float_normalized_a, True)
+    
+    @property
+    def float_normalized(self) -> tuple[float, float, float]:
+        """
+        (R, G, B), values are stored in floats between 0-1
+        """
+        return (self.float_normalized_a[0], self.float_normalized_a[1], self.float_normalized_a[2])
 
 @dataclass
 class Frame:
@@ -313,7 +383,6 @@ class Image:
         self.texture.release()
         self.normal.release()
 
-
     def update(self, dt):
         pass
     
@@ -352,7 +421,6 @@ class AnimatedShader(Shader):
 
         self.image.scene.texture_locker.remove(self.image.name)
         self.image.scene.texture_locker.remove(self.image.normal_name)
-        
 
 class AnimatedImage(Image):
     def __init__(self, animation_player: AnimationPlayer, name: str, scene: engine.core.Scene, z=1):
@@ -416,7 +484,7 @@ class Camera(engine.core.Entity):
         self.rotation = 0
         self.zoom = zoom
         self.camera_id = 1
-        self.background_color = "#b4befe"
+        self.background_color = Color("#b4befe")
 
         self.update_view_matrix()
         self.update_projection_matrix()
@@ -493,8 +561,6 @@ void main() {
     f_color = vec4(texture(tex, uv).rgb, 1.0);
 }
 """
-
-
 
 LIGHT_FRAG_SHADER = """
 #version 330 core
@@ -617,7 +683,7 @@ void main() {
 """
 
 class DirectionalLight(engine.core.Entity):
-    def __init__(self, scene: engine.core.Scene, color: str, intensity: int, angle: int):
+    def __init__(self, scene: engine.core.Scene, color: Color, intensity: int, angle: int):
         super().__init__(vector(0, 0), scene, vector(1, 1))
         self.data = {
             "intensity": intensity,
@@ -634,7 +700,7 @@ class DirectionalLight(engine.core.Entity):
         self.data['intensity'] = new
     
     @property 
-    def color(self) -> str:
+    def color(self) -> Color:
         return self.data['color']
     
     @color.setter
@@ -653,7 +719,7 @@ class DirectionalLight(engine.core.Entity):
         self.scene.graphics.add_directional_light(self)
 
 class PointLight(engine.core.Entity):
-    def __init__(self, position, scene, radius: int, color: str, intensity: int):
+    def __init__(self, position, scene, radius: int, color: Color, intensity: int):
         super().__init__(position, scene)
 
         self.data = {
@@ -672,7 +738,7 @@ class PointLight(engine.core.Entity):
         self.data['intensity'] = new
     
     @property 
-    def color(self) -> str:
+    def color(self) -> Color:
         return self.data['color']
     
     @color.setter
@@ -691,7 +757,7 @@ class PointLight(engine.core.Entity):
         self.scene.graphics.add_light(self)
 
 class SpotLight(engine.core.Entity):
-    def __init__(self, position, scene, radius: int, color: str, intensity: int, angle, direction):
+    def __init__(self, position, scene, radius: int, color: Color, intensity: int, angle, direction):
         super().__init__(position, scene)
 
         self.data = {
@@ -711,7 +777,7 @@ class SpotLight(engine.core.Entity):
         self.data['intensity'] = new
     
     @property 
-    def color(self) -> str:
+    def color(self) -> Color:
         return self.data['color']
     
     @color.setter
@@ -868,7 +934,7 @@ class Graphics:
         self.post_key = "_ENGINE_post"
         self.ui_key = "_ENGINE_ui"
 
-        self.background_normal = (0.5, 0.5, 1.0)
+        self.background_normal = Color((0.5, 0.5, 1.0))
         
         self.scene.texture_locker.add(self.albedo_key)
         self.scene.texture_locker.add(self.normal_key)
@@ -886,7 +952,7 @@ class Graphics:
         self.lights: list[PointLight] = []
         self.directional_lights: list[DirectionalLight] = []
         self.spot_lights: list[SpotLight] = []
-        self.global_light = "#505050" 
+        self.global_light = Color("#505050")
         self.lighting_program = self.ctx.program(uv_vert_shader, LIGHT_FRAG_SHADER)
         
 
@@ -908,8 +974,8 @@ class Graphics:
         self.ui_vao = create_fullscreen_quad(self.ctx, self.ui_program)
         self.screen_vao = create_fullscreen_quad(self.ctx, self.screen_program)
 
-        self.fonts: dict[str, freetype.Face] = {}
         self.on_resize()
+
 
     def on_resize(self):
         width = self.scene.main.window_size[0]
@@ -951,6 +1017,7 @@ class Graphics:
 
     def add_spotlight(self, light):
         self.spot_lights.append(light)
+
 
     def add_shadow(self, image):
         self.shadow_casters.append(image)
@@ -1015,9 +1082,9 @@ class Graphics:
     def draw_general(self):
         self.general_framebuffer.use()  # Render to the G-buffer
 
-        bg = hex_to_rgb(self.scene.camera.background_color)
+        bg = self.scene.camera.background_color.float_normalized
         self.clear_program['albedo_color'] = bg
-        self.clear_program['normal_color'] = self.background_normal
+        self.clear_program['normal_color'] = self.background_normal.float_normalized
         self.clear_vao.render()
 
         self.general_images.sort(key=lambda img: img.z)
@@ -1032,7 +1099,7 @@ class Graphics:
         
         self.lighting_framebuffer.use()  # Switch to rendering on the screen
 
-        self.lighting_program['global_light'] = hex_to_rgb(self.global_light)
+        self.lighting_program['global_light'] = self.global_light.float_normalized
         self.lighting_program["view"].write(self.scene.camera.view_matrix)
         self.lighting_program["proj"].write(self.scene.camera.proj_matrix) 
         #self.lighting_program["zoom"] = self.scene.camera.zoom
@@ -1043,7 +1110,7 @@ class Graphics:
         
         i = 0
         for light in self.directional_lights:
-            self.lighting_program[f"dirLights[{i}].color"] = hex_to_rgb(light.color)
+            self.lighting_program[f"dirLights[{i}].color"] = light.color.float_normalized
             self.lighting_program[f"dirLights[{i}].direction"] = light.direction
             self.lighting_program[f"dirLights[{i}].intensity"] = light.intensity
             
@@ -1051,7 +1118,7 @@ class Graphics:
         
         i = 0
         for light in self.spot_lights:
-            self.lighting_program[f"spotLights[{i}].color"] = hex_to_rgb(light.color)
+            self.lighting_program[f"spotLights[{i}].color"] = light.color.float_normalized
             self.lighting_program[f"spotLights[{i}].direction"] = (math.sin(light.direction), math.cos(light.direction))
             self.lighting_program[f"spotLights[{i}].intensity"] = light.intensity
             self.lighting_program[f"spotLights[{i}].radius"] = light.radius
@@ -1061,7 +1128,7 @@ class Graphics:
  
         i = 0
         for light in self.lights:
-            self.lighting_program[f"lights[{i}].color"] = hex_to_rgb(light.color)
+            self.lighting_program[f"lights[{i}].color"] = light.color.float_normalized
             self.lighting_program[f"lights[{i}].intensity"] = light.intensity
             self.lighting_program[f"lights[{i}].position"] = (light.position.x, -light.position.y)
             self.lighting_program[f"lights[{i}].radius"] = light.radius

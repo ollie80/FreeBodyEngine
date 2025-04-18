@@ -2,7 +2,16 @@ import FreeBodyEngine as engine
 import pygame
 import random
 
+
+class UIAnimation:
+    def __init__(self):
+        pass
+
 class Element:
+    def __init__(self):
+        pass
+
+class _Element:
     def __init__(self, tag="none", style_overide: dict[str, str] = {}, type="none", text = ""):
         self.tag = tag
         self.type = type
@@ -331,6 +340,7 @@ class TextInput(Element):
         self.set_styles({"height": 50, "width": 400, "border-width": 2, "border-color": "#000000", "padding": [20, 0, 4, 0], "bg-color": "#FFFFFF", "border-radius":24, "placeholder": "Placeholder", "placeholder-font": "@deafult", "placeholder-bold": False, "placeholder-italic": False, "placeholder-color": "#000000", "placeholder-size": "%vi100", "font-size": "%vi100", "font-color": "#000000", "hover-cursor": 1, "font-align-x": "left", "font-align-y": "center"})
         self.placeholder_active = False
         self.cursor_index = 5
+        self.clicked_element: Element | None = None
 
     def update_text(self):
         if len(self.text) != 0 and isinstance(self.text, str):
