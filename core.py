@@ -459,8 +459,8 @@ class Scene:
 
         self.input = InputManager()
         
-        self.ui = engine.ui.UIManager()
-        self.ui.initialize(self)
+        
+        self.ui = engine.ui.UIManager(self)
 
         self.update_mouse_pos()
 
@@ -497,7 +497,7 @@ class Scene:
         self.graphics.on_resize()
         #self.lighting_manager.on_resize()
         self.camera.on_resize()
-        self.ui.resize()
+        self.ui.on_resize()
         self.glCtx.viewport = (0, 0, self.main.window_size[0], self.main.window_size[1])
     
     def event_loop(self, event):
@@ -518,14 +518,12 @@ class Scene:
     def on_update(self, dt):
         pass
 
-
     def draw(self):
         self.on_draw()
 
         for entity in self.entities:
             entity.on_draw()
         
-        self.ui.update()
         self.graphics.draw()
 
         self.on_post_draw()
@@ -540,7 +538,7 @@ class Scene:
         for entity in self.entities:
             entity.update(dt)
         self.on_update(dt)
-        self.ui.update()
+        self.ui.update(dt)
         self.draw()
 
 class Main: 
