@@ -7,16 +7,38 @@ import ast
 from pygame import Vector2 as vector
 
 import os
+import io
+
+import struct
+
+def read_assets(path):
+    assets = {}
+    with open(path, "rb") as f:
+        while True:
+            len_bytes = f.read(2)
+            if not len_bytes:
+                break
+            name_len = struct.unpack("<H", len_bytes)[0]
+            name = f.read(name_len).decode("utf-8")
+            data_len = struct.unpack("<I", f.read(4))[0]
+            data = f.read(data_len)
+            assets[name] = data
+    return assets
 
 
 class FileManager:
-    def __init__(self, scene):
+    def __init__(self, main: engine.core.Main, path):
         self.path = "game"
-        self.game_name = "FactoryGame"
+        self.game_name = main.game_name
         self.image_cache: dict[str, pygame.surface.Surface] = {}
         self.spritesheet_cache: dict[str, engine.graphics.Spritesheet] = {}
         self.shader_cache: dict[str, str] = {}
-        self.scene: engine.core.Scene = scene
+        self.main: engine.core.Main = main
+
+        #loading assets
+        asset_path = path
+        self.images = read_assets(asset_path+"images.pak")
+        self.data = read_assets(asset_path+"data.pak")
 
     def get_image(self, location: str, name: str, file_type: str = ".png", normal=None):
         if file_type == ".png":
@@ -119,9 +141,8 @@ class FileManager:
 
                 print("couldn't shader file with path: " + file_path)
             
-
     def load_image(self, path):
-        img = pygame.image.load(path).convert_alpha()
+        img = pygame.image.load(io.BytesIO(self.images[path])).convert_alpha()
         return engine.graphics.surf_to_texture(img, self.scene.glCtx)
 
     def load_tileset(self, name: str) -> dict:
@@ -143,9 +164,7 @@ class FileManager:
         return path
 
     def load_text(self, path):
-        file = open(path, "r")
-        text = file.read()
-        file.close()
+        text = io.BytesIO(self.data[path]).read()
         return text
     
     def load_json(self, path):
@@ -164,11 +183,9 @@ class FileManager:
         os.makedirs(file_path.parent, exist_ok=True)
         
         # Create the file only if it does not exist
-
         with open(file_path, "w") as file:
             file.write(data)  # Write as a string (JSON should be a string)
     
-
     def load_save_data(self, location: str, name: str, file_type = ".json") -> str:
         file_path = self.get_save_path() / location / (name + file_type)
         if os.path.exists(file_path):
@@ -179,22 +196,6 @@ class FileManager:
         
         file.close()
         return text
-    
-    def load_machine_data(self, name):
-        path = self.path + "/assets/machines/" + name + ".json"
-        text = self.load_text(path)
-        return json.loads(text)
-
-    def load_chunk_data(self, name: str):
-        data = self.load_save_data("chunk", name, ".chk")
-        print(data)
-        if data != None:
-            data_list = ast.literal_eval(data)
-            return data_list 
-        return None
-    
-    def save_chunk_data(self, name, data):
-        self.write_save_data("chunk", name, str(data), ".chk")
     
     def parse_spritesheet(self, data: dict):
         image_path = self.path + "/assets" + "/graphics/image/"

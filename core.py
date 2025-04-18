@@ -19,11 +19,6 @@ from typing import Literal
 from pygame.math import Vector2 as vector
 
 
-import FreeBodyEngine.data
-import FreeBodyEngine.debug
-import FreeBodyEngine.files
-
-
 class Timer:
     def __init__(self, duration):
         self.duration = duration
@@ -456,7 +451,7 @@ class Scene:
         
         self.graphics = engine.graphics.Graphics(self, self.glCtx)
         
-        self.files: engine.files.FileManager = engine.files.FileManager(self)
+        self.files: engine.files.FileManager = self.main.files
 
         
 
@@ -510,6 +505,8 @@ class Scene:
         for entity in self.entities:
             entity.on_event_loop(event)
         
+    def on_post_draw(self):
+        pass
 
     def update_mouse_pos(self):
         self.mouse_screen_pos = vector(pygame.mouse.get_pos())
@@ -531,6 +528,8 @@ class Scene:
         self.ui.update()
         self.graphics.draw()
 
+        self.on_post_draw()
+
     def on_draw(self):
         pass
 
@@ -545,9 +544,11 @@ class Scene:
         self.draw()
 
 class Main: 
-    def __init__(self, SDL, window_size: tuple = [800, 800], starting_scene: Scene = None, flags=pygame.RESIZABLE, fps: int = 60, display: int = 0):
+    def __init__(self, SDL, window_size: tuple = [800, 800], starting_scene: Scene = None, flags=pygame.RESIZABLE, fps: int = 60, display: int = 0, asset_dir=str):
         pygame.init()
         
+        self.game_name = "FreeBodyEngine"
+        self.files = engine.files.FileManager(self, asset_dir)
         self.SDL = SDL
         self.window_size = window_size
         self.fps_cap = fps
@@ -587,7 +588,6 @@ class Main:
             self.active_scene = None
         del self.scenes[str]
 
-
     def set_scene(self, key: str):
         self.active_scene = self.scenes[key]
 
@@ -596,7 +596,6 @@ class Main:
             if scene == targetScene:
                 return True
         return False
-    
 
     def run(self, profiler):
         total_fps = 0
@@ -607,8 +606,7 @@ class Main:
             profiler_thread = threading.Thread(target=engine.debug.create_profiler_window, daemon=True)
             profiler_thread.start()
             
-        while True:
-        
+        while True: 
             dt = self.clock.tick(self.fps_cap) / 100
             total_fps += self.clock.get_fps()
             ticks += 1

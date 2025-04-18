@@ -1,203 +1,158 @@
-import glfw
-from OpenGL.GL import *
-import freetype
+import pygame
+import moderngl
+
+import FreeBodyEngine as engine
+
 import numpy as np
-import glm
+import json
 
-SCR_WIDTH = 800
-SCR_HEIGHT = 600
+from pygame.locals import DOUBLEBUF, OPENGL
+from pygame import Vector2 as vector
+from dataclasses import dataclass
+from pathlib import Path
 
-VAO = None
-VBO = None
-Characters = {}
-
-FRAG = """
-#version 330 core
-in vec2 TexCoords;
-out vec4 color;
-
-uniform sampler2D text;
-uniform vec3 textColor;
-
-void main()
-{    
-    vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, TexCoords).r);
-    color = vec4(textColor, 1.0) * sampled;
-}  
-"""
-
-VERT = """
-#version 330 core
-layout (location = 0) in vec4 vertex; // <vec2 pos, vec2 tex>
+VERTEX_SHADER = """
+#version 330
+in vec4 vertex;
 out vec2 TexCoords;
 
 uniform mat4 projection;
 
-void main()
-{
+void main() {
     gl_Position = projection * vec4(vertex.xy, 0.0, 1.0);
     TexCoords = vertex.zw;
-}  
+}
 """
 
-# ---------- Shader Loader ----------
-class Shader:
-    def __init__(self, vert, frag):
+FRAGMENT_SHADER = """
+#version 330
 
-        self.ID = glCreateProgram()
-        vertex = self._compile_shader(vert, GL_VERTEX_SHADER)
-        fragment = self._compile_shader(frag, GL_FRAGMENT_SHADER)
-        glAttachShader(self.ID, vertex)
-        glAttachShader(self.ID, fragment)
-        glLinkProgram(self.ID)
+in vec2 TexCoords;
+out vec4 FragColor;
 
-        # Check for linking errors
-        if glGetProgramiv(self.ID, GL_LINK_STATUS) != GL_TRUE:
-            print(glGetProgramInfoLog(self.ID))
-        glDeleteShader(vertex)
-        glDeleteShader(fragment)
+uniform float pxRange;
+uniform sampler2D tex;
+uniform vec3 textColor;
 
-    def use(self):
-        glUseProgram(self.ID)
+float median(float r, float g, float b) {
+    return max(min(r, g), min(max(r, g), b));
+}
 
-    def _compile_shader(self, source, shader_type):
-        shader = glCreateShader(shader_type)
-        glShaderSource(shader, source)
-        glCompileShader(shader)
+void main() {
+    vec3 sdf = texture(tex, TexCoords).rgb;
+    float sigDist = median(sdf.r, sdf.g, sdf.b);
+    float screenPxDist = pxRange * (sigDist - 0.5);
+    float alpha = clamp(screenPxDist + 0.5, 0.0, 1.0);
+    FragColor = vec4(textColor, alpha);
+}
 
-        # Check for compilation errors
-        if glGetShaderiv(shader, GL_COMPILE_STATUS) != GL_TRUE:
-            print(glGetShaderInfoLog(shader))
-        return shader
+"""
 
-# ---------- FreeType Text Rendering ----------
+@dataclass
 class Character:
-    def __init__(self, texture_id, size, bearing, advance):
-        self.TextureID = texture_id
-        self.Size = size
-        self.Bearing = bearing
-        self.Advance = advance
+    uv_min: vector
+    uv_max: vector
+    size: vector
+    bearing: vector
+    advance: float
 
-def load_font(path):
-    face = freetype.Face(path)
-    face.set_pixel_sizes(0, 48)
+@dataclass
+class Font:
+    tex: moderngl.Texture
+    chars: dict[str, Character]
+    pxrange: int
 
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+def create_msdf_font(ctx, image_path: str, data_path: str):
+    chars = {}
+    image = pygame.image.load(image_path).convert_alpha()
+    atlas_width, atlas_height = image.get_size()
+    image_data = pygame.image.tostring(image, "RGBA", 1)
+    tex = ctx.texture((atlas_width, atlas_height), 4, image_data)
+    tex.repeat_x = False
+    tex.repeat_y = False
+    tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
 
-    for c in range(128):
-        face.load_char(chr(c))
-        bitmap = face.glyph.bitmap
-        width, height = bitmap.width, bitmap.rows
+    with open(data_path, 'r') as f:
+        data = json.load(f)
 
-        texture = glGenTextures(1)
-        glBindTexture(GL_TEXTURE_2D, texture)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_UNSIGNED_BYTE, bitmap.buffer)
+    for glyph in data["glyphs"]:
+        codepoint = glyph["unicode"]
+        char = chr(codepoint)
+        advance = glyph.get("advance", 0.0)
 
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-
-        ch = Character(
-            texture,
-            glm.ivec2(width, height),
-            glm.ivec2(face.glyph.bitmap_left, face.glyph.bitmap_top),
-            face.glyph.advance.x
-        )
-        Characters[chr(c)] = ch
-
-def render_text(shader, text, x, y, scale, color):
-    shader.use()
-    glUniform3f(glGetUniformLocation(shader.ID, "textColor"), *color)
-    glActiveTexture(GL_TEXTURE0)
-    glBindVertexArray(VAO)
-
-    for c in text:
-        ch = Characters.get(c)
-        if not ch:
+        if "planeBounds" not in glyph or "atlasBounds" not in glyph:
+            if char == " ":
+                chars[char] = Character(
+                    uv_min=vector(0, 0),
+                    uv_max=vector(0, 0),
+                    size=vector(0, 0),
+                    bearing=vector(0, 0),
+                    advance=advance
+                )
+            else:
+                print(f"[!] Skipping unsupported or control character: U+{codepoint:04X} ({repr(char)})")
             continue
 
-        xpos = x + ch.Bearing.x * scale
-        ypos = y - (ch.Size.y - ch.Bearing.y) * scale
-        w = ch.Size.x * scale
-        h = ch.Size.y * scale
+        pb = glyph["planeBounds"]
+        ab = glyph["atlasBounds"]
 
-        vertices = np.array([
-            xpos,     ypos + h,   0.0, 0.0,
-            xpos,     ypos,       0.0, 1.0,
-            xpos + w, ypos,       1.0, 1.0,
+        size = vector(pb["right"] - pb["left"], pb["top"] - pb["bottom"])
+        bearing = vector(pb["left"], pb["bottom"])
+        uv_min = vector(ab["left"] / atlas_width, ab["bottom"] / atlas_height)
+        uv_max = vector(ab["right"] / atlas_width, ab["top"] / atlas_height)
 
-            xpos,     ypos + h,   0.0, 0.0,
-            xpos + w, ypos,       1.0, 1.0,
-            xpos + w, ypos + h,   1.0, 0.0
-        ], dtype=np.float32)
+        chars[char] = Character(
+            uv_min=uv_min,
+            uv_max=uv_max,
+            size=size,
+            bearing=bearing,
+            advance=advance
+        )
 
-        glBindTexture(GL_TEXTURE_2D, ch.TextureID)
-        glBindBuffer(GL_ARRAY_BUFFER, VBO)
-        glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.nbytes, vertices)
+    return Font(tex, chars, data["atlas"]["distanceRange"])
 
-        glDrawArrays(GL_TRIANGLES, 0, 6)
+class TextRenderer:
+    def __init__(self, graphics: engine.graphics.Graphics):
+        self.graphics = graphics
 
-        x += (ch.Advance >> 6) * scale  # Bitshift by 6 to convert from 1/64 pixels to pixels
+        self.tex_key = "__ENGINE_font"
+        self.program = self.graphics.scene.ctx.program(VERTEX_SHADER, FRAGMENT_SHADER)
+        self.vbo = self.graphics.ctx.buffer(reserve=6 * 4 * 4)
+        vao_content = [(self.vbo, '4f', 'vertex')]
+        self.vao = self.graphics.ctx.vertex_array(self.program, vao_content)
+        
 
-    glBindVertexArray(0)
-    glBindTexture(GL_TEXTURE_2D, 0)
+    def render_text(self, font: Font, text: str, pos: vector, scale: int, color: tuple):
+        vec = pos.copy()
 
-def framebuffer_size_callback(window, width, height):
-    glViewport(0, 0, width, height)
+        self.program['textColor'].value = color
+        self.program['pxRange'].value = font.pxrange
 
-def process_input(window):
-    if glfw.get_key(window, glfw.KEY_ESCAPE) == glfw.PRESS:
-        glfw.set_window_should_close(window, True)
+        key = self.graphics.scene.texture_locker.add(self.tex_key)
+        font.tex.use(key)
+        self.program["tex"] = key
+        
+        self.graphics.scene.texture_locker.remove(self.tex_key)
 
-def main():
-    global VAO, VBO
+        for c in text:
+            ch = font.chars.get(c)
+            if not ch:
+                continue
 
-    if not glfw.init():
-        return
+            xpos = vec.x + ch.bearing.x * scale
+            ypos = vec.y + ch.bearing.y * scale
+            w = ch.size.x * scale
+            h = ch.size.y * scale
+            vertices = np.array([
+                xpos,     ypos,     ch.uv_min.x, ch.uv_min.y,
+                xpos,     ypos+h,   ch.uv_min.x, ch.uv_max.y,
+                xpos+w,   ypos+h,   ch.uv_max.x, ch.uv_max.y,
 
-    window = glfw.create_window(SCR_WIDTH, SCR_HEIGHT, "Text Rendering", None, None)
-    if not window:
-        glfw.terminate()
-        return
+                xpos,     ypos,     ch.uv_min.x, ch.uv_min.y,
+                xpos+w,   ypos+h,   ch.uv_max.x, ch.uv_max.y,
+                xpos+w,   ypos,     ch.uv_max.x, ch.uv_min.y
+            ], dtype='f4')
 
-    glfw.make_context_current(window)
-    glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
-
-    glEnable(GL_BLEND)
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-
-    shader = Shader(VERT, FRAG)
-    projection = glm.ortho(0.0, SCR_WIDTH, 0.0, SCR_HEIGHT)
-    shader.use()
-    glUniformMatrix4fv(glGetUniformLocation(shader.ID, "projection"), 1, GL_FALSE, glm.value_ptr(projection))
-
-    load_font("game/assets/graphics/fonts/rubik.ttf")
-
-    VAO = glGenVertexArrays(1)
-    VBO = glGenBuffers(1)
-
-    glBindVertexArray(VAO)
-    glBindBuffer(GL_ARRAY_BUFFER, VBO)
-    glBufferData(GL_ARRAY_BUFFER, 6 * 4 * 4, None, GL_DYNAMIC_DRAW)
-
-    glEnableVertexAttribArray(0)
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * 4, ctypes.c_void_p(0))
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
-    glBindVertexArray(0)
-
-    while not glfw.window_should_close(window):
-        process_input(window)
-
-        glClearColor(0.1, 0.1, 0.1, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT)
-
-        render_text(shader, "The quick brown fox jumps over the lazy dog", 25.0, 25.0, 0.7, glm.vec3(0.5, 0.8, 0.2))
-
-        glfw.swap_buffers(window)
-        glfw.poll_events()
-
-    glfw.terminate()
-
-if __name__ == "__main__":
-    main()
+            self.vbo.write(vertices.tobytes())
+            self.vao.render(moderngl.TRIANGLES)
+            vec.x += ch.advance * scale
