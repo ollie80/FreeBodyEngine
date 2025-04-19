@@ -19,115 +19,7 @@ import FreeBodyEngine.data
 
 DEFAULT_NORMAL = "#8080ff"
 
-empty_vert_shader = '''
-#version 330 core
 
-in vec2 vert;
-in vec2 texCoord;
-
-void main() {
-    
-    gl_Position = vec4(vert, texCoord.x, 1.0);
-}
-'''
-
-uv_vert_shader = """
-#version 330 core
-
-in vec2 vert;
-in vec2 texCoord;
-out vec2 uv;
-
-void main() {
-    uv = texCoord;
-
-    gl_Position = vec4(vert, 0.0, 1.0);
-}
-"""
-
-plain_frag_shader = """
-#version 330 core
-out vec4 fragColor;
-in vec2 uv;
-void main() {
-    uv;
-    fragColor = vec4(uv, 1.0, 1.0);  
-}
-"""
-
-texture_frag_shader = """
-#version 330 core
-
-uniform sampler2D tex;
-
-in vec2 uv;
-out vec4 f_color;
-
-void main() {
-    f_color = vec4(texture(tex, uv).rgba);
-}
-"""
-
-WORLD_VERT_SHADER = '''
-#version 330 core
-
-uniform mat4 proj;
-uniform mat4 view;
-uniform vec2 position;
-
-in vec2 vert;
-in vec2 texCoord;
-out vec2 uv;
-
-void main() {
-    uv = texCoord;
-
-    gl_Position = proj * view * vec4(vec2(vert + position).x, vec2(vert + position).y, 0.0, 1.0);
-}
-'''
-
-WORLD_FRAG_SHADER = '''
-#version 330 core
-
-uniform sampler2D tex;
-uniform sampler2D normal_tex;
-
-in vec2 uv;
-out vec4 frag_albedo;  // Diffuse color
-out vec4 frag_normal;  // Normal data
-
-void main() {
-    frag_albedo = texture(tex, uv);
-    
-    // Convert normal map from [0,1] to [-1,1] range
-    vec4 normal = texture(normal_tex, uv).rgba;
-    frag_normal = normal;
-}
-'''
-
-ANIMATION_FRAG = """
-#version 330 core
-
-in vec2 uv;
-out vec4 frag_albedo;
-out vec4 frag_normal;
-
-uniform sampler2D albedo;
-uniform sampler2D normal;
-
-uniform vec2 spritesheet_size;
-uniform vec2 img_size;
-uniform vec2 img_pos;
-
-void main() {
-    spritesheet_size;
-    vec2 tile_pos = vec2(img_size * img_pos)/ spritesheet_size;
-    vec2 tile_percentage = vec2(img_size/ spritesheet_size * uv);
-    vec2 sample_pos = vec2(tile_pos + tile_percentage);
-    frag_albedo = vec4(texture(albedo, sample_pos).rgba); 
-    frag_normal = vec4(texture(normal, sample_pos).rgba); 
-}
-"""
 
 def surf_to_texture(surf, ctx: moderngl.Context, aa = moderngl.NEAREST):
     tex = ctx.texture(surf.get_size(), 4)
@@ -554,138 +446,6 @@ class Camera(engine.core.Entity):
         # Combine translation and rotation
         self.view_matrix = np.dot(translation_matrix, rotation_matrix)
 
-DEBUG_FRAG_SHADER = """
-#version 330 core
-
-in vec2 uv;
-out vec4 f_color;
-
-uniform sampler2D tex;
-
-void main() {
-    f_color = vec4(texture(tex, uv).rgb, 1.0);
-}
-"""
-
-LIGHT_FRAG_SHADER = """
-#version 330 core
-#define MAX_LIGHTS 100
-
-struct Light {
-    vec2 position;
-    vec3 color;
-    float intensity;
-    float radius;
-};
-
-struct SpotLight {
-    vec2 position;
-    vec2 direction;
-    vec3 color;
-    float angle;
-    float intensity;
-    float radius;
-};
-
-struct DirectionalLight {
-    vec2 direction;
-    vec3 color;
-    float intensity;
-};
-
-uniform sampler2D albedo_texture;
-uniform sampler2D normal_texture;
-
-uniform vec2 screen_size;
-
-uniform Light lights[MAX_LIGHTS];
-uniform int light_count;
-
-uniform SpotLight spotLights[MAX_LIGHTS];
-uniform int spot_light_count;
-
-uniform DirectionalLight dirLights[MAX_LIGHTS];
-uniform int dir_light_count;
-
-uniform vec3 global_light;
-
-uniform mat4 view;
-uniform mat4 proj;
-uniform float zoom;
-
-in vec2 uv;
-out vec4 frag_color;
-
-void main() {
-    vec3 albedo = texture(albedo_texture, uv).rgb;
-    vec3 normal = texture(normal_texture, uv).rgb;
-    normal = normalize(normal * 2.0 - 1.0);
-
-
-    // Process each light
-    // Convert fragment position from screen space to NDC
-    vec4 frag_pos_ndc = vec4((gl_FragCoord.xy / screen_size) * 2.0 - 1.0, 0.0, 1.0);
-
-    // Transform from NDC to world space
-    vec4 frag_pos_world = inverse(proj * view) * frag_pos_ndc;
-    frag_pos_world /= frag_pos_world.w; // Perspective divide
-
-    // Start with global ambient lighting
-    vec3 lighting = global_light;
-
-    // Process each light
-    if (light_count > 0) {
-        for (int i = 0; i < dir_light_count; i++) {
-            vec3 light_vec = normalize(vec3(dirLights[i].direction, 1.0));
-            float diff = max(dot(normal, light_vec), 0.0);
-
-            lighting += dirLights[i].color * diff * dirLights[i].intensity;
-        }
-
-        for (int i = 0; i < spot_light_count; i++) {
-            vec2 light_pos_world = spotLights[i].position;
-            vec2 to_frag = normalize(frag_pos_world.xy - light_pos_world);
-            vec2 spot_dir = normalize(spotLights[i].direction);
-
-            // Calculate spotlight effect
-            float angle_diff = dot(to_frag, spot_dir);
-            float spot_effect = smoothstep(cos(spotLights[i].angle), cos(spotLights[i].angle * 0.9), angle_diff);
-
-            // Compute attenuation
-            float dist = length(light_pos_world - frag_pos_world.xy);
-            if (dist > spotLights[i].radius) continue;
-            float attenuation = 1.0 - (dist / spotLights[i].radius);
-            attenuation = max(attenuation, 0.0);
-
-            // Diffuse lighting
-            vec3 light_vec = normalize(vec3(to_frag, 1.0));
-            float diff = max(dot(normal, light_vec), 0.0);
-
-            lighting += spotLights[i].color * diff * spotLights[i].intensity;
-        }
-        
-        for (int i = 0; i < light_count; i++) {
-            // Light position is already in world space
-            vec2 light_pos_world = lights[i].position;
-
-            // Compute world-space distance
-            float dist = length(light_pos_world - frag_pos_world.xy);
-            if (dist > lights[i].radius) continue;
-
-            // Calculate lighting contribution
-            vec2 light_dir = normalize(light_pos_world - frag_pos_world.xy);
-            vec3 light_vec = normalize(vec3(light_dir, 1.0));
-            float diff = max(dot(normal, light_vec), 0.0);
-            float attenuation = 1.0 - (dist / lights[i].radius);
-            attenuation = max(attenuation, 0.0);
-
-            lighting += lights[i].color * diff * lights[i].intensity * attenuation;
-        }
-    }
-
-    frag_color = vec4(albedo * lighting, 1.0);
-}
-"""
 
 class DirectionalLight(engine.core.Entity):
     def __init__(self, scene: engine.core.Scene, color: Color, intensity: int, angle: int):
@@ -817,79 +577,6 @@ class SpotLight(engine.core.Entity):
     def on_draw(self):
         self.scene.graphics.add_spotlight(self)
 
-shadow_vert_shader = """
-#version 330 core
-
-in vec2 vert;
-in vec2 texCoord;
-out vec2 uv;
-
-void main() {
-    uv = texCoord;
-
-    gl_Position = vec4(vert, 0.0, 1.0);
-}
-"""
-
-shadow_frag_shader = """
-
-"""
-
-class ShadowCaster(engine.core.Component):
-    def __init__(self, entity: engine.core.Entity):
-        super().__init__(entity)
-        self.program = self.entity.scene.glCtx.program(shadow_vert_shader, shadow_frag_shader)
-        
-        x = self.entity.size[0]
-        y = self.entity.size[1]
-
-        # y values are fliped for pygame
-        quad_buffer = self.entity.scene.glCtx.buffer(data=array('f', [
-            # position (x, y), uv coords (x,y)
-            -1.0, 1.0, 0.0, 0.0, # top left
-            x, 1.0, 1.0, 0.0, # top right
-            -1.0, -y, 0.0, 1.0, # bottom left
-            x, -y, 1.0, 1.0, # bottom right
-        ]))
-
-        self.render_object = self.entity.scene.glCtx.vertex_array(self.program, [(quad_buffer, '2f 2f',  'vert', 'texCoord')])
-
-        self.position = self.entity.position
-
-    def update(self, dt):
-        self.position = self.entity.position
-
-    def draw(self, lights):
-        for light in lights:
-            # Set the color for light[i]
-            self.lighting_program[f"lights[{i}].color"] = light.color
-            
-            # Set the intensity for light[i]
-            self.lighting_program[f"lights[{i}].intensity"] = light.intensity
-            
-            # Set the position for light[i]
-            self.lighting_program[f"lights[{i}].position"] = light.position
-            
-            # Set the radius for light[i]
-            self.lighting_program[f"lights[{i}].radius"] = light.radius
-            i+=1
-
-        self.render_object.render()
-
-CLEAR_FRAG_SHADER = """
-#version 330 core
-
-uniform vec3 normal_color;
-uniform vec3 albedo_color;
-
-out vec4 frag_albedo;
-out vec4 frag_normal;
-
-void main() {
-    frag_albedo = vec4(albedo_color, 1.0);
-    frag_normal = vec4(normal_color, 1.0);
-}
-"""
 
 RENDERING_MODES = ["full",  "general", "normal", "light"]
 
@@ -948,7 +635,6 @@ class Graphics:
         self.rendering_mode = "full"
 
         self.general_images: list[Image] = []
-        self.shadow_casters: list[ShadowCaster] = []
         
         self.post_layers: list[PostProcessLayer] = []
 
@@ -956,17 +642,17 @@ class Graphics:
         self.directional_lights: list[DirectionalLight] = []
         self.spot_lights: list[SpotLight] = []
         self.global_light = Color("#505050")
-        self.lighting_program = self.ctx.program(uv_vert_shader, LIGHT_FRAG_SHADER)
+        self.lighting_program = self.ctx.program(self.scene.files.load_text('engine/shader/graphics/uv.vert'), self.scene.files.load_text('engine/shader/graphics/light.frag'))
         
 
-        self.clear_program = self.ctx.program(empty_vert_shader, CLEAR_FRAG_SHADER)
+        self.clear_program = self.ctx.program(self.scene.files.load_text('engine/shader/graphics/empty.vert'), self.scene.files.load_text('engine/shader/graphics/clear.frag'))
 
 
         self.lighting_program["albedo_texture"] = self.scene.texture_locker.get_value(self.albedo_key)
         self.lighting_program["normal_texture"] = self.scene.texture_locker.get_value(self.normal_key)
         #self.lighting_program["shadow_texture"] = self.scene.texture_locker.get_value(self.shadow_key)
 
-        self.screen_program = self.ctx.program(uv_vert_shader, texture_frag_shader)
+        self.screen_program = self.ctx.program(self.scene.files.load_text('engine/shader/graphics/uv.vert'), self.scene.files.load_text('engine/shader/graphics/texture.frag'))
 
 
 

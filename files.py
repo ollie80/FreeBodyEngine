@@ -30,9 +30,6 @@ class FileManager:
     def __init__(self, main: engine.core.Main, path):
         self.path = "game"
         self.game_name = main.game_name
-        self.image_cache: dict[str, pygame.surface.Surface] = {}
-        self.spritesheet_cache: dict[str, engine.graphics.Spritesheet] = {}
-        self.shader_cache: dict[str, str] = {}
         self.main: engine.core.Main = main
 
         #loading assets
@@ -124,8 +121,8 @@ class FileManager:
 
         return engine.graphics.Shader(self.scene, vert, frag)
 
-    def load_shader(self, location, name):
-        path = location + "/" + name
+    def load_shader(self, path):
+        
         if self.shader_cache.get(path) != None:
             return self.shader_cache[path]
         else:
@@ -137,8 +134,8 @@ class FileManager:
                 file.close()
                 self.shader_cache[path] = text 
                 return text
+            
             except:
-
                 print("couldn't shader file with path: " + file_path)
             
     def load_image(self, path):

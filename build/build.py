@@ -13,8 +13,10 @@ def get_relative_path(path: str, folder: str) -> str:
     
 output_path = os.path.abspath(".\\build")
 
-data_file_types = [".json", ".animation", ".spritesheet", ".tileset"]
+data_file_types = [".json", ".txt", ".shader", ".glsl", ".vert", ".frag", ".composite", ".animation", ".spritesheet", ".tileset"]
 font_file_types = [".ttf"]
+image_file_types = ['.png', '.jpg', '.jpeg']
+
 
 def load_text(path: str):
     file = open(path, "r")
@@ -36,11 +38,13 @@ def convert_font(path: str, out_path: str):
     subprocess.run([exe_path, '-font', font_path, '-imageout', img_path, '-json', json_path], stdout=subprocess.DEVNULL)
     return (img_path, font_path.split(".")[0] + ".png"), (json_path, font_path.split(".")[0] + ".json")
 
-def bundle(paths: list[str], output_path: str, asset_dir: str, mapped_paths: list[tuple[str, str]]): #mapped paths are needed for temp assets
-    with open(f"{output_path}.pak", "wb") as f:
+
+
+def bundle(paths: list[str], output_path: str, asset_dir: str, mapped_paths: list[tuple[str, str]] = [], path_prefix = "", open_mode = 'wb'):
+    with open(f"{output_path}.pak", open_mode) as f:
         for path in paths:
             data = open(f"{path}", "rb").read()
-            rel = get_relative_path(path, asset_dir)
+            rel = path_prefix + get_relative_path(path, asset_dir)
             f.write(struct.pack("<H", len(rel)))
             f.write(rel.encode("utf-8"))
             f.write(struct.pack("<I", len(data)))
@@ -48,20 +52,21 @@ def bundle(paths: list[str], output_path: str, asset_dir: str, mapped_paths: lis
         
         for path in mapped_paths:
             data = open(f"{path[0]}", "rb").read()
-            rel = get_relative_path(path[1], asset_dir)
+            rel = path_prefix + get_relative_path(path[1], asset_dir)
             f.write(struct.pack("<H", len(rel)))
             f.write(rel.encode("utf-8"))
             f.write(struct.pack("<I", len(data)))
             f.write(data)
 
 def find_assets(dir_path: str, extensions: list[str]):
+    
     matches = []
     for root, _, files in os.walk(dir_path):
         for file in files:
             for extension in extensions:
                 if file.endswith(extension):
                     matches.append(os.path.join(root, file))
-
+    
     return matches
 
 def build_assets(out_path):
@@ -75,9 +80,21 @@ def build_assets(out_path):
         shutil.rmtree(temp_path)
     os.mkdir(temp_path)
 
+    engine_assets = os.path.abspath("FreeBodyEngine/engine_assets/")
+    
+
     #convert fonts
     font_dir = out_path + "\\temp\\font\\"
     os.mkdir(font_dir)
+
+    engine_fonts = find_assets(engine_assets, font_file_types)
+    engine_font_images = []
+    engine_font_data = []
+    for path in engine_fonts:
+        img_path, json_path = convert_font(path, font_dir)
+        engine_font_images.append(img_path)    
+        engine_font_data.append(json_path)
+
 
     font_paths = find_assets(assets_path, font_file_types)
     font_imgs = []
@@ -92,14 +109,17 @@ def build_assets(out_path):
     if os.path.exists(asset_path):
         shutil.rmtree(asset_path)
         
-
     os.mkdir(asset_path)  
 
-    img_paths = find_assets(assets_path, ['.png', '.jpg', '.jpeg'])
+    engine_images = find_assets(engine_assets, image_file_types)
+    img_paths = find_assets(assets_path, image_file_types)
     bundle(img_paths, out_path + "\\assets\\images", assets_path, font_imgs)
+    bundle(engine_images, out_path + "\\assets\\images", engine_assets, engine_font_images, "engine/", "ab")
 
-    data_paths = find_assets(assets_path, ['.png', '.jpg', '.jpeg'])
+    engine_data = find_assets(engine_assets, data_file_types) 
+    data_paths = find_assets(assets_path, data_file_types)
     bundle(data_paths, out_path + "\\assets\\data", assets_path, font_data)
+    bundle(engine_data, out_path + "\\assets\\data", engine_assets, engine_font_data, "engine/", "ab")
 
     
     #remove temp files
