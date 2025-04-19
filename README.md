@@ -1,4 +1,9 @@
 # FreeBodyEngine
+## Requirements
+- python
+- pygame-ce (if you have the normal version uninstall and install ce)
+- moderngl
+
 ## Quick Start Guide
 First, clone the template repo.
 
