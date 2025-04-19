@@ -431,6 +431,7 @@ class Camera(Entity):
 
         self.scene.main.screen.blit(pygame.transform.scale_by(self.zoom_surf, self.zoom), (0, 0))
 
+
 class Scene:
     def __init__(self, main: "Main"):
         self.SDL = main.SDL
@@ -439,21 +440,12 @@ class Scene:
         self.entities: list[Entity] = []
         
         self.camera: engine.graphics.Camera
-
-        self.camera = engine.graphics.Camera(vector(0, 32), self, 1)
-
-        self.texture_locker = engine.data.KeyLocker()
-
-        self.glCtx: moderngl.Context = moderngl.create_context()
-        self.glCtx.enable(moderngl.BLEND)
-        self.glCtx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        self.scene_texture = self.glCtx.texture(self.main.window_size, 4)
-        
-        self.graphics = engine.graphics.Graphics(self, self.glCtx)
-        
         self.files: engine.files.FileManager = self.main.files
 
-        
+        self.camera = engine.graphics.Camera(vector(0, 32), self, 1)
+        self.texture_locker = engine.data.KeyLocker()
+        self.glCtx: moderngl.Context = self.main.glCtx
+        self.graphics = engine.graphics.Graphics(self, self.glCtx)        
 
         self.add(self.camera)
 
@@ -485,13 +477,11 @@ class Scene:
         else:
             self.display = pygame.surface.Surface((self.main.window_size[0] / self.camera.zoom, self.main.window_size[1] / self.camera.zoom))
 
-
     def set_active_camera(self, camera_id):
         for entity in self.entities:
             if entity.__class__ == Camera:
                 if entity.camera_id == camera_id:
                     self.camera = entity
-
 
     def on_resize(self):
         self.graphics.on_resize()
@@ -553,15 +543,16 @@ class Main:
         self.volume = 100
         self.fps_timer = engine.core.Timer(10)
         self.fps_timer.activate()
-    
         self.screen = pygame.display.set_mode(self.window_size, flags, display=display)
         
         self.clock = pygame.time.Clock()
         self.dt = 0
 
+        self.glCtx = moderngl.create_context()
         self.scenes: dict[str, Scene] = {}
         self.active_scene: Scene = None
 
+        self.transition_manager = SceneTransitionManager(self)
 
     def event_loop(self):
         for event in pygame.event.get():
@@ -578,16 +569,22 @@ class Main:
     def on_event_loop(self, event):
         pass
 
-    def add_scene(self, scene: Scene, key: str):
-        self.scenes[key] = scene
+    def add_scene(self, scene: Scene, name: str):
+        self.scenes[name] = scene
 
-    def remove_scene(self, key: str):
+    def remove_scene(self, name: str):
         if self.scenes[str] == self.active_scene:
             self.active_scene = None
         del self.scenes[str]
 
-    def set_scene(self, key: str):
-        self.active_scene = self.scenes[key]
+    def change_scene(self, name: str, transition: "SceneTransition" = None):
+        if transition == None:
+            self._set_scene(name)
+        else:
+            self.transition_manager.transition(transition, name)
+
+    def _set_scene(self, name: str):
+        self.active_scene = self.scenes[name]
 
     def has_scene(self, targetScene):
         for scene in self.scenes:
@@ -613,10 +610,77 @@ class Main:
                 pygame.display.set_caption(f"Engine Dev       FPS: {round(total_fps/ticks)}")
                 self.fps_timer.activate()
             self.event_loop()
+            self.transition_manager.update(dt)
+
             if self.active_scene:
                 self.active_scene.update(dt)
+            self.transition_manager.draw()
             pygame.display.flip() 
-            
+
+class SceneTransition:
+    def __init__(self, manager: "SceneTransitionManager", vert, frag, duration):
+        self.elapsed = 0
+        self.duration = duration 
+        self.time = self.duration/self.elapsed
+        self._reversed = False
+
+        self.manager = manager
+
+        self.program = self.manager.main.glCtx.program(vert, frag)
+        self.vao = engine.graphics.create_fullscreen_quad(self.manager.main.glCtx, self.program)        
+
+    def update(self, dt):
+        if not self._reversed:
+            self.elapsed += dt
+            self.time = min(self.duration/self.elapsed, 1)
+
+            if self.time >= 1:
+                self._reversed = True
+                self.manager.main._set_scene(self.manager.new_scene)
+        else:
+            self.elapsed -= dt
+            self.time = max(self.duration/self.elapsed, 0)
+
+            if self.time <= 0:
+                self.manager.current_transition = None        
+
+    def draw(self):
+        if self._reversed:
+            t = -self.time
+        else:
+            t = self.time
+
+        self.program['time'] = t
+
+        self.manager.main.glCtx.screen.use()
+        self.vao.render(moderngl.TRIANGLE_STRIP)
+
+class FadeTransition(SceneTransition):
+    def __init__(self, manager: "SceneTransitionManager", duration: int):
+        super().__init__(manager, manager.main.files.load_text('engine/scene_transitions/fade.glsl'), manager.main.files.load_text('engine/graphics/empty.vert'), duration)
+
+class StarWarsTransition(SceneTransition):
+    def __init__(self, manager: "SceneTransitionManager", duration: int):
+        super().__init__(manager, manager.main.files.load_text('engine/scene_transitions/starwars.glsl'), manager.main.files.load_text('engine/graphics/uv.vert'), duration)
+
+class SceneTransitionManager:
+    def __init__(self, main: Main):
+        self.main = main
+        self.current_transition: SceneTransition = None
+        self.new_scene: str = None
+
+    def transition(self, transition: SceneTransition, new_scene: str):
+        self.current_transition = transition
+        self.new_scene = new_scene
+
+    def update(self, dt):
+        if self.current_transition:
+            self.current_transition.update(dt)
+
+    def draw(self):
+        if self.current_transition:
+            self.current_transition.draw()
+
 class InputManager: # im very sorry for what you're about to read
     def __init__(self):
         self.file_path = "settings/actions.json"
@@ -660,7 +724,6 @@ class InputManager: # im very sorry for what you're about to read
         else:
             self.controller = None
             
-
     def get_controller_input(self): # shitty pygame (maybe its SDL's fault idk) implemplementaion of controller input kinda requires this (also shitty controller standards ig)
         if len(self.controllers) > 0:
             for input in self.controller_input:
@@ -726,7 +789,6 @@ class InputManager: # im very sorry for what you're about to read
                 if rStickHor < -0.65 + self.joy_stick_generosity and rStickVert < -0.65 + self.joy_stick_generosity:
                     self.controller_input["C_RStick_Up"] = True
                     self.controller_input["C_RStick_Left"] = True
-                
 
     def reset_actions(self):
         for action in self.active:
@@ -769,3 +831,4 @@ class InputManager: # im very sorry for what you're about to read
         
                     
         self.get_controller_input()
+

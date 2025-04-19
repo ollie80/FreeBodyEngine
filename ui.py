@@ -313,7 +313,7 @@ class UIManager:
 
         # graphics
         self.on_resize()
-        self.program = self.graphics.ctx.program(engine.graphics.uv_vert_shader, engine.graphics.texture_frag_shader)
+        self.program = self.graphics.ctx.program(self.scene.files.load_text("engine/shader/graphics/uv.vert"), self.scene.files.load_text("engine/shader/graphics/texture.frag"))
         self.vao = engine.graphics.create_fullscreen_quad(self.graphics.ctx, self.program)
 
     def on_resize(self):
