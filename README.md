@@ -1,4 +1,4 @@
-# FreeBodyEngine
+![logo](engine_assets/FreeBodyTextWhite.png)
 ## Requirements
 - python
 - pygame-ce (if you have the normal version uninstall and install ce)
