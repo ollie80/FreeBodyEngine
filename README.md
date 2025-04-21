@@ -1,7 +1,9 @@
-<picture>
+<a href="https://github.com/ollie80/FreeBodyEngine">
+  <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ollie80/FreeBodyEngine/engine_assets/FreeBodyTextWhite.png">
   <img alt="logo" src="https://raw.githubusercontent.com/ollie80/FreeBodyEngine/engine_assets/FreeBodyTextBlack.png">
-</picture>
+  </picture>
+</a>
 
 ## Requirements
 - python
