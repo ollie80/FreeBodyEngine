@@ -118,7 +118,22 @@ class Color:
         #RRGGBB
         """
         return self._fn_to_hex(self.float_normalized_a)
-        
+    
+    @hex.setter
+    def hex(self, new):
+        self.float_normalized_a = self._hex_to_fn(new)
+    
+    @hex.setter
+    def hex(self, new):
+        self.float_normalized_a = self._hex_to_fn(new)
+    
+    @hex.setter
+    def hex(self, new):
+        self.float_normalized_a = self._hex_to_fn(new)
+    @hex.setter
+    def rgb(self, new):
+        self.float_normalized_a = self._rgb_to_fn(new)
+
     @property
     def hexa(self) -> str:
         """
@@ -626,6 +641,7 @@ class Graphics:
         self.post_key = "_ENGINE_post"
 
         self.background_normal = Color((0.5, 0.5, 1.0))
+
         
         self.scene.texture_locker.add(self.albedo_key)
         self.scene.texture_locker.add(self.normal_key)

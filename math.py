@@ -86,7 +86,7 @@ class EaseInOutCircular(Curve):
 
 class EaseOutSin(Curve):
     def get_value(self, x):
-        return (math.sin((0.5*x)*math.pi))
+        return min(math.sin((0.5*x)*math.pi), 1)
 
 class BounceOut(Curve):
     def get_value(self, x):

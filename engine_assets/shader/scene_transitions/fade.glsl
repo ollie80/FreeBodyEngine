@@ -7,5 +7,5 @@ uniform float time;
 
 void main() {
 
-    f_color = vec4(1.0, 1.0, 1.0, time);
+    f_color = vec4(0.0, 0.0, 0.0, time);
 }

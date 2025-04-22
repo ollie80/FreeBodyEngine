@@ -2,6 +2,8 @@ import json
 from pathlib import Path
 import FreeBodyEngine as engine
 import pygame
+import moderngl
+
 import sys
 import ast
 from pygame import Vector2 as vector
@@ -127,10 +129,10 @@ class FileManager:
             return self.shader_cache[path]
         else:
             file_path = os.path.abspath(self.path  + "/assets" + "/graphics/shader/" + path + ".glsl")
-
+            
             try:
                 file = open(file_path, "r")
-                text = file.read()
+                text = file.read() 
                 file.close()
                 self.shader_cache[path] = text 
                 return text
@@ -138,9 +140,9 @@ class FileManager:
             except:
                 print("couldn't shader file with path: " + file_path)
             
-    def load_image(self, path):
+    def load_image(self, path, aa=moderngl.NEAREST):
         img = pygame.image.load(io.BytesIO(self.images[path])).convert_alpha()
-        return engine.graphics.surf_to_texture(img, self.scene.glCtx)
+        return engine.graphics.surf_to_texture(img, self.main.glCtx, aa)
 
     def load_tileset(self, name: str) -> dict:
         file_path = os.path.abspath(self.path + "/assets" + "/tilesets/" + name + ".json")
