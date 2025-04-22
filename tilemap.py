@@ -132,10 +132,6 @@ class ChunkImage(engine.graphics.Image):
         super().__init__(None, self.chunk.image_key, scene, size=(self.chunk.tilemap.chunk_world_size, self.chunk.tilemap.chunk_world_size))
         self.set_shader(ChunkShader(self.scene, self))
         self.position = self.chunk.world_position
-        print(self.position)
-        print(self.size)
-
-
 
     def draw(self):
         groups = {}
@@ -145,7 +141,6 @@ class ChunkImage(engine.graphics.Image):
                 if tile != None:
                     if tile.spritesheet_name not in groups.keys():
                         groups[tile.spritesheet_name] = self.chunk.tilemap.frag_data.copy()
-                    print(groups[tile.spritesheet_name].size)
                     groups[tile.spritesheet_name][i] = [tile.image_pos[0], tile.image_pos[1]]
                 i += 1
 

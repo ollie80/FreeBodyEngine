@@ -728,14 +728,6 @@ class Graphics:
         self.directional_lights.clear()
         self.spot_lights.clear()
 
-    def add_font(self, key, name):
-        """Creates a font that can be used to render text. Must be a TTF file"""
-        path = f"game/assets/graphics/fonts/{name}.ttf"
-        if os.path.exists(path):
-            font = freetype.Face(path)
-            self.fonts[key] = font
-        else:
-            print(f"Font with name: {name} doesn't exsist.")
 
     def get_font(self, font_name: str):
         font = self.fonts['default']
