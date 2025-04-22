@@ -1,7 +1,7 @@
 <a href="https://github.com/ollie80/FreeBodyEngine">
   <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ollie80/FreeBodyEngine/engine_assets/FreeBodyTextWhite.png">
-  <img alt="logo" src="https://raw.githubusercontent.com/ollie80/FreeBodyEngine/engine_assets/FreeBodyTextBlack.png">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/ollie80/FreeBodyEngine/main/engine_assets/logo/FreeBodyTextWhite.png">
+  <img alt="logo" src="https://raw.githubusercontent.com/ollie80/FreeBodyEngine/main/engine_assets/logo/FreeBodyBlackWhite.png">
   </picture>
 </a>
 
@@ -25,4 +25,6 @@ Then move to the created directory and clone the engine files.
 ## Running and Building
 To run your game in dev mode, simply run the `FreeBodyEngine/dev/run.py` file (this will also pass on any flags to you main file).
 
-Building your game binaries is not implemented yet.
+To build your game, run the `FreeBodyEngine/build/build.py` file, you will then find your executable and assets in the dist folder. 
+
+**WARNING** Always keep the built game files in the same structure or else many of the engine's systems will break.
