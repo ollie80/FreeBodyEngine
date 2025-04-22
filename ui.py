@@ -76,7 +76,6 @@ class UIElement:
                 self.program['rot'] = self.style.get("rotation", (0, 0, 0))
             if uniform == "borderRadius":
                 self.program['borderRadius'] = self._get_border_radius()
-                print(self.program['borderRadius'].value)
             if uniform == "resolution":
                 self.program['resolution'] = self.manager.scene.main.window_size
 
@@ -149,7 +148,6 @@ class UIElement:
         self._generate_graphics_objects()
         self._apply_style()
         self.vao.render(moderngl.TRIANGLE_STRIP)
-        print(self.rect)
         self.manager.end_draw()
 
     def draw(self):

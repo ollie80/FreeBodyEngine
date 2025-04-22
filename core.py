@@ -733,10 +733,9 @@ class InputManager: # im very sorry for what you're about to read
 
         self.joy_stick_generosity = 0.2
         self.get_controller_input()
-
+        print
         self.curr_input_type = "key"
 
-        print(self.scene.files.data.keys())
         self.actions = self.scene.files.load_json('controlls/actions.json')
         for action in self.actions:
             self.active[action] = False

@@ -318,7 +318,6 @@ class LightingManager:
         self.light_texture.release()
         self.light_fbo.release()
         self.light_texture = self.ctx.texture(self.scene.main.window_size, 4)
-        print(self.light_texture.size)
         self.light_fbo = self.ctx.framebuffer(color_attachments=[self.light_texture])
 
     def render_lights(self):
