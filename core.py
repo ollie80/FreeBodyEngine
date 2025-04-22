@@ -11,6 +11,7 @@ import threading
 import moderngl
 
 import FreeBodyEngine as engine
+import FreeBodyEngine.math
 
 import random 
 from sys import exit
@@ -445,11 +446,15 @@ class Scene:
         self.camera = engine.graphics.Camera(vector(0, 32), self, 1)
         self.texture_locker = engine.data.KeyLocker()
         self.glCtx: moderngl.Context = self.main.glCtx
+        self.glCtx.enable(moderngl.BLEND)
+        self.glCtx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+        self.scene_texture = self.glCtx.texture(self.main.window_size, 4)
+     
+
         self.graphics = engine.graphics.Graphics(self, self.glCtx)        
-
+            
         self.add(self.camera)
-
-        self.input = InputManager()
+        self.input = InputManager(self)
         
         
         self.ui = engine.ui.UIManager(self)
@@ -602,7 +607,7 @@ class Main:
             profiler_thread.start()
             
         while True: 
-            dt = self.clock.tick(self.fps_cap) / 100
+            dt = self.clock.tick(self.fps_cap)
             total_fps += self.clock.get_fps()
             ticks += 1
             self.fps_timer.update(dt)
@@ -618,50 +623,55 @@ class Main:
             pygame.display.flip() 
 
 class SceneTransition:
-    def __init__(self, manager: "SceneTransitionManager", vert, frag, duration):
+    def __init__(self, main: "Main", vert, frag, duration, curve = engine.math.Linear()):
         self.elapsed = 0
         self.duration = duration 
-        self.time = self.duration/self.elapsed
+        self.time: int = 0
+        
         self._reversed = False
+        print('NEW NEW NEW NEW NEW NEW NEW NEW NEW')
 
-        self.manager = manager
+        self.main = main
+        self.curve = curve
 
-        self.program = self.manager.main.glCtx.program(vert, frag)
-        self.vao = engine.graphics.create_fullscreen_quad(self.manager.main.glCtx, self.program)        
+        self.program = self.main.glCtx.program(vert, frag)
+        
+        self.vao = engine.graphics.create_fullscreen_quad(self.main.glCtx, self.program)        
 
     def update(self, dt):
         if not self._reversed:
-            self.elapsed += dt
-            self.time = min(self.duration/self.elapsed, 1)
+            self.elapsed = min(self.elapsed + dt, self.duration) 
+            self.time = self.curve.get_value(self.elapsed/self.duration)
 
             if self.time >= 1:
                 self._reversed = True
-                self.manager.main._set_scene(self.manager.new_scene)
+                self.main._set_scene(self.main.transition_manager.new_scene)
         else:
-            self.elapsed -= dt
-            self.time = max(self.duration/self.elapsed, 0)
-
+            self.elapsed = max(self.elapsed - dt, 0)
+            if self.elapsed == 0:
+                self.time = 0
+            else:
+                self.time = self.curve.get_value(self.elapsed/self.duration)            
+            
             if self.time <= 0:
-                self.manager.current_transition = None        
+                self.main.transition_manager.current_transition = None        
+        
+        print(self.elapsed)
 
     def draw(self):
-        if self._reversed:
-            t = -self.time
-        else:
-            t = self.time
-
-        self.program['time'] = t
-
-        self.manager.main.glCtx.screen.use()
+        self.program['time'] = self.time
+        if "inverse" in self.program:
+            self.program['inverse'] = not self._reversed 
+        self.main.glCtx.screen.use()
         self.vao.render(moderngl.TRIANGLE_STRIP)
 
 class FadeTransition(SceneTransition):
-    def __init__(self, manager: "SceneTransitionManager", duration: int):
-        super().__init__(manager, manager.main.files.load_text('engine/scene_transitions/fade.glsl'), manager.main.files.load_text('engine/graphics/empty.vert'), duration)
+    def __init__(self, main: "Main", duration: int):
+        super().__init__(main, main.files.load_text('engine/shader/graphics/empty.vert'), main.files.load_text('engine/shader/scene_transitions/fade.glsl'), duration, engine.math.EaseInOut())
 
 class StarWarsTransition(SceneTransition):
-    def __init__(self, manager: "SceneTransitionManager", duration: int):
-        super().__init__(manager, manager.main.files.load_text('engine/scene_transitions/starwars.glsl'), manager.main.files.load_text('engine/graphics/uv.vert'), duration)
+    def __init__(self, main: "Main", duration: int):
+        super().__init__(main, main.files.load_text('engine/shader/graphics/uv.vert'), main.files.load_text('engine/shader/scene_transitions/starwars.glsl'), duration, engine.math.EaseInOut())
 
 class SceneTransitionManager:
     def __init__(self, main: Main):
@@ -681,9 +691,35 @@ class SceneTransitionManager:
         if self.current_transition:
             self.current_transition.draw()
 
+class SplashScreenScene(Scene):
+    def __init__(self, main: Main, duration: int, new_scene: str, texture: moderngl.Texture, color: str, transition=None):
+        self.timer = Timer(duration)
+        self.duration = duration
+        self.timer.activate()
+        self.transition = transition
+        super().__init__(main)
+        self.graphics.rendering_mode = "general"
+        self.camera.background_color.hex = color
+
+        self.new_scene = new_scene
+        self.ui.add(engine.ui.UIImage(self.ui, texture, {"maintain-aspect-ratio": True}))
+        self.started_transition = False
+
+    def on_update(self, dt):
+        self.timer.update(dt)
+        
+        if self.timer.complete and not self.started_transition:
+            self.started_transition = True
+            if self.transition == None:
+                transition =  StarWarsTransition(self.main, self.duration)
+            else:
+                transition = self.transition
+            self.main.change_scene(self.new_scene, transition)
+
+
 class InputManager: # im very sorry for what you're about to read
-    def __init__(self):
-        self.file_path = "settings/actions.json"
+    def __init__(self, scene: Scene):
+        self.scene = scene
         self.actions: dict[str, list[str]]
         self.active = {}
         self.controllers = [pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())]
@@ -700,14 +736,8 @@ class InputManager: # im very sorry for what you're about to read
 
         self.curr_input_type = "key"
 
-        try:
-            with open(self.file_path, "r") as file:
-                self.actions = json.load(file)
-        except:
-            with open(self.file_path, "w") as file:
-                file.write("{}")
-                self.actions = json.load(file)
-
+        print(self.scene.files.data.keys())
+        self.actions = self.scene.files.load_json('controlls/actions.json')
         for action in self.actions:
             self.active[action] = False
 
@@ -724,7 +754,7 @@ class InputManager: # im very sorry for what you're about to read
         else:
             self.controller = None
             
-    def get_controller_input(self): # shitty pygame (maybe its SDL's fault idk) implemplementaion of controller input kinda requires this (also shitty controller standards ig)
+    def get_controller_input(self): # shitty controller standards kinda make this mess necessary
         if len(self.controllers) > 0:
             for input in self.controller_input:
                 self.controller_input[input] = False

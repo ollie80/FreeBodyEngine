@@ -5,6 +5,12 @@ import shutil
 import struct
 from pathlib import Path
 import sys
+import os
+import shutil
+import subprocess
+import sys
+import venv
+
 
 def get_relative_path(path: str, folder: str) -> str:
     full = Path(path)
@@ -39,7 +45,6 @@ def convert_font(path: str, out_path: str):
     return (img_path, font_path.split(".")[0] + ".png"), (json_path, font_path.split(".")[0] + ".json")
 
 
-
 def bundle(paths: list[str], output_path: str, asset_dir: str, mapped_paths: list[tuple[str, str]] = [], path_prefix = "", open_mode = 'wb'):
     with open(f"{output_path}.pak", open_mode) as f:
         for path in paths:
@@ -59,7 +64,6 @@ def bundle(paths: list[str], output_path: str, asset_dir: str, mapped_paths: lis
             f.write(data)
 
 def find_assets(dir_path: str, extensions: list[str]):
-    
     matches = []
     for root, _, files in os.walk(dir_path):
         for file in files:
@@ -125,40 +129,82 @@ def build_assets(out_path):
     #remove temp files
     shutil.rmtree(out_path + "\\temp")
 
-def build_code():
-    
-    #clone code files
-    shutil.copytree("./FreeBodyEngine", output_path + "/FreeBodyEngine", ignore=shutil.ignore_patterns('dev', 'build'))
-    
-    code_path_name = os.path.basename(code_path)
-    shutil.copytree(code_path, output_path + "/" + code_path_name)
-    
-    main_file_name = os.path.basename(main_file)
-    shutil.copyfile(main_file, output_path + "/" + main_file_name)
 
-    for package in pip_dependencies:
-        print(f"Installing {package}...")
+
+def install_with_logging(python_executable, package, cache_dir):
+    print(f"Installing {package}...")
+    try:
         subprocess.check_call([
-            sys.executable,
+            python_executable,
             "-m", "pip",
             "install",
-            package        ])
-    
-    env_paths = os.pathsep.join(str(p) for p in output_path)
-    
-    pyinstaller_flags = [
+            package,
+            "--cache-dir", cache_dir
+        ])
+    except subprocess.CalledProcessError as e:
+        print(f"\n❌ Failed to install {package}:")
+        subprocess.run([
+            python_executable,
+            "-m", "pip",
+            "install",
+            package,
+            "--cache-dir", cache_dir
+        ], check=False)
+        raise e
+
+def build_code():
+    # Define paths
+    env_dir = os.path.join(output_path, "venv")
+    code_path_name = os.path.basename(code_path)
+    main_file_name = os.path.basename(main_file)
+    pip_cache_dir = os.path.join(output_path, ".pip_cache")
+
+    # Copy necessary code files
+    shutil.copytree("./FreeBodyEngine", os.path.join(output_path, "FreeBodyEngine"), ignore=shutil.ignore_patterns('dev', 'build'))
+    shutil.copytree(code_path, os.path.join(output_path, code_path_name))
+    shutil.copyfile(main_file, os.path.join(output_path, main_file_name))
+
+    # Create a virtual environment
+    print("Creating virtual environment...")
+    venv.create(env_dir, with_pip=True)
+
+    # Determine path to the Python executable in the venv
+    if os.name == 'nt':
+        python_executable = os.path.join(env_dir, "Scripts", "python.exe")
+    else:
+        python_executable = os.path.join(env_dir, "bin", "python")
+
+    # Create pip cache directory if it doesn't exist
+    os.makedirs(pip_cache_dir, exist_ok=True)
+
+    # Install dependencies inside the venv using the cache
+    for package in pip_dependencies:
+        install_with_logging(python_executable, package, pip_cache_dir)
+
+
+    # Install PyInstaller using the cache as well
+    subprocess.check_call([
+        python_executable,
+        "-m", "pip",
+        "install",
         "pyinstaller",
+        "--cache-dir", pip_cache_dir
+    ])
+
+    # Build with PyInstaller
+    pyinstaller_flags = [
+        python_executable,
+        "-m", "PyInstaller",
         "--onefile"
-        ]
+    ]
 
     if is_devmode:
         pyinstaller_flags.append("--noconsole")
 
-    subprocess.check_call([
-        *pyinstaller_flags,
-        main_file
-    ])    
+    pyinstaller_flags.append(main_file_name)  # Use filename since we're in the output dir
 
+    print("Running PyInstaller...")
+    subprocess.check_call(pyinstaller_flags, cwd=output_path)
 
 if __name__ == "__main__":
     is_devmode = False
@@ -196,7 +242,7 @@ if __name__ == "__main__":
     if os.path.exists(output_path):
         shutil.rmtree(output_path)
     
-    asset_out_path = output_path
+    asset_out_path = os.path.abspath("./dist/")
     
     if is_devmode:
         asset_out_path = os.path.abspath("./dev/")
