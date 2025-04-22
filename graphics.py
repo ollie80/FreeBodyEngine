@@ -859,21 +859,9 @@ class Graphics:
             self.screen_program['tex'] = self.scene.texture_locker.get_value(self.normal_key)
             self.screen_vao.render()
 
-    def check_hotkeys(self):
-        if self.scene.input.check_action("CYCLE_RENDERING_MODE") and self.rendering_mode_cooldown.complete:
-            i = RENDERING_MODES.index(self.rendering_mode) 
-            i += 1
-            if i > len(RENDERING_MODES) - 1:
-                i = 0
-            self.rendering_mode = RENDERING_MODES[i]
-            if self.rendering_mode != "wireframe":
-                gl.glPolygonMode(gl.GL_FRONT_AND_BACK, gl.GL_FILL)
-
-            self.rendering_mode_cooldown.activate()
-
     def update(self, dt):
         self.rendering_mode_cooldown.update(dt)
-        self.check_hotkeys()
+
 
     def draw(self):
         self.render()
