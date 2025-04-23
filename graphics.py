@@ -254,8 +254,8 @@ class Shader:
         self.program = self.image.scene.glCtx.program(vertex_shader=self.vert, fragment_shader=self.frag)
     
 class DefaultShader(Shader):
-    def __init__(self, scene):
-        super().__init__(scene, WORLD_VERT_SHADER, WORLD_FRAG_SHADER)
+    def __init__(self, scene: engine.core.Scene):
+        super().__init__(scene, scene.files.load_text('engine/shader/graphics/world.vert'), scene.files.load_text('engine/shader/graphics/world.frag'))
 
 class Image:
     def __init__(self, texture: moderngl.Texture, name: str, scene: engine.core.Scene, size=(32,32), z=1, normal: moderngl.Texture = None):
