@@ -18,7 +18,22 @@ class LayeredNoise:
             noise_val += noise.noise(pos) * multiplier
             multiplier *= 0.5
         return noise_val
-            
+
+def simplify_fraction(numerator, denominator):
+    if denominator == 0:
+        raise ValueError("Denominator cannot be zero.")
+    
+    gcd = math.gcd(numerator, denominator)
+    simplified_numerator = numerator // gcd
+    simplified_denominator = denominator // gcd
+
+    # Ensure denominator is positive
+    if simplified_denominator < 0:
+        simplified_numerator *= -1
+        simplified_denominator *= -1
+
+    return simplified_numerator, simplified_denominator
+    
 def bezier_point(curve, t):
     """De Casteljau's algorithm to evaluate a Bezier curve."""
     while len(curve) > 1:
