@@ -52,6 +52,9 @@ def create_fullscreen_quad(ctx, shader, size=vector(1, 1)):
 
     return vao
 
+def get_texture_aspect_ratio(texture: moderngl.Texture):
+    return engine.math.simplify_fraction(texture.size[0], texture.size[1])
+    
 class Color:
     def __init__(self, value: str | tuple | list):
         if isinstance(value, (tuple, list)):

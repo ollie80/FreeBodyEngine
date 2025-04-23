@@ -702,7 +702,10 @@ class SplashScreenScene(Scene):
         self.camera.background_color.hex = color
 
         self.new_scene = new_scene
-        self.ui.add(engine.ui.UIImage(self.ui, texture, {"maintain-aspect-ratio": True}))
+        aspect = engine.graphics.get_texture_aspect_ratio(texture)
+        print(aspect, texture.size)
+        self.ui.add(engine.ui.UIImage(self.ui, texture, {"anchor": "bottomright", "height": "100%h", "aspect-ratio": aspect}))
+        
         self.started_transition = False
 
     def on_update(self, dt):
@@ -733,7 +736,6 @@ class InputManager: # im very sorry for what you're about to read
 
         self.joy_stick_generosity = 0.2
         self.get_controller_input()
-        print
         self.curr_input_type = "key"
 
         self.actions = self.scene.files.load_json('controlls/actions.json')

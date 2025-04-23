@@ -1,3 +1,4 @@
+from typing import Optional, Union, Literal
 import numpy as np
 import FreeBodyEngine as engine
 import pygame
@@ -19,12 +20,29 @@ class UIAnimation:
         if not (self.start.__class__ == self.end.__class__):
             raise ValueError(f"UIAnimation with target style: {self.target_style}. Start value ({self.start.__class__}) is not the same type as end value {self.start.__class__}.")
 
+    def _lerp(self, x, y, t):
+        pass
+
+    def _lerp_num_tuple(self, x: tuple, y: tuple, t: int):
+        new = []
+        if len(x) != len(y):
+            raise ValueError("Iterable values must be the same length. On Animation")
+        
+        for i in range(x):    
+            new.append(self._lerp(x[i], y[i], t))
+
+    def __repr__(self):
+        return f"{self.__class__}({self.element}, duration={self.duration}, target_style={self.target_style}, eng_val={self.end}, start_val: {self.start})"
+
+    def _lerp_num_list(x, y, t): # probably not required
+        pass
+
     def update(self, dt):
         self.elapsed += dt
         t = self.duration / self.elapsed
         self.element.draw()
 
-class UIElement:
+class UIElement:  
     def __init__(self, manager: "UIManager", style: dict[str, any]):
         self.animations: list[UIAnimation] = []
         
@@ -34,10 +52,10 @@ class UIElement:
         self.manager: UIManager = manager
 
         self.style = style
+        self.z = 0
 
         # graphics
         self.program = self._generate_shader_program()
-        
     
         #rects
         self.container: pygame.FRect
@@ -49,18 +67,11 @@ class UIElement:
         return self.manager.graphics.ctx.program(self.manager.scene.files.load_text('engine/shader/ui/element.vert'), self.manager.scene.files.load_text('engine/shader/ui/image.frag'))
     
     def _calculate_rect(self):
-        size = self.style.get("size", (50, 50))
-    
-        width, height = (((size[0] / 100)*self.container.size[0]) * 2, ((size[1] / 100)*self.container.size[1]) * 2)
+        size = self._get_size()
+        pos = self._get_pos(size)
 
-        pos = self.style.get("pos", (0, 0))
-        center = ((pos[0] / self.container.size[0]) * 200, (pos[1] / self.container.size[1]) * 200)
-
-        left, top = ((center[0] - width/2) + self.container.centerx, (center[1] - height/2) + self.container.centery)
-        
-        self.rect = pygame.FRect(left, top, width, height)
-
-        
+        self.rect = pygame.FRect(*pos, *size)
+ 
     def _calculate_interior(self):
         style = self._get_padding()
         padding = (style[0] * self.rect.size[0], style[1] * self.rect.size[0], style[2] * self.rect.size[1], style[3]* self.rect.size[1])
@@ -95,7 +106,6 @@ class UIElement:
         elif isinstance(style, int) or isinstance(style, float):
             x = style/100
             return (x, x, x, x)
-    
 
     def _get_padding(self):
         style = self.style.get("padding", 0)
@@ -119,12 +129,90 @@ class UIElement:
     def _calculate_layout(self):
         self._calculate_rect()
         self._calculate_interior()
+
+    def _connvert_coord_val(self, val):
+        if isinstance(val, str):
+            if val.endswith('%h'):
+                perectage = int(val.removesuffix('%h')) / 1000
+                val = self.container.height * perectage
+                return val
+
+            if val.endswith('%w'):
+                perectage = int(val.removesuffix('%w')) / 1000
+                val = self.container.width * perectage
+                return val
+
+            else:
+                ValueError(f"{val.capitalize()} has invalid suffix {val}. On Element: {repr(self)}")
+
+        if isinstance(val, int):
+            return val
+
         
+    def _get_pos(self, size: tuple[int, int]):
+
+        x = self._connvert_coord_val(self.style.get('x', 0))
+        y = self._connvert_coord_val(self.style.get('y', 0))
+        left = x - (size[0]/2)
+        top = y - (size[1]/2)
+
+        anchor = self.style.get('anchor', None)
+        if anchor:
+            
+            if 'left' in anchor:
+                left = x 
+            elif 'right' in anchor:
+                left = x + size[0]
+            
+            if 'top' in anchor:
+                top = y
+            elif 'bottom' in anchor:
+                left = y + size[1]
+    
+        return (left, top)
+
+    def _get_size(self) -> tuple[int, int]:
+        aspect_ratio: tuple = self.style.get('aspect-ratio', None)
+
+        if aspect_ratio != None:
+            width = self._connvert_coord_val(self.style.get('width', None))
+            height = self._connvert_coord_val(self.style.get('height', None))
+
+            if width and height:
+                if aspect_ratio[0] > aspect_ratio[1]:
+                    multi = aspect_ratio[1] / aspect_ratio[0]
+                    height = width * multi
+
+                else:
+                    multi = aspect_ratio[0] / aspect_ratio[1]
+                    width = height * multi
+
+            if width:
+                multi = aspect_ratio[1] / aspect_ratio[0]
+                height = width * multi
+
+            elif height:
+                multi = aspect_ratio[0] / aspect_ratio[1]
+                width = height * multi
+
+            else:
+                raise ValueError(f"At least one size value must be set if aspect ratio is used. On Element {repr(self)}")
+
+        else:
+            width = self._connvert_coord_val(self.style.get('width', 100))
+            height = self._connvert_coord_val(self.style.get('height', 100))
+
+        return (width, height)
+
+    def __repr__(self):
+        return f"{self.__class__}({self.manager}, {self.style})"
+        
+
     def _generate_graphics_objects(self):
-        left = self.rect.left / 100
-        right = self.rect.right / 100
-        top = self.rect.top / 100
-        bottom = self.rect.bottom / 100 
+        left = self.rect.left;
+        right = self.rect.right
+        top = self.rect.top
+        bottom = self.rect.bottom
 
         vbo = self.manager.graphics.ctx.buffer(data=np.array([
             # position (x, y), uv coords (u, v)
@@ -150,10 +238,28 @@ class UIElement:
         self.vao.render(moderngl.TRIANGLE_STRIP)
         self.manager.end_draw()
 
+    def _check_click(self):
+        if pygame.mouse.get_pressed()[0]:
+            if self.rect.collidepoint(self.manager.scene.mouse_screen_pos):
+                if self.manager.clicked_element.z <= self.z:
+                    self.manager.clicked_element = self
+    
+    def _process_click(self):
+        self.click()
+
+    def click(self):
+        pass
+
     def draw(self):
         self._draw_to_screen()
         for child in self.children:
+            child.container = self.rect
             child.draw()
+
+    def resize(self):
+        for child in self.children:
+            child.container = self.rect
+        self.draw()
 
     def update(self, dt):
         for anim in self.animations:
@@ -161,6 +267,18 @@ class UIElement:
         for child in self.children:
             child.update(dt)
 
+class UIButton(UIElement):
+    def __init__(self, manager: "UIManager", style: dict[str, any]):
+        super().__init__(manager, style)
+
+    def _check_click(self):
+        if pygame.mouse.get_pressed()[0]:
+            if self.rect.collidepoint(self.manager.scene.mouse_screen_pos):
+                if self.manager.clicked_element.z <= self.z:
+                    self.manager.clicked_element = self
+    
+    def _process_click(self):
+        pass
 
 class UIImage(UIElement):
     def __init__(self, manager: "UIManager", texture: moderngl.Texture, style: dict[str, any]):
@@ -180,12 +298,12 @@ class UIImage(UIElement):
                 self.texture.use(key)
                 self.program['tex'] = key
                 self.manager.scene.texture_locker.remove(self.key)
-            
 
 class UIRootElement:
-    def __init__(self):
+    def __init__(self, manager: "UIManager"):
         self.children: list[UIElement] = []
-        self.rect = pygame.FRect(-50, -50, 100, 100)
+        self.manager = manager
+        self.rect = pygame.FRect(0, 0, *self.manager.scene.main.window_size)
 
     def add(self, element: UIElement):
         self.children.append(element)
@@ -193,22 +311,24 @@ class UIRootElement:
         element.draw()
     
     def draw(self):
+        self.rect = pygame.FRect(0, 0, *self.manager.scene.main.window_size)
+        
         for element in self.children:
             element.container = self.rect
             element.draw()
-            
 
     def update(self, dt):
         for element in self.children:
             element.update(dt)
-
 
 class UIManager:
     def __init__(self, scene: engine.core.Scene):
         self.key = "_ENGINE_ui"
         self.scene = scene
         self.graphics = self.scene.graphics
-        self.root = UIRootElement()
+        self.root = UIRootElement(self)
+        self.clicked_element: UIElement = None
+        
 
         # graphics
         self.on_resize()
@@ -226,6 +346,10 @@ class UIManager:
     def end_draw(self):
         self.graphics.ctx.screen.use()
 
+    def click(self):
+        if self.clicked_element:
+            self.clicked_element.process_click()
+            
 
     def draw(self):
         self.graphics.ctx.screen.use()
@@ -242,4 +366,4 @@ class UIManager:
 
     def update(self, dt):
         self.root.update(dt)
-    
+        self.click()
