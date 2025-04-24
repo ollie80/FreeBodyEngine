@@ -158,6 +158,11 @@ class _Entity:
         """
         pass
     
+class Raycast:
+    def __init__(self, ):
+        self.z
+
+
 class Entity:
     def __init__(self, position: vector, scene, size=vector(32, 32), tag='none', anchor="center"):
         self.scene: Scene = scene
@@ -187,7 +192,6 @@ class Entity:
         for component in self.components:
             component.update(dt)
         self.on_post_update()     
-
     
     def on_event_loop(self, event):
         pass
@@ -210,7 +214,10 @@ class Actor(Entity):
         super().__init__(pos, scene, size)
         self.name = name
         
+        #physics
         self.vel = vector(0, 0)
+        self.friction = 100
+
         self.collision_type = collision_type
         self.rect = pygame.FRect(self.position.x, self.position.y, size.x, size.y)
         self.image: None | engine.graphics.Image = None 
@@ -219,8 +226,27 @@ class Actor(Entity):
         pass
 
     def integrate_forces(self, dt):
-        self.position += (self.vel * dt)
-    
+
+        # Update position
+        self.position += self.vel * dt
+
+        # Get velocity in polar coordinates
+        pol = self.vel.as_polar()
+        pol_magnitude = pol[0]
+        direction_deg = pol[1]
+        direction_rad = math.radians(direction_deg)
+
+        # Apply friction
+        magnitude = max(0, pol_magnitude - (self.friction * dt))
+
+        # Convert back to Cartesian coordinates
+        self.vel = pygame.math.Vector2(
+            magnitude * math.cos(direction_rad),
+            magnitude * math.sin(direction_rad)
+        )
+        
+
+
     def check_collisions(self, dt):
         for actor in (e for e in self.scene.entities if isinstance(e, Actor)):
             if actor != self and actor.rect.colliderect(self.rect):
@@ -607,7 +633,7 @@ class Main:
             profiler_thread.start()
             
         while True: 
-            dt = self.clock.tick(self.fps_cap)
+            dt = self.clock.tick(self.fps_cap) / 1000
             total_fps += self.clock.get_fps()
             ticks += 1
             self.fps_timer.update(dt)
