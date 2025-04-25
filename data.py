@@ -31,9 +31,7 @@ class KeyLocker:
             heapq.heappush(self.free_ids, freed_id)
 
     def get_value(self, key: str):
-        val = self.items.get(key)
-
-        return val
+        return self.items.get(key, None)
     
 import heapq
 

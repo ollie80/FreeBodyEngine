@@ -29,6 +29,9 @@ def read_assets(path):
 
 
 class FileManager:
+    """
+    The asset manager loads the files packaged by the engine. You must use paths that are relative to your asset folder.
+    """
     def __init__(self, main: engine.core.Main, path):
         self.path = "game"
         self.game_name = main.game_name
@@ -39,108 +42,99 @@ class FileManager:
         self.images = read_assets(asset_path+"images.pak")
         self.data = read_assets(asset_path+"data.pak")
 
-    def get_image(self, location: str, name: str, file_type: str = ".png", normal=None):
-        if file_type == ".png":
-            return self.parse_image(location, name, file_type, normal)
-        if file_type == 'tex':
-            return self.load_image(f"{self.path}/assets/graphics/{location}/{name}.png")
-        if file_type == ".animation":
-            return self.parse_animation(location, name)
-        if file_type == ".composite":
-            return self.parse_composite(location, name)
-
-    def parse_image(self, location, name, file_type, normal:str|None=None):
-        path = location+"/"+name
+    def load_image(self, path, scene: engine.core.Scene, normal:str|None=None, size: tuple = None):
         
-        file_path = os.path.abspath(self.path + "/assets" + "/graphics/image/" + path + file_type)
-        tex = self.load_image(file_path)
+        
+        tex = self.load_texture(path)
 
-        if normal == None:
-            normal_path = os.path.abspath(self.path + '/assets' + '/graphics/image/' + path + "_normal" + file_type)
-        else:
-            normal_path = os.path.abspath(self.path + '/assets' + '/graphics/image/' + normal + file_type)
-            
+
         normal_tex = None
-        if os.path.exists(normal_path):
-            normal_tex = self.load_image(normal_path)
+        if normal != None:
+            normal_tex = self.load_texture(normal)
+        
+        if size != None:
+            img_size = size
         else:
-            print("no file at path at: " + normal_path)
-        return engine.graphics.Image(tex, name, self.scene, tex.size, normal=normal_tex)
+            img_size = tex.size
+            
+        return engine.graphics.Image(tex, 'image', scene, img_size, normal=normal_tex)
     
-    def parse_composite(self, location, name):
-        path = self.path + f"/assets/graphics/image/{location}/{name}.composite"
-        data = self.load_text(path)
-        data = json.loads(data)
+    def load_composite(self, path, scene: engine.core.Scene):
+        data = self.load_json(path)
+
         images: list[engine.graphics.Image] = []
-        i = 0
-        for image in data['images']:
+        img_types = ["composite", "image", "animated"]
+        for image_data in data['images']:
+            img_type = image_data['type']
+            if img_type in img_types:
+                img_path = image_data['path']                
+                if img_type == "image":
+                    normal = image_data.get("normal", None)
+                    size = image_data.get("size", None)
+                    image = self.load_image(img_path, scene, normal, size)
+                    
+                    shader = image_data.get('shader', None)
+                    if shader != None:
+                        vert_data = image_data["shader"].get("vert")
+                        if vert_data != None:
+                            vert = self.load_text(vert_data)
+                        else:
+                            vert = self.load_text("engine/shader/graphics/world.vert")
 
-            split = image['path'].split('/')
-            image_location = split[0] 
-
-            image_name = split[1].split('.')[0]
-            image_filetype = split[1].split('.')[1]
-
-            normal_path = None
-            if 'normal' in image.keys():
-                normal_path = image['normal']
-            images.append(self.get_image(image_location, image_name, '.' + image_filetype, normal_path))
-            if 'shader' in image.keys():
-                shader_data = image['shader']
-
-                if 'location' in shader_data:
-                    shader_location = shader_data['location']
-                else:
-                    shader_location = image_location
-
-                if 'vert' in shader_data:
-                    vert = self.load_shader(shader_location, shader_data['vert'])
-                else:
-                    vert = images[i].shader.vert
-
-                if 'frag' in shader_data:
-                    frag = self.load_shader(shader_location, shader_data['frag'])
-                else:
-                    frag = images[i].shader.frag
+                        frag_data = image_data["shader"].get("frag")
+                        if frag_data != None:
+                            frag = self.load_text(frag_data)
+                        else:
+                            frag = self.load_text("engine/shader/graphics/world.frag")
+                        
+                        image.set_shader(engine.graphics.Shader(self.main.active_scene, vert, frag))
+                        
                 
-                shader: engine.graphics.Shader = self.parse_shader(shader_location, vert, frag)
-                images[i].set_shader(shader)
-                images[i].offset = vector(image['offset'])
+                elif img_type == "animated":
+                    image = self.load_animation(img_path, scene)
 
-            i+=1
+                    shader = image_data.get('shader', None)
+                    if shader != None:
+                        vert_data = image_data["shader"].get("vert")
+                        if vert_data != None:
+                            vert = self.load_text(vert_data)
+                        else:
+                            vert = self.load_text("engine/shader/graphics/world.vert")
 
-        return engine.graphics.CompositeImage(name, images, self.scene)
+                        frag_data = image_data["shader"].get("frag")
+                        if frag_data != None:
+                            frag = self.load_text(frag_data)
+                        else:
+                            frag = self.load_text("engine/shader/graphics/animation.frag")
+                        
+                        image.set_shader(engine.graphics.AnimatedShader(self.main.active_scene, vert, frag))
 
-    def parse_animation(self, location, name):
-        anim_data = self.load_animation(location, name)
+                elif img_type == "composite":
+                    image = self.load_composite(img_path)
+                
+                image.offset = vector(image_data.get("offset", (0, 0)))
+                images.append(image)
+
+
+            else:
+                raise ValueError(f"Composite images types must be one of the following: {img_types}, instead got: {img_type}")
+
+        return engine.graphics.CompositeImage('composite_image', images, self.main.active_scene)    
+
+    def load_animation(self, path, scene):
+        anim_data = self.load_json(path)
+
         anims = {}
-        for animation in anim_data:
-            anims[animation] = engine.graphics.Animation(anim_data[animation])
-        player = engine.graphics.AnimationPlayer(self.get_spritesheet(location, name), anims)
-        return engine.graphics.AnimatedImage(player, name, self.scene)
-
-    def parse_shader(self, location, vert, frag):
-
-        return engine.graphics.Shader(self.scene, vert, frag)
+        for animation in anim_data['animations']:
+            anims[animation] = engine.graphics.Animation(anim_data['animations'][animation])
+        player = engine.graphics.AnimationPlayer(self.load_spritesheet(anim_data['spritesheet']), anims)
+        print(self.main.active_scene)
+        return engine.graphics.AnimatedImage(player, "animated_image", scene)
 
     def load_shader(self, path):
-        
-        if self.shader_cache.get(path) != None:
-            return self.shader_cache[path]
-        else:
-            file_path = os.path.abspath(self.path  + "/assets" + "/graphics/shader/" + path + ".glsl")
+        self.load_text(path) # ik its just a wrapper but most people arent gonna know to use the load_text function, bc a lot of people have a misunderstanding of how files work
             
-            try:
-                file = open(file_path, "r")
-                text = file.read() 
-                file.close()
-                self.shader_cache[path] = text 
-                return text
-            
-            except:
-                print("couldn't shader file with path: " + file_path)
-            
-    def load_image(self, path, aa=moderngl.NEAREST):
+    def load_texture(self, path, aa=moderngl.NEAREST):
         img = pygame.image.load(io.BytesIO(self.images[path])).convert_alpha()
         return engine.graphics.surf_to_texture(img, self.main.glCtx, aa)
 
@@ -170,12 +164,7 @@ class FileManager:
         txt = self.load_text(path)
         return json.loads(txt)
 
-    def load_animation(self, location, name):
-        path = os.path.abspath(self.path + "/assets/graphics/animation/" + location + "/" + name + ".animation")
-        text = self.load_text(path)
-        return json.loads(text)
-
-    def write_save_data(self, location: str, name: str, data: str, file_type=".json"):
+    def write_save_data(self, location: str, name: str, data: any, file_type=".json"):
         file_path = self.get_save_path() / location / (name + file_type)
         
         # Ensure the directory exists
@@ -196,22 +185,14 @@ class FileManager:
         file.close()
         return text
     
-    def parse_spritesheet(self, data: dict):
-        image_path = self.path + "/assets" + "/graphics/image/"
-        general = self.load_image(image_path + data['general'])
+    def load_spritesheet(self, path: str):
+        data = self.load_json(path)
+        image_path = data['general']
+        general = self.load_texture(image_path)
         normal = None
-        use_normal = data["useNormal?"]
-        if use_normal:    
-            normal = self.load_image(image_path + data['normal'])
-        return engine.graphics.Spritesheet(general, normal, use_normal, (data["size"][0], data["size"][1]))
+        use_normal = "normal" in data
+        if use_normal:
+            normal = self.load_texture(image_path)
 
-    def get_spritesheet(self, location, name):
-        path = location + "/" + name
-        if path in self.spritesheet_cache.keys():
-            return self.spritesheet_cache[path]
-        else:
-            file_path = os.path.abspath(self.path + "/assets" + "/graphics/image/" + path + ".spritesheet")
-            data = self.load_json(file_path)
-            self.spritesheet_cache[path] = self.parse_spritesheet(data)
-            return self.spritesheet_cache[path]
-    
+        return engine.graphics.Spritesheet(general, normal, use_normal, (data["size"][0], data['size'][1]))
+
