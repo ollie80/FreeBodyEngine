@@ -203,7 +203,6 @@ class AnimationPlayer:
     def update(self, dt):
         self.anim_timer.update(dt)
         self.update_image()
-        print(self.anim_timer.time_remaining)
 
 
 @dataclass  
@@ -340,7 +339,9 @@ class AnimatedShader(Shader):
         normal = self.image.scene.texture_locker.add(self.image.normal_name)
 
         self.image.animation_player.spritesheet.general.use(albedo)
-        self.image.animation_player.spritesheet.normal.use(normal)
+        
+        if self.image.animation_player.spritesheet.normal:
+            self.image.animation_player.spritesheet.normal.use(normal)
 
         self.program['albedo'] = albedo
         self.program['normal'] = normal

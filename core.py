@@ -31,7 +31,6 @@ class Timer:
         self.active = True
         self.complete = False
         self.time_remaining = self.duration
-        print(self.time_remaining)
 
     def deactivate(self):
         self.active = False
