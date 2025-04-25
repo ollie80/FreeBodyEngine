@@ -180,7 +180,7 @@ class AnimationPlayer:
     def set_animation(self, name: str):
         self.current_animation = name
         self.index = 0
-        self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration']
+        self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration'] / 1000
         self.anim_timer.activate()
 
     def update_image(self):
@@ -189,7 +189,7 @@ class AnimationPlayer:
                 self.index += 1
                 if self.index > len(self.animations[self.current_animation].frames) - 1:
                     self.index = 0
-                self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration']
+                self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration'] / 1000
                 self.anim_timer.activate()
                 if self.on_change != None:
                     self.on_change()
@@ -200,10 +200,11 @@ class AnimationPlayer:
     def get_pos(self):
         return self.animations[self.current_animation].frames[self.index]['pos']
         
-
     def update(self, dt):
         self.anim_timer.update(dt)
         self.update_image()
+        print(self.anim_timer.time_remaining)
+
 
 @dataclass  
 class Spritesheet:
@@ -232,10 +233,14 @@ class Shader:
                 self.program[uniform] = pygame.time.get_ticks()
             
             elif uniform == 'tex':
-                self.program[uniform] = self.image.scene.texture_locker.get_value(self.image.name)
+                key = self.image.scene.texture_locker.get_value(self.image.name)
+                if key:
+                    self.program[uniform] = key
             
             elif uniform == 'normal_tex':
-                self.program[uniform] = self.image.scene.texture_locker.get_value(self.image.normal_name)
+                key = self.image.scene.texture_locker.get_value(self.image.normal_name)
+                if key:
+                    self.program[uniform] = key
 
     def set_frag_uniforms(self):
         pass
@@ -316,8 +321,18 @@ class Image:
         self.scene.texture_locker.remove(self.normal_name)
 
 class AnimatedShader(Shader):
-    def __init__(self, scene):
-        super().__init__(scene, WORLD_VERT_SHADER, ANIMATION_FRAG)
+    def __init__(self, scene: engine.core.Scene, vert=None, frag=None):
+        if vert:
+            v = vert
+        else:
+            v = scene.files.load_text('engine/shader/graphics/world.vert')
+        
+        if frag:
+            f = frag
+        else:
+            f = scene.files.load_text('engine/shader/graphics/animation.frag')
+
+        super().__init__(scene, v, f)
         self.image: AnimatedImage
 
     def set_frag_uniforms(self):
@@ -634,7 +649,7 @@ class Graphics:
         self.ctx = ctx
         self.scene = scene
         
-        self.rendering_mode_cooldown = engine.core.Timer(5)
+        self.rendering_mode_cooldown = engine.core.Timer(0.5)
         self.rendering_mode_cooldown.activate()
 
         self.albedo_key = "_ENGINE_albedo"
@@ -731,6 +746,14 @@ class Graphics:
         self.directional_lights.clear()
         self.spot_lights.clear()
 
+    def cycle_rendering_mode(self):
+        if self.rendering_mode_cooldown.complete:
+            i = RENDERING_MODES.index(self.rendering_mode)
+            i += 1
+            if i >= len(RENDERING_MODES):
+                i = 0
+            self.rendering_mode = RENDERING_MODES[i]
+            self.rendering_mode_cooldown.activate()
 
     def get_font(self, font_name: str):
         font = self.fonts['default']
@@ -856,7 +879,6 @@ class Graphics:
 
     def update(self, dt):
         self.rendering_mode_cooldown.update(dt)
-
 
     def draw(self):
         self.render()

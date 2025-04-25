@@ -31,6 +31,7 @@ class Timer:
         self.active = True
         self.complete = False
         self.time_remaining = self.duration
+        print(self.time_remaining)
 
     def deactivate(self):
         self.active = False
@@ -477,7 +478,7 @@ class Scene:
         self.scene_texture = self.glCtx.texture(self.main.window_size, 4)
      
 
-        self.graphics = engine.graphics.Graphics(self, self.glCtx)        
+        self.graphics = engine.graphics.Graphics(self, self.glCtx)      
             
         self.add(self.camera)
         self.input = InputManager(self)
