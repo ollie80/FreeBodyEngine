@@ -27,48 +27,7 @@ void main() {
 """
 
 CHUNK_FRAG = """
-#version 330 core
 
-uniform int chunk_size;
-uniform vec2[256] img_positions;
-uniform sampler2D spritesheet;
-uniform sampler2D normal;
-uniform vec2 spritesheet_size; 
-uniform int tile_size;
-
-in vec2 uv;
-out vec4 frag_albedo;  // Diffuse color
-out vec4 frag_normal;  // Normal data
-
-
-vec2 get_tile_percentage() {
-    float x = uv.x * chunk_size;
-    float y = uv.y * chunk_size;
-    return vec2(x - floor(x), y - floor(y));
-}
-
-
-int get_tile_index() {
-    int x = int(floor(uv.x * chunk_size));
-    int y = int(floor(uv.y * chunk_size));
-    return x + y;
-}
-
-void main() {
-    vec2 tile_percentage = get_tile_percentage();
-    int tile_index = get_tile_index(); 
-    vec2 img_pos = img_positions[tile_index];
-   
-    vec2 sample_pos = vec2(((abs(img_pos.x) * tile_size) + (tile_size * tile_percentage.x)) / spritesheet_size.x, ((abs(img_pos.y) * tile_size) + (tile_size * tile_percentage.y)) / spritesheet_size.y);
-    vec4 albedo = texture(spritesheet, sample_pos);
-    
-    float a = albedo.a;
-    if (img_pos.x < 0.0) {
-        a = 0.0;
-    }
-    frag_albedo = vec4(albedo.rgb, a);
-    frag_normal = vec4(texture(normal, sample_pos).rgb, a);
-}
 """ 
 
 BITMASK_LOOKUP = {
@@ -97,9 +56,9 @@ def empty_chunk_frag_data(chunk_size):
 
 
 class ChunkShader(engine.graphics.Shader):
-    def __init__(self, scene, image: "ChunkImage"):
+    def __init__(self, scene: engine.core.Scene, image: "ChunkImage"):
         self.image = image
-        super().__init__(scene, engine.graphics.WORLD_VERT_SHADER, CHUNK_FRAG)
+        super().__init__(scene, scene.files.load_text("engine/shader/graphics/world.vert"), scene.files.load_text("engine/shader/graphics/chunk.frag"))
 
     def set_uniforms(self, pos_data, albedo: moderngl.Texture, normal: moderngl.Texture):
         self.set_generic_uniforms()
@@ -125,7 +84,6 @@ class ChunkShader(engine.graphics.Shader):
         self.image.scene.texture_locker.remove(self.image.name)
         self.image.scene.texture_locker.remove(self.image.normal_name)
 
-
 class ChunkImage(engine.graphics.Image):
     def __init__(self, chunk: "Chunk", scene: engine.core.Scene):
         self.chunk = chunk
@@ -139,35 +97,68 @@ class ChunkImage(engine.graphics.Image):
         for y in self.chunk.tiles:
             for tile in y:
                 if tile != None:
-                    if tile.spritesheet_name not in groups.keys():
-                        groups[tile.spritesheet_name] = self.chunk.tilemap.frag_data.copy()
-                    groups[tile.spritesheet_name][i] = [tile.image_pos[0], tile.image_pos[1]]
+                    if tile.tileset_name not in groups.keys():
+                        groups[tile.tileset_name] = self.chunk.tilemap.frag_data.copy()
+                    groups[tile.tileset_name][i] = [tile.image_pos[0], tile.image_pos[1]]
                 i += 1
 
         for group in groups:
-            split = group.split('/')
-            spritesheet = self.scene.files.get_spritesheet(split[0], split[1])
-            albedo = spritesheet.general
-            normal = spritesheet.normal
+            tileset = self.chunk.tilemap.get_tileset(group)
+            albedo = tileset.general
+            normal = tileset.normal
             self.shader.set_uniforms(groups[group], albedo, normal)
             self.render_object.render(mode=moderngl.TRIANGLE_STRIP)
+
+class Tileset:
+    def __init__(self, scene: engine.core.Scene, data):
+        self.scene = scene
+        self.spritesheet = self.scene.files.load_spritesheet(data['spritesheet'])
+        self.type = data['type']
+
+    @property
+    def general(self):
+        return self.spritesheet.general
+
+    @property
+    def normal(self):
+        return self.spritesheet.normal
+    
+    def update(self, dt):
+        pass
+
+class AutoTileset(Tileset):
+    def __init__(self, scene, data):
+        super().__init__(scene, data)
+        self.tiles: dict[str, tuple[int, int]] = data['tiles']
+        self.diagonals: bool = data.get('diagonals', False)
+
+# class AnimatedTileset(Tileset):
+#     def __init__(self, scene: engine.core.Scene, data):
+#         super().__init__(scene, data)
+#         self.animation_player = 
+
+#     def update(self):
 
 
 @dataclass
 class TileData:
     type: Type["Tile"]
-    spritesheet_name: str
+    tileset_name: str
+    img_pos: tuple
 
 @dataclass
 class WorldTileData:
     type: Type["WorldTile"]
     tileset_name: str
-    
+
+# class AnimatedTileData:
+#     type: Type["AnimatedTile"]
+#     tileset_name: str
 
 class Tile:
     def __init__(self, data: Type[TileData]):
-        self.image_pos = (0, 0) # position in spritesheet
-        self.spritesheet_name = data.spritesheet_name
+        self.image_pos = data.img_pos # position in spritesheet
+        self.tileset_name = data.tileset_name
 
     def initialize(self, chunk: "Chunk", pos: vector):
         self.chunk = chunk
@@ -182,14 +173,11 @@ class WorldTile(Tile): # autotiling
         self.tileset_name = data.tileset_name
         self.image_pos = (0, 0)        
 
-    def on_initialize(self):
-        self.spritesheet_name = self.chunk.tilemap.get_tileset(self.tileset_name)["name"]
-
     def update_image(self):
         bitmask = self.get_bitmask()
         tile_key = BITMASK_LOOKUP.get(bitmask, "none")
 
-        self.image_pos = self.chunk.tilemap.get_tileset(self.tileset_name)["tiles"][tile_key]
+        self.image_pos = self.chunk.tilemap.get_tileset(self.tileset_name).tiles[tile_key]
 
     def get_bitmask(self):
         neighbors = self.chunk.get_neighbors(self)
@@ -199,6 +187,7 @@ class WorldTile(Tile): # autotiling
         if neighbors[2]: bitmask |= 4  # Bottom
         if neighbors[3]: bitmask |= 8  # Left
         return bitmask
+
 
 class Object:
     def __init__(self, image, pos: vector, name: str, collision_type: str = "none", size=(64, 64)):
@@ -259,14 +248,14 @@ class Object:
         pass
 
 class Chunk: 
-    def __init__(self, position: vector, tilemap: "TileMap", chunk_key: str): 
+    def __init__(self, position: vector, tilemap: "TileMap", layer_name: str, chunk_key: str): 
         self.position = position # not world pos
         self.tiles: list[list[Tile]] = []
         self.tilemap = tilemap
+        self.layer_name: str = layer_name
         self.chunk_key = chunk_key
         self.image_key = "chunk_" + self.chunk_key + "_" + tilemap.name
         self.image: engine.graphics.Image = ChunkImage(self, self.tilemap.scene)
-        self.update_neighbor_chunks()
         self.objects: list[Object] = []
         
     @property
@@ -317,7 +306,8 @@ class Chunk:
     def update_neighbor_chunks(self):
         directions = [vector(0, -1), vector(1, 0), vector(0, 1), vector(-1, 0)]
         for direction in directions:
-            chunk = self.tilemap.get_chunk('ground', self.position+direction)
+            
+            chunk = self.tilemap.get_chunk(self.layer_name, self.position+direction)
             if chunk:
                 chunk.generate_image()
 
@@ -347,6 +337,8 @@ class Chunk:
     def draw(self):
         self.tilemap.scene.graphics.add_general(self.image)
 
+
+
 @dataclass
 class Layer:
     name: str
@@ -354,18 +346,18 @@ class Layer:
     collision: bool
 
 class TileMap:
-    def __init__(self, scene: engine.core.Scene, name: str):
-        self.tilesets: dict[str, object] = {}
+    def __init__(self, scene: engine.core.Scene, name: str, tile_size = 64, chunk_size = 16):
+        self.tilesets: dict[str, Tileset] = {}
         
         self.chunks: list[Chunk] = []
         self.chunk_key_locker = engine.data.IndexKeyLocker()
         
-        self.tile_size = 64
+        self.tile_size = tile_size
         
         self.name = name
         self.scene = scene
         
-        self.chunk_size = 16
+        self.chunk_size = chunk_size
         self.chunk_world_size = self.chunk_size * self.tile_size
         
         self.layers: dict[str, Layer] = {}
@@ -399,7 +391,7 @@ class TileMap:
          if self.tilesets.get(name) != None:
              return self.tilesets[name]
          else: 
-             self.tilesets[name] = self.scene.files.load_tileset(name)
+             self.tilesets[name] = self.scene.files.load_tileset(name, self.scene)
              return self.tilesets[name]
  
 
@@ -413,7 +405,7 @@ class TileMap:
         tile_data = self.generate_empty_chunk_data()
         chunk_id = self.chunk_key_locker.add()
 
-        chunk = Chunk(pos, self, chunk_id)
+        chunk = Chunk(pos, self, layer, chunk_id)
         chunk.tiles = tile_data
         for position in tiles:
             chunk.set_tile(vector(*position), tiles[position].type(tiles[position]), False)
@@ -459,3 +451,4 @@ class TileMap:
             chunk.update(dt)
         
         self.on_update()
+
