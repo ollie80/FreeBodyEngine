@@ -42,11 +42,9 @@ class FileManager:
         self.images = read_assets(asset_path+"images.pak")
         self.data = read_assets(asset_path+"data.pak")
 
-    def load_image(self, path, scene: engine.core.Scene, normal:str|None=None, size: tuple = None):
-        
-        
-        tex = self.load_texture(path)
 
+    def load_image(self, path, scene: engine.core.Scene, normal:str|None=None, size: tuple = None):
+        tex = self.load_texture(path)
 
         normal_tex = None
         if normal != None:
@@ -138,12 +136,12 @@ class FileManager:
         img = pygame.image.load(io.BytesIO(self.images[path])).convert_alpha()
         return engine.graphics.surf_to_texture(img, self.main.glCtx, aa)
 
-    def load_tileset(self, name: str) -> dict:
-        file_path = os.path.abspath(self.path + "/assets" + "/tilesets/" + name + ".json")
-        file = open(file_path, "r")
-        text = file.read()
-        file.close()
-        return json.loads(text)
+    def load_tileset(self, path: str, scene) -> engine.tilemap.Tileset:
+        data = self.load_json(path)
+        if data['type'] == "static" or data['type'] == "auto":
+            return engine.tilemap.Tileset(scene, data)
+        else:
+            raise NotImplementedError("Animated tiles are not yet implemented.")
     
     def get_save_path(self):
         if sys.platform == "win32":  # Windows
