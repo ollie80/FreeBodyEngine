@@ -361,30 +361,47 @@ class Tween(Component):
             self.entity.position = self.start_position + vec
 
 class SoundEmmiter(Entity):
-    def __init__(self, position, sound_path, radius, max_volume=1, loop=False, tag=""):
-        super().__init__(position, tag)
-        self.sound = pygame.Sound(sound_path)
+    def __init__(self, position, sound, scene, radius, max_volume=1, loop=False, tag=""):
+        super().__init__(position, scene)
+        self.sound = sound
         self.sound.set_volume(max_volume)
         self.max_volume = max_volume
         self.radius = radius
         self.prev_volume = 0
+        self.loop = loop
 
     def play(self):
-        pass
+        loops = 0
+        if self.loop:
+            loops = -1
+
+        self.sound.play(loops)
 
     def stop(self):
-        pass
+        self.sound.stop()
 
     def update_volume(self):
         distance = self.scene.camera.center.distance_to(self.position)
-        volume = engine.math.clamp((distance * 100)/self.radius)
-        
-        if volume != self.prev_volume:
-            self.sound.set_volume(volume)
-        self.prev_volume = volume
+        volume = min((distance * 100)/self.radius, self.max_volume)
+        print(volume)
+        self.sound.set_volume(volume)
 
     def on_update(self, dt):
         self.update_volume()
+
+class RandomSoundEmmiter(SoundEmmiter):
+    def __init__(self, pos, sounds: list[pygame.Sound], scene, radius, max_volume):
+        self.sounds = sounds
+        
+        super().__init__(pos, sounds[0], scene, radius, max_volume)
+        
+    def change_sound(self):
+        self.sound = self.sounds[random.randint(0, len(self.sounds) - 1)]
+        self.update_volume()
+
+    def play(self):
+        self.change_sound()
+        super().play()
 
 class Camera(Entity):
     def __init__(self, position: vector, scene, camera_id: str, zoom: float = -1.0, background_color: str = '#000000'):
@@ -754,7 +771,7 @@ class InputManager: # im very sorry for what you're about to read
         self.controllers = [pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())]
 
         self.change_controller()
-        self.input_mappings = {"K_Down": pygame.K_DOWN, "K_Up": pygame.K_UP, "K_Left": pygame.K_LEFT, "K_Right": pygame.K_RIGHT, "K_A": pygame.K_a, "K_D": pygame.K_d, "K_W": pygame.K_w, "K_S": pygame.K_s, "K_PGUP": pygame.K_PAGEUP, "K_PGDOWN": pygame.K_PAGEDOWN, "K_F3": pygame.K_F3, "K_F4": pygame.K_F4}
+        self.input_mappings = {"K_Down": pygame.K_DOWN, "K_Up": pygame.K_UP, "K_Left": pygame.K_LEFT, "K_Right": pygame.K_RIGHT, "K_A": pygame.K_a, "K_D": pygame.K_d, "K_W": pygame.K_w, "K_S": pygame.K_s, "K_T": pygame.K_t, "K_M": pygame.K_m, "K_L": pygame.K_l, "K_X": pygame.K_x, "K_PGUP": pygame.K_PAGEUP, "K_PGDOWN": pygame.K_PAGEDOWN, "K_F3": pygame.K_F3, "K_F4": pygame.K_F4}
         self.mouse_mappings = {"M_SCRL_UP": -1, "M_SCRL_DOWN": 1}
         self.controller_input =  {"C_DDown": False, "C_DUp": False, "C_DLeft": False, "C_DRight": False, "C_BY": False, "C_BB": False, "C_BA": False, "C_BX": False, "C_T1": False, "C_T2": False, "C_B1": False, "C_B2": False, "C_LStick_Up": False, "C_LStick_Down": False, "C_LStick_Left": False, "C_LStick_Right": False, "C_RStick_Up": False, "C_RStick_Down": False, "C_RStick_Left": False, "C_RStick_Right": False}
 
@@ -855,7 +872,6 @@ class InputManager: # im very sorry for what you're about to read
         return self.active[action]
 
     def event_loop(self, event):
-
         if event.type == pygame.JOYDEVICEADDED:
             self.change_controller()
         if event.type == pygame.JOYDEVICEREMOVED:

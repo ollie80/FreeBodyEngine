@@ -17,6 +17,7 @@ from dataclasses import dataclass
 
 import FreeBodyEngine.data
 
+
 DEFAULT_NORMAL = "#8080ff"
 
 
@@ -156,6 +157,7 @@ class Color:
     
     def __len__(self):
         return len(self.float_normalized_a)
+    
 @dataclass
 class Frame:
     duration: int
@@ -226,7 +228,7 @@ class Shader:
                 self.program[uniform].write(self.image.scene.camera.view_matrix.tobytes())
             
             elif uniform == 'position':
-                 self.program[uniform] = ((self.image.position.x + self.image.offset.x), -(self.image.position.y + self.image.offset.y)) 
+                self.program[uniform] = ((self.image.position.x + self.image.offset.x), -(self.image.position.y + self.image.offset.y)) 
             
             elif uniform == 'time':
                 self.program[uniform] = pygame.time.get_ticks()
@@ -252,6 +254,8 @@ class Shader:
         self.set_generic_uniforms()
         self.set_vert_uniforms()
         self.set_frag_uniforms()
+        
+
 
     def initialize(self, image: "Image"):
         self.image = image
@@ -308,7 +312,6 @@ class Image:
     def draw(self):
         albedo = self.scene.texture_locker.add(self.name)
         normal = self.scene.texture_locker.add(self.normal_name)
-
         self.texture.use(albedo)
         self.normal.use(normal)
 
@@ -354,12 +357,15 @@ class AnimatedShader(Shader):
         self.image.scene.texture_locker.remove(self.image.normal_name)
 
 class AnimatedImage(Image):
-    def __init__(self, animation_player: AnimationPlayer, name: str, scene: engine.core.Scene, z=1):
+    def __init__(self, animation_player: AnimationPlayer, name: str, scene: engine.core.Scene, z=1, size: vector = None):
         self.animation_player = animation_player
         self.scene = scene
         self.name = name
         self.normal_name = self.name + "_normal"
-        self.size = vector(*self.animation_player.spritesheet.size)
+        if size == None:
+            self.size = vector(*self.animation_player.spritesheet.size)
+        else:
+            self.size = size
         
 
         self.position = vector(0, 0)
@@ -470,6 +476,7 @@ class Camera(engine.core.Entity):
         angle = math.radians(self.rotation)
         cos_theta = math.cos(angle)
         sin_theta = math.sin(angle)
+
         rotation_matrix = np.array([
             [cos_theta, -sin_theta, 0.0, 0.0],
             [sin_theta, cos_theta, 0.0, 0.0],

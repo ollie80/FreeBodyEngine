@@ -19,7 +19,7 @@ def get_relative_path(path: str, folder: str) -> str:
     
 output_path = os.path.abspath(".\\build")
 
-data_file_types = [".json", ".txt", ".shader", ".glsl", ".vert", ".frag", ".composite", ".animation", ".spritesheet", ".tileset"]
+data_file_types = [".json", ".txt", ".shader", ".glsl", ".vert", ".frag", ".composite", ".animation", ".spritesheet", ".tileset", ".mp3", ".wav"]
 font_file_types = [".ttf"]
 image_file_types = ['.png', '.jpg', '.jpeg']
 

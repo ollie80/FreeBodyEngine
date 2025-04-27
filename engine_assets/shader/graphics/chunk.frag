@@ -22,7 +22,7 @@ vec2 get_tile_percentage() {
 int get_tile_index() {
     int x = int(floor(uv.x * chunk_size));
     int y = int(floor(uv.y * chunk_size));
-    return x + y;
+    return x + (y*chunk_size);
 }
 
 void main() {
