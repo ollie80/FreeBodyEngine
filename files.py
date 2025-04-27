@@ -119,15 +119,14 @@ class FileManager:
 
         return engine.graphics.CompositeImage('composite_image', images, self.main.active_scene)    
 
-    def load_animation(self, path, scene):
+    def load_animation(self, path, scene, size:vector=None):
         anim_data = self.load_json(path)
 
         anims = {}
         for animation in anim_data['animations']:
             anims[animation] = engine.graphics.Animation(anim_data['animations'][animation])
         player = engine.graphics.AnimationPlayer(self.load_spritesheet(anim_data['spritesheet']), anims)
-        print(self.main.active_scene)
-        return engine.graphics.AnimatedImage(player, "animated_image", scene)
+        return engine.graphics.AnimatedImage(player, "animated_image", scene, size=size)
 
     def load_shader(self, path):
         self.load_text(path) # ik its just a wrapper but most people arent gonna know to use the load_text function, bc a lot of people have a misunderstanding of how files work
@@ -136,10 +135,16 @@ class FileManager:
         img = pygame.image.load(io.BytesIO(self.images[path])).convert_alpha()
         return engine.graphics.surf_to_texture(img, self.main.glCtx, aa)
 
+    def load_sound(self, path):
+        return pygame.Sound(io.BytesIO(self.data[path]))
+
     def load_tileset(self, path: str, scene) -> engine.tilemap.Tileset:
         data = self.load_json(path)
-        if data['type'] == "static" or data['type'] == "auto":
+        if data['type'] == "static":
             return engine.tilemap.Tileset(scene, data)
+        if data['type'] == "auto":
+            return engine.tilemap.AutoTileset(scene, data)
+
         else:
             raise NotImplementedError("Animated tiles are not yet implemented.")
     
@@ -190,7 +195,9 @@ class FileManager:
         normal = None
         use_normal = "normal" in data
         if use_normal:
-            normal = self.load_texture(image_path)
+            normal = self.load_texture(data['normal'])
+        else:
+            normal = general
 
         return engine.graphics.Spritesheet(general, normal, use_normal, (data["size"][0], data['size'][1]))
 

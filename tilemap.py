@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import dataclasses
 import math
 import moderngl
 import numpy as np
@@ -76,8 +77,8 @@ class ChunkShader(engine.graphics.Shader):
         albedo.use(albedo_id)
         normal.use(normal_id)
 
-        self.program['spritesheet'] = self.image.scene.texture_locker.get_value(self.image.name)
-        self.program['normal'] = self.image.scene.texture_locker.get_value(self.image.normal_name)
+        self.program['spritesheet'] = albedo_id
+        self.program['normal'] = normal_id
 
         self.program['spritesheet_size'] = albedo.size
         self.program['tile_size'] = self.image.chunk.tilemap.tile_size
@@ -106,6 +107,8 @@ class ChunkImage(engine.graphics.Image):
             tileset = self.chunk.tilemap.get_tileset(group)
             albedo = tileset.general
             normal = tileset.normal
+
+            
             self.shader.set_uniforms(groups[group], albedo, normal)
             self.render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
@@ -165,14 +168,23 @@ class Tile:
         self.position = pos
         self.on_initialize()
     
+    def on_update(self):
+        pass
+
     def on_initialize(self):
         pass
 
 class WorldTile(Tile): # autotiling
     def __init__(self, data: WorldTileData):
         self.tileset_name = data.tileset_name
-        self.image_pos = (0, 0)        
+        self.image_pos = (0, 0)  
 
+    def on_initialize(self):
+        self.update_image()      
+        
+    def on_update(self):
+        self.update_image()
+    
     def update_image(self):
         bitmask = self.get_bitmask()
         tile_key = BITMASK_LOOKUP.get(bitmask, "none")
@@ -180,7 +192,8 @@ class WorldTile(Tile): # autotiling
         self.image_pos = self.chunk.tilemap.get_tileset(self.tileset_name).tiles[tile_key]
 
     def get_bitmask(self):
-        neighbors = self.chunk.get_neighbors(self)
+        neighbors = self.chunk.check_neighbors(self)
+        
         bitmask = 0
         if neighbors[0]: bitmask |= 1  # Top
         if neighbors[1]: bitmask |= 2  # Right
@@ -271,15 +284,22 @@ class Chunk:
     def set_tile(self, pos: vector, tile: Tile, update: bool = True):
         self.tiles[round(pos.y)][round(pos.x)] = tile
         tile.initialize(self, pos)
+        print("intialize")
         if update:
-            self.tile_update()
-    
+            neighbors = self.get_neighbors(tile)
+            for t in neighbors:
+                if t != None:
+                    t.on_update() 
+
     def object_update(self):
         for object in self.objects:
             object.on_chunk_object_update()
 
     def tile_update(self):
-
+        for y in self.tiles:
+            for tile in y:
+                if tile != None:
+                    tile.on_update()
         for object in self.objects:
             object.on_chunk_tile_update()
     
@@ -311,6 +331,17 @@ class Chunk:
             if chunk:
                 chunk.generate_image()
 
+    def check_neighbors(self, tile):
+        new = []
+        neighbors = self.get_neighbors(tile)
+        for t in neighbors:
+            if t != None and t.tileset_name == tile.tileset_name:
+                new.append(t)
+            else:
+                new.append(None)
+
+        return new
+
     def get_neighbors(self, tile):
         directions = [vector(0, -1), vector(1, 0), vector(0, 1), vector(-1, 0)]
         neighbors = []
@@ -318,15 +349,15 @@ class Chunk:
         for direction in directions:
             neighbor = None
             neighbor_pos = tile.position + direction
-            if (neighbor_pos.x > 16 or neighbor_pos.x < 1) or (neighbor_pos.y > 16 or neighbor_pos.y < 1):
-                neighbor_chunk = self.tilemap.get_chunk(self.position - direction)
+            if (neighbor_pos.x > 15 or neighbor_pos.x < 0) or (neighbor_pos.y > 15 or neighbor_pos.y < 0):
+                neighbor_chunk = self.tilemap.get_chunk(self.layer_name, self.position - direction)
                 if neighbor_chunk:
                     neighbor = neighbor_chunk.get_tile(vector(neighbor_pos.x%16, neighbor_pos.y%16))
             else:
                 neighbor = self.get_tile(neighbor_pos)
             
                 
-            neighbors.append(neighbor is not None)
+            neighbors.append(neighbor)
         
         return neighbors
 
@@ -337,7 +368,8 @@ class Chunk:
     def draw(self):
         self.tilemap.scene.graphics.add_general(self.image)
 
-
+    def __str__(self):
+        return f"Chunk at pos: {self.position}. with tiles: {self.tiles}"
 
 @dataclass
 class Layer:
@@ -393,7 +425,6 @@ class TileMap:
          else: 
              self.tilesets[name] = self.scene.files.load_tileset(name, self.scene)
              return self.tilesets[name]
- 
 
     def set_tile(self, layer, tile: Tile, pos: vector):
         chunk_pos = self.get_chunk_pos(pos)
@@ -426,7 +457,7 @@ class TileMap:
         self.layers[layer.name] = layer
 
     def get_chunk_pos(self, pos: vector):
-        return vector(math.floor(pos.x / self.chunk_world_size) * self.chunk_world_size, math.floor(pos.y / self.chunk_world_size) * self.chunk_world_size)
+        return vector(math.floor(pos.x / self.chunk_world_size), math.floor(pos.y / self.chunk_world_size))
 
     def get_tile_pos(self, pos: vector):
         return vector(math.floor(pos.x / self.tile_size), math.floor(pos.y / self.tile_size))
@@ -443,9 +474,45 @@ class TileMap:
         for y in chunk.tiles:
             for tile in y:
                 if tile != None:
-                    tiles.append(TileData(tile.position, tile.tileset_name))
+                    if isinstance(tile, WorldTile):
+                        tiledata = {'type': 'world', "tileset_name": tile.tileset_name}
+                    
+                    else:
+                        tiledata = {'type': 'static', "tileset_name": tile.tileset_name, "img_pos": list(tile.image_pos)}
+
+                    tiles.append({"position": list(tile.position), "data": tiledata})
         return tiles
     
+    def get_data(self):
+        data = {"name": self.name, "tile_size": self.tile_size, "chunk_size": self.chunk_size, "layers": []}
+        for layer in self.layers:
+            chunks = {}
+            for chunk in self.layers[layer].chunks:
+                chunks[chunk.chunk_key]= {"tiles": self.get_chunk_data(chunk), 'pos': list(chunk.position)}
+            
+            data['layers'].append({"chunks": chunks, "collision": self.layers[layer].collision, "name": self.layers[layer].name})
+        return data
+
+    def from_data(scene, data) -> "TileMap":
+        tilemap = TileMap(scene, data['name'], data['tile_size'], data['chunk_size'])
+
+        for layer in data['layers']:
+            tilemap.add_layer(Layer(layer['name'], [], layer['collision']))
+            for chunk in layer['chunks']:
+                chunk_data = layer['chunks'][chunk]
+                tiles = {}
+                for tile in chunk_data['tiles']:
+                    if tile['data']['type'] == "world":
+                        tiledata = WorldTileData(WorldTile, tile['data']['tileset_name'])
+                    elif tile['data']['type'] == "static":
+                        tiledata = TileData(Tile, tile['data']['tileset_name'], tile['data']['img_pos'])
+
+                    tiles[tuple(tile['position'])] = tiledata
+                tilemap.create_chunk(layer['name'], vector(chunk_data['pos']), tiles, [])
+                tilemap.get_chunk(layer['name'], vector(chunk_data['pos']))
+
+        return tilemap
+
     def update(self, dt):
         for chunk in self.chunks:
             chunk.update(dt)
