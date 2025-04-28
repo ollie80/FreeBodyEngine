@@ -167,6 +167,7 @@ class Frame:
 @dataclass
 class Animation:
     frames: list[Frame]
+    next: str | None
 
 class AnimationPlayer:
     def __init__(self, spritesheet: "Spritesheet", animations: dict[str, Animation]):
@@ -175,6 +176,7 @@ class AnimationPlayer:
         self.use_normal = self.spritesheet.use_normal
         self.anim_timer = engine.core.Timer(1) 
         self.current_animation = "none"
+
         self.index = 0
         self.on_change: callable = None
         self.set_animation(list(self.animations.keys())[0])
@@ -184,13 +186,18 @@ class AnimationPlayer:
         self.index = 0
         self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration'] / 1000
         self.anim_timer.activate()
-
+        
     def update_image(self):
         if self.current_animation != "none":
             if self.anim_timer.complete:
                 self.index += 1
                 if self.index > len(self.animations[self.current_animation].frames) - 1:
-                    self.index = 0
+                    if self.animations[self.current_animation].next:
+                        self.set_animation(self.animations[self.current_animation].next)
+                        self.index = 0
+                        
+                    else:
+                        self.index = 0
                 self.anim_timer.duration = self.animations[self.current_animation].frames[self.index]['duration'] / 1000
                 self.anim_timer.activate()
                 if self.on_change != None:

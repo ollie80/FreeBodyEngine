@@ -124,7 +124,7 @@ class FileManager:
 
         anims = {}
         for animation in anim_data['animations']:
-            anims[animation] = engine.graphics.Animation(anim_data['animations'][animation])
+            anims[animation] = engine.graphics.Animation(anim_data['animations'][animation]['frames'], anim_data['animations'][animation].get('next', None))
         player = engine.graphics.AnimationPlayer(self.load_spritesheet(anim_data['spritesheet']), anims)
         return engine.graphics.AnimatedImage(player, "animated_image", scene, size=size)
 
