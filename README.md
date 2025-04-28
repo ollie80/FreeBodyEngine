@@ -5,6 +5,9 @@
   </picture>
 </a>
 
+## WARNING
+This engine is **very** early in development, you **will** run into many bugs.
+
 ## Requirements
 - python
 - pygame-ce (if you have the normal version uninstall and install ce)
