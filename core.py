@@ -331,7 +331,7 @@ class Fire(Component):
 
 class Tween(Component):
     def __init__(self, entity, curve: "engine.math.Curve", target: vector, duration: int, from_center = False):
-        super().__init__(entity)
+        super().__init__("tween", entity)
         self.curve = curve
         self.from_center = from_center
         
@@ -699,7 +699,6 @@ class SceneTransition:
             if self.time <= 0:
                 self.main.transition_manager.current_transition = None        
         
-        print(self.elapsed)
 
     def draw(self):
         self.program['time'] = self.time
@@ -771,7 +770,7 @@ class InputManager: # im very sorry for what you're about to read
         self.controllers = [pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())]
 
         self.change_controller()
-        self.input_mappings = {"K_Down": pygame.K_DOWN, "K_Up": pygame.K_UP, "K_Left": pygame.K_LEFT, "K_Right": pygame.K_RIGHT, "K_A": pygame.K_a, "K_D": pygame.K_d, "K_W": pygame.K_w, "K_S": pygame.K_s, "K_T": pygame.K_t, "K_M": pygame.K_m, "K_L": pygame.K_l, "K_X": pygame.K_x, "K_C": pygame.K_c, "K_PGUP": pygame.K_PAGEUP, "K_PGDOWN": pygame.K_PAGEDOWN, "K_F3": pygame.K_F3, "K_F4": pygame.K_F4}
+        self.input_mappings = {"K_Down": pygame.K_DOWN, "K_Up": pygame.K_UP, "K_Left": pygame.K_LEFT, "K_Right": pygame.K_RIGHT, "K_A": pygame.K_a, "K_D": pygame.K_d, "K_W": pygame.K_w, "K_S": pygame.K_s, "K_T": pygame.K_t, "K_M": pygame.K_m, "K_L": pygame.K_l, "K_X": pygame.K_x, "K_C": pygame.K_c, "K_G": pygame.K_g, "K_PGUP": pygame.K_PAGEUP, "K_PGDOWN": pygame.K_PAGEDOWN, "K_F3": pygame.K_F3, "K_F4": pygame.K_F4}
         self.mouse_mappings = {"M_SCRL_UP": -1, "M_SCRL_DOWN": 1}
         self.controller_input =  {"C_DDown": False, "C_DUp": False, "C_DLeft": False, "C_DRight": False, "C_BY": False, "C_BB": False, "C_BA": False, "C_BX": False, "C_T1": False, "C_T2": False, "C_B1": False, "C_B2": False, "C_LStick_Up": False, "C_LStick_Down": False, "C_LStick_Left": False, "C_LStick_Right": False, "C_RStick_Up": False, "C_RStick_Down": False, "C_RStick_Left": False, "C_RStick_Right": False}
 
