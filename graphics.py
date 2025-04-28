@@ -214,7 +214,7 @@ class AnimationPlayer:
         self.update_image()
 
 
-@dataclass  
+@dataclass
 class Spritesheet:
     general: moderngl.Texture
     normal: moderngl.Texture
