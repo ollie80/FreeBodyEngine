@@ -43,7 +43,7 @@ class FileManager:
         self.data = read_assets(asset_path+"data.pak")
 
 
-    def load_image(self, path, scene: engine.core.Scene, normal:str|None=None, size: tuple = None):
+    def load_image(self, path, scene: engine.core.Scene, normal:str|None=None, size: tuple = None, name:str = "image"):
         tex = self.load_texture(path)
 
         normal_tex = None
