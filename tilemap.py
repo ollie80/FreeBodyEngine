@@ -273,7 +273,7 @@ class Chunk:
         
     @property
     def world_position(self):
-        return self.position * (self.tilemap.tile_size * self.tilemap.chunk_size)
+        return self.tilemap.position + (self.position * (self.tilemap.tile_size * self.tilemap.chunk_size))
 
     def get_tile(self, pos) -> Tile:
         if pos.x < self.tilemap.chunk_size and pos.y < self.tilemap.chunk_size:
@@ -284,7 +284,6 @@ class Chunk:
     def set_tile(self, pos: vector, tile: Tile, update: bool = True):
         self.tiles[round(pos.y)][round(pos.x)] = tile
         tile.initialize(self, pos)
-        print("intialize")
         if update:
             neighbors = self.get_neighbors(tile)
             for t in neighbors:
@@ -378,14 +377,15 @@ class Layer:
     collision: bool
 
 class TileMap:
-    def __init__(self, scene: engine.core.Scene, name: str, tile_size = 64, chunk_size = 16):
+    def __init__(self, scene: engine.core.Scene, name: str, tile_size = 64, chunk_size = 16, pos: vector = vector(0,0)):
         self.tilesets: dict[str, Tileset] = {}
-        
         self.chunks: list[Chunk] = []
         self.chunk_key_locker = engine.data.IndexKeyLocker()
         
         self.tile_size = tile_size
-        
+
+        self.position = pos
+
         self.name = name
         self.scene = scene
         
@@ -407,7 +407,27 @@ class TileMap:
         
         self.layers[layer].chunk.kill()
         self.layers[layer].chunks.remove(chunk)
-        
+
+    def get_bounds(self):
+        first_key = next(iter(self.layers))          # Get the first key
+        chunk1 = self.layers[first_key].chunks[0]
+        bounds = [chunk1.world_position.x, chunk1.world_position.y, chunk1.world_position.x + self.chunk_world_size, chunk1.world_position.y + self.chunk_world_size]
+        for layer in self.layers:
+            
+            for chunk in self.layers[layer].chunks:
+                x, y = chunk.world_position.x, chunk.world_position.y
+                max_x, max_y = self.chunk_world_size, self.chunk_world_size 
+
+                if x < bounds[0]:
+                    bounds[0] = x
+                if y < bounds[1]:
+                    bounds[1] = y
+                if max_x > bounds[2]:
+                    bounds[2] = max_x
+                if max_y > bounds[3]:
+                    bounds[3] = max_y
+        return bounds
+    
     def draw(self):
         for layer in self.layers:
             for chunk in self.layers[layer].chunks:
@@ -457,14 +477,16 @@ class TileMap:
         self.layers[layer.name] = layer
 
     def get_chunk_pos(self, pos: vector):
-        return vector(math.floor(pos.x / self.chunk_world_size), math.floor(pos.y / self.chunk_world_size))
+        position = pos  - self.position
+        return vector(math.floor(position.x / self.chunk_world_size), math.floor(position.y / self.chunk_world_size))
 
     def get_tile_pos(self, pos: vector):
-        return vector(math.floor(pos.x / self.tile_size), math.floor(pos.y / self.tile_size))
+        position = pos  - self.position
+        return vector(math.floor(position.x / self.tile_size), math.floor(position.y / self.tile_size))
 
     def get_world_tile(self, pos: vector) -> Tile:
         chunk = self.get_chunk(self.get_chunk_pos(pos))
-        return chunk.get_tile((chunk.position * self.chunk_size) + self.get_tile_pos(pos))
+        return chunk.get_tile((chunk.position * self.chunk_size) + self.get_tile_pos(pos)) 
 
     def on_update(self):
         pass

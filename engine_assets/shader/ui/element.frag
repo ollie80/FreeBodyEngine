@@ -60,7 +60,6 @@ float applyBorderRadius(vec4 radius, vec2 uvs) {
     return 1.0; // Inside or not in a corner
 }
 
-
 void main() {
     float alpha = 1.0;
 
