@@ -111,6 +111,7 @@ class FileManager:
                     image = self.load_composite(img_path)
                 
                 image.offset = vector(image_data.get("offset", (0, 0)))
+                print(image.offset)
                 images.append(image)
 
 

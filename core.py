@@ -228,17 +228,18 @@ class Actor(Entity):
     def integrate_forces(self, dt):
 
         # Update position
-        self.position += self.vel * dt
+        self.position += self.vel
 
         # Get velocity in polar coordinates
         pol = self.vel.as_polar()
         pol_magnitude = pol[0]
+
         direction_deg = pol[1]
         direction_rad = math.radians(direction_deg)
 
         # Apply friction
         magnitude = max(0, pol_magnitude - (self.friction * dt))
-
+        
         # Convert back to Cartesian coordinates
         self.vel = pygame.math.Vector2(
             magnitude * math.cos(direction_rad),
@@ -277,7 +278,7 @@ class Actor(Entity):
 
     def on_draw(self):
         if self.image:
-            self.image.position = self.position
+            self.image.center = self.center
             self.scene.graphics.add_general(self.image)
 
     def update(self, dt):
@@ -383,7 +384,6 @@ class SoundEmmiter(Entity):
     def update_volume(self):
         distance = self.scene.camera.center.distance_to(self.position)
         volume = min((distance * 100)/self.radius, self.max_volume)
-        print(volume)
         self.sound.set_volume(volume)
 
     def on_update(self, dt):
@@ -609,7 +609,8 @@ class Main:
                 exit()
             if event.type == pygame.VIDEORESIZE:
                 self.window_size = pygame.display.get_window_size()
-                self.active_scene.on_resize()
+                for scene in self.scenes:
+                    self.scenes[scene].on_resize()
             self.on_event_loop(event)
             if self.active_scene:
                 self.active_scene.event_loop(event)
@@ -672,7 +673,6 @@ class SceneTransition:
         self.time: int = 0
         
         self._reversed = False
-        print('NEW NEW NEW NEW NEW NEW NEW NEW NEW')
 
         self.main = main
         self.curve = curve
@@ -745,8 +745,7 @@ class SplashScreenScene(Scene):
 
         self.new_scene = new_scene
         aspect = engine.graphics.get_texture_aspect_ratio(texture)
-        print(aspect, texture.size)
-        self.ui.add(engine.ui.UIImage(self.ui, texture, {"anchor": "bottomright", "height": "100%h", "aspect-ratio": aspect}))
+        self.ui.add(engine.ui.UIImage(self.ui, texture, {"anchor": "center", "height": "50%h", "aspect-ratio": aspect}))
         
         self.started_transition = False
 
@@ -770,7 +769,7 @@ class InputManager: # im very sorry for what you're about to read
         self.controllers = [pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())]
 
         self.change_controller()
-        self.input_mappings = {"K_Down": pygame.K_DOWN, "K_Up": pygame.K_UP, "K_Left": pygame.K_LEFT, "K_Right": pygame.K_RIGHT, "K_A": pygame.K_a, "K_D": pygame.K_d, "K_W": pygame.K_w, "K_S": pygame.K_s, "K_T": pygame.K_t, "K_M": pygame.K_m, "K_L": pygame.K_l, "K_X": pygame.K_x, "K_C": pygame.K_c, "K_G": pygame.K_g, "K_PGUP": pygame.K_PAGEUP, "K_PGDOWN": pygame.K_PAGEDOWN, "K_F3": pygame.K_F3, "K_F4": pygame.K_F4}
+        self.input_mappings = {"K_Down": pygame.K_DOWN, "K_Up": pygame.K_UP, "K_Left": pygame.K_LEFT, "K_Right": pygame.K_RIGHT, "K_A": pygame.K_a, "K_D": pygame.K_d, "K_W": pygame.K_w, "K_S": pygame.K_s, "K_T": pygame.K_t, "K_M": pygame.K_m, "K_L": pygame.K_l, "K_X": pygame.K_x, "K_C": pygame.K_c, "K_G": pygame.K_g, "K_F": pygame.K_f, "K_PGUP": pygame.K_PAGEUP, "K_PGDOWN": pygame.K_PAGEDOWN, "K_F3": pygame.K_F3, "K_F4": pygame.K_F4}
         self.mouse_mappings = {"M_SCRL_UP": -1, "M_SCRL_DOWN": 1}
         self.controller_input =  {"C_DDown": False, "C_DUp": False, "C_DLeft": False, "C_DRight": False, "C_BY": False, "C_BB": False, "C_BA": False, "C_BX": False, "C_T1": False, "C_T2": False, "C_B1": False, "C_B2": False, "C_LStick_Up": False, "C_LStick_Down": False, "C_LStick_Left": False, "C_LStick_Right": False, "C_RStick_Up": False, "C_RStick_Down": False, "C_RStick_Left": False, "C_RStick_Right": False}
 

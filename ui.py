@@ -81,6 +81,9 @@ class UIElement:
 
         self.interior_rect = pygame.FRect(left, top, width, height)
 
+    def start_animation(self, style: str, end: any, duration: int):
+        self.animations.append(UIAnimation(self, style, duration, end))
+    
     def _apply_style(self):
         for uniform in self.program:
             if uniform == "rot":
@@ -133,12 +136,12 @@ class UIElement:
     def _connvert_coord_val(self, val):
         if isinstance(val, str):
             if val.endswith('%h'):
-                perectage = int(val.removesuffix('%h')) / 1000
+                perectage = int(val.removesuffix('%h')) / 100
                 val = self.container.height * perectage
                 return val
 
             if val.endswith('%w'):
-                perectage = int(val.removesuffix('%w')) / 1000
+                perectage = int(val.removesuffix('%w')) / 100
                 val = self.container.width * perectage
                 return val
 
@@ -209,7 +212,7 @@ class UIElement:
         
 
     def _generate_graphics_objects(self):
-        left = self.rect.left;
+        left = self.rect.left
         right = self.rect.right
         top = self.rect.top
         bottom = self.rect.bottom
@@ -233,6 +236,7 @@ class UIElement:
     def _draw_to_screen(self):
         self.manager.start_draw()
         self._calculate_layout()
+        print(self.rect)
         self._generate_graphics_objects()
         self._apply_style()
         self.vao.render(moderngl.TRIANGLE_STRIP)

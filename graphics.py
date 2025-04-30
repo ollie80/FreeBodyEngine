@@ -308,6 +308,14 @@ class Image:
         ]))
 
         self.render_object = self.scene.glCtx.vertex_array(self.shader.program, [(quad_buffer, '2f 2f',  'vert', 'texCoord')])
+   
+    @property
+    def center(self):
+        return self.position + vector(self.size[0]/2, self.size[1]/2)
+
+    @center.setter
+    def center(self, new):
+        self.position = new - vector(self.size[0]/2, self.size[1]/2)
 
     def remove(self):
         self.texture.release()
@@ -380,6 +388,7 @@ class AnimatedImage(Image):
         self.z = z
 
         self.set_shader(AnimatedShader(self.scene))
+    
 
     def update(self, dt):
         self.animation_player.update(dt)
@@ -393,9 +402,18 @@ class CompositeImage(Image):
         self.images = images
         self.name = name
         self.scene = scene
+        
         self._pos = vector(0, 0)
         
         self.z = z
+
+    @property
+    def center(self):
+        return self.position
+
+    @center.setter
+    def center(self, new):
+        self.position = new
 
     @property
     def position(self):
@@ -430,6 +448,7 @@ class Camera(engine.core.Entity):
         self.camera_id = 1
         self.background_color = Color("#b4befe")
 
+        self.update_rect()
         self.update_view_matrix()
         self.update_projection_matrix()
 
@@ -442,8 +461,16 @@ class Camera(engine.core.Entity):
     def on_draw(self):
         self.update_view_matrix()
 
+    def update_rect(self):
+        center_x, center_y = self.position.x, self.position.y
+        width, height = self.scene.main.window_size[0] / self.zoom, self.scene.main.window_size[1] / self.zoom 
+        
+        self.rect = pygame.Rect(center_x - (width/2), center_y - (height/2), width, height)
+        
+
     def update_projection_matrix(self):
         # Orthographic projection matrix
+        self.update_rect()
         width = self.scene.main.window_size[0]
         height = self.scene.main.window_size[1]
         left = -width / 2

@@ -5,9 +5,14 @@ in vec2 vert;
 out vec2 uv;
 
 uniform vec3 rot;
+uniform vec2 resolution;
 
 void main() {
     uv = texCoord;
+
+    // Convert from pixel coords to NDC [-1, 1]
+    vec2 ndc = (vert / resolution) * 2.0;
+    ndc.y *= 1.0;
 
     // Rotation matrices
     float cx = cos(rot.x);
@@ -17,31 +22,27 @@ void main() {
     float cz = cos(rot.z);
     float sz = sin(rot.z);
 
-    // Rotation around X-axis
     mat3 rotX = mat3(
         1.0, 0.0,  0.0,
         0.0,  cx, -sx,
         0.0,  sx,  cx
     );
 
-    // Rotation around Y-axis
     mat3 rotY = mat3(
          cy, 0.0, sy,
          0.0, 1.0, 0.0,
         -sy, 0.0, cy
     );
 
-    // Rotation around Z-axis
     mat3 rotZ = mat3(
         cz, -sz, 0.0,
         sz,  cz, 0.0,
         0.0, 0.0, 1.0
     );
 
-    // Combine rotations: Z * Y * X (standard order)
     mat3 rotation = rotZ * rotY * rotX;
 
-    vec3 rotatedVert = rotation * vec3(vert, 0.0);
+    vec3 rotatedVert = rotation * vec3(ndc, 0.0);
 
     gl_Position = vec4(rotatedVert, 1.0);
 }
