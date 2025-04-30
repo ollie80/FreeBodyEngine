@@ -50,6 +50,7 @@ class UIElement:
         self.children: list[UIElement] = []
         
         self.manager: UIManager = manager
+        
 
         self.style = style
         self.z = 0
@@ -62,10 +63,26 @@ class UIElement:
         
         self.rect: pygame.FRect
         self.interior_rect: pygame.FRect
-        
-    def _generate_shader_program(self) -> moderngl.Program:
-        return self.manager.graphics.ctx.program(self.manager.scene.files.load_text('engine/shader/ui/element.vert'), self.manager.scene.files.load_text('engine/shader/ui/image.frag'))
     
+    def change_style(self, target_style: str, val: any):
+        self.style[target_style] = val
+        self.draw()
+
+    def initialize(self):
+        self.on_initialize()
+
+    def on_initialize(self):
+        pass
+
+    def _generate_shader_program(self) -> moderngl.Program:
+        return self.manager.graphics.ctx.program(self.manager.scene.files.load_text('engine/shader/ui/element.vert'), self.manager.scene.files.load_text('engine/shader/ui/element.frag'))
+    
+    def add(self, element):
+        self.children.append(element)
+        element.container = self.rect
+        element.initialize()
+        self.draw()
+
     def _calculate_rect(self):
         size = self._get_size()
         pos = self._get_pos(size)
@@ -92,6 +109,9 @@ class UIElement:
                 self.program['borderRadius'] = self._get_border_radius()
             if uniform == "resolution":
                 self.program['resolution'] = self.manager.scene.main.window_size
+            
+            if uniform == "color":
+                self.program['color'] = self.style.get("color", (1, 1, 1))
 
     def _get_border_radius(self):
         style = self.style.get("border-radius", 0)
@@ -151,7 +171,7 @@ class UIElement:
         if isinstance(val, int):
             return val
 
-        
+    
     def _get_pos(self, size: tuple[int, int]):
 
         x = self._connvert_coord_val(self.style.get('x', 0))
@@ -163,7 +183,7 @@ class UIElement:
         if anchor:
             
             if 'left' in anchor:
-                left = x 
+                left = x
             elif 'right' in anchor:
                 left = x + size[0]
             
@@ -265,7 +285,11 @@ class UIElement:
             child.container = self.rect
         self.draw()
 
+    def on_update(self, dt):
+        pass
+
     def update(self, dt):
+        self.on_update(dt)
         for anim in self.animations:
             anim.update(dt)
         for child in self.children:
@@ -313,6 +337,7 @@ class UIRootElement:
         self.children.append(element)
         element.container = self.rect
         element.draw()
+        element.initialize()
     
     def draw(self):
         self.rect = pygame.FRect(0, 0, *self.manager.scene.main.window_size)

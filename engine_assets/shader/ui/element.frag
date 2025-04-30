@@ -3,69 +3,59 @@
 in vec2 uv;
 out vec4 f_color;
 
-uniform vec2 resolution; 
+uniform vec2 resolution;               // Screen size in pixels
+uniform vec4 borderRadius = vec4(0);             // Border radius per corner (pixels): TL, TR, BR, BL
+uniform float borderWidth = 100;             // Border width in pixels
+uniform vec3 color = vec3(1.0);        // Fill color
+uniform vec3 borderColor = vec3(1.0, 0.0, 0.0);  // Border color
 
-
-uniform vec4 borderRadius;
-uniform float borderWidth;
-uniform float borderColor;
-
-vec2 getAspect() {
-    if (resolution.y > resolution.x) {
-        return vec2(resolution.x / resolution.y, 1.0);
-    } 
-    return vec2(1.0, resolution.y / resolution.x);
-}
-
-float applyBorderRadius(vec4 radius, vec2 uvs) {
-    vec2 aspect = getAspect();
-    vec2 cornerDist;
-    float r = 0.0;
-    bool inCorner = false;
-
-   // Bottom-left
-    if (uvs.x < radius.w && uvs.y < radius.w * aspect.y) {
-        cornerDist = uvs;
-        r = radius.w;
-        inCorner = true;
-
-    // Bottom-right
-    } else if (uvs.x > 1.0 - radius.z && uvs.y < radius.z * aspect.y) {
-        cornerDist = vec2(1.0 - uvs.x, uvs.y);
-        r = radius.z;
-        inCorner = true;
+// Returns whether a point is inside a rounded rectangle of given size & corner radius
+float roundedBox(vec2 px, vec2 size, vec4 radius) {
+    // Check each corner and return 0.0 if outside the rounded area
+    vec2 fromTL = px;
+    vec2 fromTR = vec2(size.x - px.x, px.y);
+    vec2 fromBR = size - px;
+    vec2 fromBL = vec2(px.x, size.y - px.y);
 
     // Top-left
-    } else if (uvs.x < radius.x && uvs.y > 1.0 - radius.x * aspect.y) {
-        cornerDist = vec2(uvs.x, 1.0 - uvs.y);
-        r = radius.x;
-        inCorner = true;
+    if (px.x < radius.x && px.y < radius.x) {
+        return length(fromTL - vec2(radius.x)) < radius.x ? 1.0 : 0.0;
+    }
 
     // Top-right
-    } else if (uvs.x > 1.0 - radius.y && uvs.y > 1.0 - radius.y * aspect.y) {
-        cornerDist = 1.0 - uvs;
-        r = radius.y;
-        inCorner = true;
-    }
-    if (inCorner) {
-        vec2 center = vec2(r);
-        vec2 offset = (cornerDist - center) / aspect;
-        float dist = length(offset);
-        if (dist > r) {
-            return 0.0;
-        }
+    if (px.x > size.x - radius.y && px.y < radius.y) {
+        return length(fromTR - vec2(radius.y)) < radius.y ? 1.0 : 0.0;
     }
 
+    // Bottom-right
+    if (px.x > size.x - radius.z && px.y > size.y - radius.z) {
+        return length(fromBR - vec2(radius.z)) < radius.z ? 1.0 : 0.0;
+    }
 
-    return 1.0; // Inside or not in a corner
+    // Bottom-left
+    if (px.x < radius.w && px.y > size.y - radius.w) {
+        return length(fromBL - vec2(radius.w)) < radius.w ? 1.0 : 0.0;
+    }
+
+    return 1.0;
 }
 
 void main() {
-    float alpha = 1.0;
+    vec2 fragPx = uv * resolution;
+    vec2 size = resolution;
 
-    alpha = applyBorderRadius(borderRadius, uv);
-    
-    // Distance from rounded corner's arc center
-    vec3 texColor = vec3(uv, 1.0);
-    f_color = vec4(texColor.rgb, alpha);
+    float outerAlpha = roundedBox(fragPx, size, borderRadius);
+    if (outerAlpha == 0.0) {
+        discard; // outside outer rounded box
+    }
+
+    // Shrink size and frag position for inner (fill) area
+    vec2 innerFrag = fragPx - vec2(borderWidth);
+    vec2 innerSize = size - vec2(borderWidth * 2.0);
+    vec4 innerRadius = max(borderRadius - vec4(borderWidth), vec4(0.0));
+
+    float innerAlpha = roundedBox(innerFrag, innerSize, innerRadius);
+
+    vec3 finalColor = mix(borderColor, color, innerAlpha);
+    f_color = vec4(finalColor, 1.0);
 }
