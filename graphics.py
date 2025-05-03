@@ -868,6 +868,8 @@ class Graphics:
         
         i = 0
         for light in self.directional_lights:
+            if i >= 19:
+                break
             self.lighting_program[f"dirLights[{i}].color"] = light.color.float_normalized
             self.lighting_program[f"dirLights[{i}].direction"] = light.direction
             self.lighting_program[f"dirLights[{i}].intensity"] = light.intensity
@@ -876,6 +878,8 @@ class Graphics:
         
         i = 0
         for light in self.spot_lights:
+            if i >= 19:
+                break
             self.lighting_program[f"spotLights[{i}].color"] = light.color.float_normalized
             self.lighting_program[f"spotLights[{i}].direction"] = (math.sin(light.direction), math.cos(light.direction))
             self.lighting_program[f"spotLights[{i}].intensity"] = light.intensity
@@ -886,6 +890,8 @@ class Graphics:
  
         i = 0
         for light in self.lights:
+            if i >= 19:
+                break
             self.lighting_program[f"lights[{i}].color"] = light.color.float_normalized
             self.lighting_program[f"lights[{i}].intensity"] = light.intensity
             self.lighting_program[f"lights[{i}].position"] = (light.position.x, -light.position.y)

@@ -183,7 +183,8 @@ class Entity:
         self.position = new_center - (self.size / 2)  # Adjusts position based on new center
 
     def kill(self):
-        self.scene.entities.remove(self)
+        if self in self.scene.entities:
+            self.scene.entities.remove(self)
         self.on_kill()
 
     def update(self, dt):
@@ -546,6 +547,7 @@ class Scene:
     def on_post_draw(self):
         pass
 
+  
     def update_mouse_pos(self):
         self.mouse_screen_pos = vector(pygame.mouse.get_pos())
         self.mouse_world_pos = vector((self.camera.position.x - (self.main.window_size[0]/2) / self.camera.zoom) + (self.mouse_screen_pos[0] / self.camera.zoom), (self.camera.position.y - (self.main.window_size[1]/2) / self.camera.zoom) + (self.mouse_screen_pos[1] / self.camera.zoom))

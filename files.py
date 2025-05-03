@@ -131,7 +131,12 @@ class FileManager:
 
     def load_shader(self, path):
         self.load_text(path) # ik its just a wrapper but most people arent gonna know to use the load_text function, bc a lot of people have a misunderstanding of how files work
-            
+    
+    def load_font(self, path):
+        file_dir = os.path.basename(path)
+        print(file_dir)
+        
+
     def load_texture(self, path, aa=moderngl.NEAREST):
         img = pygame.image.load(io.BytesIO(self.images[path])).convert_alpha()
         return engine.graphics.surf_to_texture(img, self.main.glCtx, aa)

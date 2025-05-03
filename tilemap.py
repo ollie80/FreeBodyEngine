@@ -409,15 +409,18 @@ class TileMap:
         self.layers[layer].chunks.remove(chunk)
 
     def get_bounds(self):
-        first_key = next(iter(self.layers))          # Get the first key
-        chunk1 = self.layers[first_key].chunks[0]
-        bounds = [chunk1.world_position.x, chunk1.world_position.y, chunk1.world_position.x + self.chunk_world_size, chunk1.world_position.y + self.chunk_world_size]
+        first_key = next(iter(self.layers)) 
+        default_set = False     # Get the first key
         for layer in self.layers:
-            
+            if not default_set:
+                if len(self.layers[first_key].chunks) > 0:
+                    chunk1 = self.layers[layer].chunks[0]
+                    bounds = [chunk1.world_position.x, chunk1.world_position.y, chunk1.world_position.x + self.chunk_world_size, chunk1.world_position.y + self.chunk_world_size]
+                    default_set = True
+
             for chunk in self.layers[layer].chunks:
                 x, y = chunk.world_position.x, chunk.world_position.y
                 max_x, max_y = self.chunk_world_size, self.chunk_world_size 
-
                 if x < bounds[0]:
                     bounds[0] = x
                 if y < bounds[1]:
@@ -426,6 +429,10 @@ class TileMap:
                     bounds[2] = max_x
                 if max_y > bounds[3]:
                     bounds[3] = max_y
+
+        if default_set == False:
+            print(self.layers)
+
         return bounds
     
     def draw(self):

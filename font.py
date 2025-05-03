@@ -16,6 +16,7 @@ VERTEX_SHADER = """
 in vec4 vertex;
 out vec2 TexCoords;
 
+uniform float rotation;
 uniform mat4 projection;
 
 void main() {
@@ -33,6 +34,8 @@ out vec4 FragColor;
 uniform float pxRange;
 uniform sampler2D tex;
 uniform vec3 textColor;
+uniform vec4 outline_color;
+uniform float outline_width;
 
 float median(float r, float g, float b) {
     return max(min(r, g), min(max(r, g), b));
@@ -122,10 +125,13 @@ class TextRenderer:
         self.vao = self.graphics.ctx.vertex_array(self.program, vao_content)
         
 
-    def render_text(self, font: Font, text: str, pos: vector, scale: int, color: tuple):
+    def render_text(self, font: Font, text: str, pos: vector, scale: int, color: tuple, rotation: float, outline_width: int, outline_color: engine.graphics.Color):
         vec = pos.copy()
-
+        
         self.program['textColor'].value = color
+        self.program['rotation'] = rotation
+        self.program['outline_width'] = outline_width
+        self.program['outline_color'] = outline_color.float_normalized_a
         self.program['pxRange'].value = font.pxrange
 
         key = self.graphics.scene.texture_locker.add(self.tex_key)

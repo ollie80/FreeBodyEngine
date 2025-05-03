@@ -4,12 +4,11 @@ in vec2 uv;
 out vec4 f_color;
 
 uniform vec2 resolution;               // Screen size in pixels
-uniform vec4 borderRadius = vec4(0);             // Border radius per corner (pixels): TL, TR, BR, BL
-uniform float borderWidth = 100;             // Border width in pixels
+uniform vec4 borderRadius;             // Border radius per corner (pixels): TL, TR, BR, BL
+uniform float borderWidth;             // Border width in pixels
 uniform vec3 color = vec3(1.0);        // Fill color
-uniform vec3 borderColor = vec3(1.0, 0.0, 0.0);  // Border color
+uniform vec3 borderColor;  // Border color
 
-// Returns whether a point is inside a rounded rectangle of given size & corner radius
 float roundedBox(vec2 px, vec2 size, vec4 radius) {
     // Check each corner and return 0.0 if outside the rounded area
     vec2 fromTL = px;
