@@ -7,40 +7,70 @@ import moderngl
 
 
 class UIAnimation:
-    def __init__(self, element: "UIElement", target_style: str, duration: int, end_val: any):
+    def __init__(self, element: "UIElement", target_style: str, duration: int, end_val: any, curve: engine.math.Curve = engine.math.Linear(), start=None):
         self.element: UIElement = element
         self.target_style = target_style
         
         self.elapsed = 0
         self.duration = duration
 
-        self.start = self.element[target_style]
-        self.end = end_val
+        self.coord_vals = ["width", "height", "x", "y"]
 
-        if not (self.start.__class__ == self.end.__class__):
+        if start == None:
+            self.start = self.element.style[target_style]
+        else:
+            self.start = start
+
+        self.end = end_val
+        self.curve = curve
+        if self.start.__class__ != self.end.__class__:
             raise ValueError(f"UIAnimation with target style: {self.target_style}. Start value ({self.start.__class__}) is not the same type as end value {self.start.__class__}.")
 
     def _lerp(self, x, y, t):
-        pass
+        percentage = self.curve.get_value(t)  # Get eased interpolation factor
+        return x + (y - x) * percentage     
 
     def _lerp_num_tuple(self, x: tuple, y: tuple, t: int):
         new = []
         if len(x) != len(y):
             raise ValueError("Iterable values must be the same length. On Animation")
         
-        for i in range(x):    
+        for i in range(x):
+
             new.append(self._lerp(x[i], y[i], t))
+
+    def _lerp_coord_value(self, x: int|float|str, y: int|float|str, t):
+
+        if isinstance(x, str):
+            suffixes = ['%h', '%w']
+            s = ''
+            for suffix in suffixes:
+                if x.endswith(suffix):
+                    val1 = float(x.removesuffix(suffix))
+                    val2 = float(y.removesuffix(suffix))
+                    val = self._lerp(val1, val2, t)
+                    s = suffix
+                    return str(val) + s
+
+        else:
+            return self._lerp(val1, val2, t)
+
 
     def __repr__(self):
         return f"{self.__class__}({self.element}, duration={self.duration}, target_style={self.target_style}, eng_val={self.end}, start_val: {self.start})"
 
     def _lerp_num_list(x, y, t): # probably not required
         pass
-
+    
     def update(self, dt):
         self.elapsed += dt
-        t = self.duration / self.elapsed
-        self.element.draw()
+        t = min(self.elapsed/ self.duration, 1)
+        if t >= 1:
+            self.element.animations.remove(self)
+
+        if self.target_style in self.coord_vals:
+            self.element.change_style(self.target_style, self._lerp_coord_value(self.start, self.end, t)) 
+
 
 class UIElement:  
     def __init__(self, manager: "UIManager", style: dict[str, any]):
@@ -66,7 +96,7 @@ class UIElement:
     
     def change_style(self, target_style: str, val: any):
         self.style[target_style] = val
-        self.draw()
+        self.manager.root.draw()
 
     def initialize(self):
         self.on_initialize()
@@ -81,14 +111,38 @@ class UIElement:
         self.children.append(element)
         element.container = self.rect
         element.initialize()
-        self.draw()
+        self.manager.root.draw()
 
     def _calculate_rect(self):
-        size = self._get_size()
-        pos = self._get_pos(size)
+        width, height = self._get_size()
+        x = self._connvert_coord_val(self.style.get('x', 0)) + self.container.x
+        y = self._connvert_coord_val(self.style.get('y', 0)) + self.container.y
 
-        self.rect = pygame.FRect(*pos, *size)
- 
+        anchor = self.style.get('anchor', 'center').lower()
+
+        # Horizontal offset
+        if 'left' in anchor:
+            left = x
+        elif 'center' in anchor:
+            left = x - width / 2
+        elif 'right' in anchor:
+            left = x - width
+        else:
+            left = x - width / 2  # default to center
+
+        # Vertical offset
+        if 'top' in anchor:
+            top = y
+        elif 'center' in anchor:
+            top = y - height / 2
+        elif 'bottom' in anchor:
+            top = y - height
+        else:
+            top = y - height / 2  # default to center
+
+        self.rect = pygame.FRect(left, top, width, height)
+
+    
     def _calculate_interior(self):
         style = self._get_padding()
         padding = (style[0] * self.rect.size[0], style[1] * self.rect.size[0], style[2] * self.rect.size[1], style[3]* self.rect.size[1])
@@ -98,8 +152,8 @@ class UIElement:
 
         self.interior_rect = pygame.FRect(left, top, width, height)
 
-    def start_animation(self, style: str, end: any, duration: int):
-        self.animations.append(UIAnimation(self, style, duration, end))
+    def start_animation(self, style: str, end: any, duration: int, curve=engine.math.Linear(), start= None):
+        self.animations.append(UIAnimation(self, style, duration, end, curve, start))
     
     def _apply_style(self):
         for uniform in self.program:
@@ -156,12 +210,12 @@ class UIElement:
     def _connvert_coord_val(self, val):
         if isinstance(val, str):
             if val.endswith('%h'):
-                perectage = int(val.removesuffix('%h')) / 100
+                perectage = float(val.removesuffix('%h')) / 100
                 val = self.container.height * perectage
                 return val
 
             if val.endswith('%w'):
-                perectage = int(val.removesuffix('%w')) / 100
+                perectage = float(val.removesuffix('%w')) / 100
                 val = self.container.width * perectage
                 return val
 
@@ -171,59 +225,62 @@ class UIElement:
         if isinstance(val, int):
             return val
 
-    
-    def _get_pos(self, size: tuple[int, int]):
-
+    def _get_pos(self, size: tuple[int, int]) -> tuple[float, float]:
         x = self._connvert_coord_val(self.style.get('x', 0))
         y = self._connvert_coord_val(self.style.get('y', 0))
-        left = x - (size[0]/2)
-        top = y - (size[1]/2)
+        width, height = size
+        left = x
+        top = y
 
-        anchor = self.style.get('anchor', None)
-        if anchor:
-            
-            if 'left' in anchor:
-                left = x
-            elif 'right' in anchor:
-                left = x + size[0]
-            
-            if 'top' in anchor:
-                top = y
-            elif 'bottom' in anchor:
-                left = y + size[1]
-    
+        anchor = self.style.get('anchor', 'center')
+
+        # Horizontal adjustment
+        if 'left' in anchor:
+            left = x
+        elif 'center' in anchor:
+            left = x - (width / 2)
+        elif 'right' in anchor:
+            left = x - width
+
+        # Vertical adjustment
+        if 'top' in anchor:
+            top = y
+        elif 'center' in anchor:
+            top = y - (height / 2)
+        elif 'bottom' in anchor:
+            top = y - height
+
         return (left, top)
 
-    def _get_size(self) -> tuple[int, int]:
-        aspect_ratio: tuple = self.style.get('aspect-ratio', None)
+    def _get_size(self) -> tuple[float, float]:
+        aspect_ratio: tuple | None = self.style.get('aspect-ratio', None)
 
-        if aspect_ratio != None:
-            width = self._connvert_coord_val(self.style.get('width', None))
-            height = self._connvert_coord_val(self.style.get('height', None))
+        width = self._connvert_coord_val(self.style.get('width', None))
+        height = self._connvert_coord_val(self.style.get('height', None))
 
-            if width and height:
-                if aspect_ratio[0] > aspect_ratio[1]:
-                    multi = aspect_ratio[1] / aspect_ratio[0]
-                    height = width * multi
+        if aspect_ratio:
+            ar_width, ar_height = aspect_ratio
 
+            if width and not height:
+                height = width * (ar_height / ar_width)
+            elif height and not width:
+                width = height * (ar_width / ar_height)
+            elif width and height:
+                # Adjust the smaller one to maintain the ratio
+                current_ratio = width / height
+                target_ratio = ar_width / ar_height
+                if current_ratio > target_ratio:
+                    width = height * target_ratio
                 else:
-                    multi = aspect_ratio[0] / aspect_ratio[1]
-                    width = height * multi
-
-            if width:
-                multi = aspect_ratio[1] / aspect_ratio[0]
-                height = width * multi
-
-            elif height:
-                multi = aspect_ratio[0] / aspect_ratio[1]
-                width = height * multi
-
+                    height = width / target_ratio
             else:
-                raise ValueError(f"At least one size value must be set if aspect ratio is used. On Element {repr(self)}")
-
+                raise ValueError(
+                    f"At least one of width or height must be set if aspect-ratio is used. On Element {repr(self)}"
+                )
         else:
-            width = self._connvert_coord_val(self.style.get('width', 100))
-            height = self._connvert_coord_val(self.style.get('height', 100))
+            # If no aspect ratio, apply defaults
+            width = width if width is not None else 100
+            height = height if height is not None else 100
 
         return (width, height)
 
@@ -249,14 +306,15 @@ class UIElement:
         0, 1, 2,  # First triangle
         2, 3, 0   # Second triangle
         ], dtype="i4"))
-
+        
 
         self.vao = self.manager.graphics.ctx.vertex_array(self.program, [(vbo, '2f 2f',  'vert', 'texCoord')], indices)
+
+    
 
     def _draw_to_screen(self):
         self.manager.start_draw()
         self._calculate_layout()
-        print(self.rect)
         self._generate_graphics_objects()
         self._apply_style()
         self.vao.render(moderngl.TRIANGLE_STRIP)
@@ -278,6 +336,7 @@ class UIElement:
         self._draw_to_screen()
         for child in self.children:
             child.container = self.rect
+            
             child.draw()
 
     def resize(self):
@@ -340,6 +399,7 @@ class UIRootElement:
         element.initialize()
     
     def draw(self):
+        self.manager.fbo.clear(0, 0, 0)
         self.rect = pygame.FRect(0, 0, *self.manager.scene.main.window_size)
         
         for element in self.children:
@@ -368,6 +428,8 @@ class UIManager:
         size = self.scene.main.window_size
         self.fbo = self.graphics.ctx.framebuffer((self.graphics.ctx.texture((size[0], size[1]), 4)))
         self.root.draw()
+    
+
         
     def start_draw(self):
         self.fbo.use()
