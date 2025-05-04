@@ -4,10 +4,14 @@ in vec2 uv;
 out vec4 f_color;
 
 uniform vec2 resolution;               // Screen size in pixels
+
 uniform vec4 borderRadius;             // Border radius per corner (pixels): TL, TR, BR, BL
 uniform float borderWidth;             // Border width in pixels
-uniform vec3 color = vec3(1.0);        // Fill color
 uniform vec3 borderColor;  // Border color
+
+uniform vec3 color = vec3(1.0);        // Fill color
+uniform float opacity;
+
 
 float roundedBox(vec2 px, vec2 size, vec4 radius) {
     // Check each corner and return 0.0 if outside the rounded area
@@ -56,5 +60,5 @@ void main() {
     float innerAlpha = roundedBox(innerFrag, innerSize, innerRadius);
 
     vec3 finalColor = mix(borderColor, color, innerAlpha);
-    f_color = vec4(finalColor, 1.0);
+    f_color = vec4(finalColor, opacity);
 }
