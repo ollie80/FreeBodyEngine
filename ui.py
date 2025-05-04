@@ -5,6 +5,7 @@ import pygame
 import random
 import moderngl
 
+from pygame.math import Vector2 as vector
 
 class UIAnimation:
     def __init__(self, element: "UIElement", target_style: str, duration: int, end_val: any, curve: engine.math.Curve = engine.math.Linear(), start=None):
@@ -75,7 +76,9 @@ class UIAnimation:
 class UIElement:  
     def __init__(self, manager: "UIManager", style: dict[str, any]):
         self.animations: list[UIAnimation] = []
-        
+        self.visible = True
+        self.active = True
+
         self.parent = UIElement
         self.children: list[UIElement] = []
         
@@ -109,8 +112,9 @@ class UIElement:
     
     def add(self, element):
         self.children.append(element)
-        element.container = self.rect
-        element.initialize()
+        if self.active:
+            element.container = self.rect
+            element.initialize()
         self.manager.root.draw()
 
     def _calculate_rect(self):
@@ -166,6 +170,8 @@ class UIElement:
             
             if uniform == "color":
                 self.program['color'] = self.style.get("color", (1, 1, 1))
+            if uniform == "opacity":
+                self.program['opacity'] = self.style.get("opacity", 100) / 100
 
     def _get_border_radius(self):
         style = self.style.get("border-radius", 0)
@@ -313,36 +319,32 @@ class UIElement:
     
 
     def _draw_to_screen(self):
-        self.manager.start_draw()
         self._calculate_layout()
-        self._generate_graphics_objects()
-        self._apply_style()
-        self.vao.render(moderngl.TRIANGLE_STRIP)
-        self.manager.end_draw()
 
-    def _check_click(self):
-        if pygame.mouse.get_pressed()[0]:
-            if self.rect.collidepoint(self.manager.scene.mouse_screen_pos):
-                if self.manager.clicked_element.z <= self.z:
-                    self.manager.clicked_element = self
-    
-    def _process_click(self):
-        self.click()
+        if self.visible:
+            self.manager.start_draw()
+            self._generate_graphics_objects()
+            self._apply_style()
+            self.vao.render(moderngl.TRIANGLE_STRIP)
+            self.manager.end_draw()
+
+
 
     def click(self):
         pass
 
     def draw(self):
-        self._draw_to_screen()
-        for child in self.children:
-            child.container = self.rect
-            
-            child.draw()
+        if self.active:
+            self._draw_to_screen()
+            for child in self.children:
+                child.container = self.rect
+                child.draw()
 
     def resize(self):
-        for child in self.children:
-            child.container = self.rect
-        self.draw()
+        if self.active:
+            for child in self.children:
+                child.container = self.rect
+            self.draw()
 
     def on_update(self, dt):
         pass
@@ -351,21 +353,28 @@ class UIElement:
         self.on_update(dt)
         for anim in self.animations:
             anim.update(dt)
+
         for child in self.children:
             child.update(dt)
 
 class UIButton(UIElement):
     def __init__(self, manager: "UIManager", style: dict[str, any]):
         super().__init__(manager, style)
+        self.on_click: function = None
 
     def _check_click(self):
         if pygame.mouse.get_pressed()[0]:
-            if self.rect.collidepoint(self.manager.scene.mouse_screen_pos):
-                if self.manager.clicked_element.z <= self.z:
+            if self.rect.collidepoint((self.manager.scene.mouse_screen_pos - vector(self.manager.scene.main.window_size[0]/2, self.manager.scene.main.window_size[1]/2))):
+                if self.manager.clicked_element == None or self.manager.clicked_element.z <= self.z:
                     self.manager.clicked_element = self
     
     def _process_click(self):
         pass
+
+    def update(self, dt):
+        self._check_click()
+
+        super().update(dt)
 
 class UIImage(UIElement):
     def __init__(self, manager: "UIManager", texture: moderngl.Texture, style: dict[str, any]):
@@ -399,7 +408,7 @@ class UIRootElement:
         element.initialize()
     
     def draw(self):
-        self.manager.fbo.clear(0, 0, 0)
+        self.manager.fbo.clear(0, 0, 0, 0)
         self.rect = pygame.FRect(0, 0, *self.manager.scene.main.window_size)
         
         for element in self.children:
@@ -439,7 +448,8 @@ class UIManager:
 
     def click(self):
         if self.clicked_element:
-            self.clicked_element.process_click()
+            if self.clicked_element.on_click != None:
+                self.clicked_element.on_click()
             
 
     def draw(self):
@@ -456,5 +466,6 @@ class UIManager:
         
 
     def update(self, dt):
+        self.clicked_element = None
         self.root.update(dt)
         self.click()
