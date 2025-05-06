@@ -420,7 +420,7 @@ class UIRootElement:
             element.update(dt)
 
 class UIManager:
-    def __init__(self, scene: engine.core.Scene):
+    def __init__(self, scene: engine.actor.Scene):
         self.key = "_ENGINE_ui"
         self.scene = scene
         self.graphics = self.scene.graphics
