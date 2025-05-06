@@ -34,7 +34,7 @@ class Particle:
                 self.radius = self.grow_radius()
         self.time_remaining  -= dt
 
-class ParticleEmitter(engine.core.Entity):
+class ParticleEmitter(engine.actor.Entity):
     def __init__(self, pos: vector, size, spawn_rate: int, lifespan: int, color: str = 'black', 
                 morph: int = 0, # -1 = shrink, 0 = none, 1 = grow
                 max: int = 10, vert_min = -10, vert_max = 10,  hor_min = -10, hor_max = 10, tag="none"):
@@ -42,7 +42,7 @@ class ParticleEmitter(engine.core.Entity):
         super().__init__(pos, tag=tag)
         self.morph = morph
         self.particles = []
-        self.spawn_timer = engine.core.Timer(spawn_rate)
+        self.spawn_timer = engine.actor.Timer(spawn_rate)
 
         self.color = color
         self.lifespan = lifespan
@@ -69,7 +69,7 @@ class ParticleEmitter(engine.core.Entity):
             if particle.time_remaining <= 0:
                 self.particles.remove(particle)
 
-class CircleParticle(engine.core.Entity):
+class CircleParticle(engine.actor.Entity):
     def __init__(self, radius, max_radius, duration, curve, position, color="#FFFFFF"):
         self.radius = radius
         self.start_radius = radius

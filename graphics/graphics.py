@@ -174,7 +174,7 @@ class AnimationPlayer:
         self.animations = animations
         self.spritesheet = spritesheet
         self.use_normal = self.spritesheet.use_normal
-        self.anim_timer = engine.core.Timer(1) 
+        self.anim_timer = engine.actor.Timer(1) 
         self.current_animation = "none"
 
         self.index = 0
@@ -269,11 +269,11 @@ class Shader:
         self.program = self.image.scene.glCtx.program(vertex_shader=self.vert, fragment_shader=self.frag)
     
 class DefaultShader(Shader):
-    def __init__(self, scene: engine.core.Scene):
+    def __init__(self, scene: engine.actor.Scene):
         super().__init__(scene, scene.files.load_text('engine/shader/graphics/world.vert'), scene.files.load_text('engine/shader/graphics/world.frag'))
 
 class Image:
-    def __init__(self, texture: moderngl.Texture, name: str, scene: engine.core.Scene, size=(32,32), z=1, normal: moderngl.Texture = None):
+    def __init__(self, texture: moderngl.Texture, name: str, scene: engine.actor.Scene, size=(32,32), z=1, normal: moderngl.Texture = None):
         self.scene = scene
         self.name = name
         self.normal_name = self.name + "_normal"
@@ -338,7 +338,7 @@ class Image:
         self.scene.texture_locker.remove(self.normal_name)
 
 class AnimatedShader(Shader):
-    def __init__(self, scene: engine.core.Scene, vert=None, frag=None):
+    def __init__(self, scene: engine.actor.Scene, vert=None, frag=None):
         if vert:
             v = vert
         else:
@@ -372,7 +372,7 @@ class AnimatedShader(Shader):
         self.image.scene.texture_locker.remove(self.image.normal_name)
 
 class AnimatedImage(Image):
-    def __init__(self, animation_player: AnimationPlayer, name: str, scene: engine.core.Scene, z=1, size: vector = None):
+    def __init__(self, animation_player: AnimationPlayer, name: str, scene: engine.actor.Scene, z=1, size: vector = None):
         self.animation_player = animation_player
         self.scene = scene
         self.name = name
@@ -398,7 +398,7 @@ class AnimatedImage(Image):
         self.render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
 class CompositeImage(Image):
-    def __init__(self, name: str, images: list[Image],  scene: engine.core.Scene, z=1):
+    def __init__(self, name: str, images: list[Image],  scene: engine.actor.Scene, z=1):
         self.images = images
         self.name = name
         self.scene = scene
@@ -440,7 +440,7 @@ class CompositeImage(Image):
     def set_shader(self, shader):
         pass
 
-class Camera(engine.core.Entity):
+class Camera(engine.actor.Entity):
     def __init__(self, pos, scene, zoom=5):
         super().__init__(pos, scene)
         self.rotation = 0
@@ -522,8 +522,8 @@ class Camera(engine.core.Entity):
         self.view_matrix = np.dot(translation_matrix, rotation_matrix)
 
 
-class DirectionalLight(engine.core.Entity):
-    def __init__(self, scene: engine.core.Scene, color: Color, intensity: int, angle: int):
+class DirectionalLight(engine.actor.Entity):
+    def __init__(self, scene: engine.actor.Scene, color: Color, intensity: int, angle: int):
         super().__init__(vector(0, 0), scene, vector(1, 1))
         self.data = {
             "intensity": intensity,
@@ -558,7 +558,7 @@ class DirectionalLight(engine.core.Entity):
     def on_draw(self):
         self.scene.graphics.add_directional_light(self)
 
-class PointLight(engine.core.Entity):
+class PointLight(engine.actor.Entity):
     def __init__(self, position, scene, radius: int, color: Color, intensity: int):
         super().__init__(position, scene)
 
@@ -596,7 +596,7 @@ class PointLight(engine.core.Entity):
     def on_draw(self):
         self.scene.graphics.add_light(self)
 
-class SpotLight(engine.core.Entity):
+class SpotLight(engine.actor.Entity):
     def __init__(self, position, scene, radius: int, color: Color, intensity: int, angle, direction):
         super().__init__(position, scene)
 
@@ -656,7 +656,7 @@ class SpotLight(engine.core.Entity):
 RENDERING_MODES = ["full",  "general", "normal", "light"]
 
 class PostProcessLayer:
-    def __init__(self, scene: engine.core.Scene, frag: str):
+    def __init__(self, scene: engine.actor.Scene, frag: str):
         self.scene = scene
         
         self.program = self.scene.glCtx.program(uv_vert_shader, frag)
@@ -687,11 +687,11 @@ class PostProcessLayer:
         self.vao.render()
 
 class Graphics:
-    def __init__(self, scene: engine.core.Scene, ctx: moderngl.Context):
+    def __init__(self, scene: engine.actor.Scene, ctx: moderngl.Context):
         self.ctx = ctx
         self.scene = scene
         
-        self.rendering_mode_cooldown = engine.core.Timer(0.5)
+        self.rendering_mode_cooldown = engine.actor.Timer(0.5)
         self.rendering_mode_cooldown.activate()
 
         self.albedo_key = "_ENGINE_albedo"

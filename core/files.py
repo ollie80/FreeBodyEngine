@@ -32,10 +32,10 @@ class FileManager:
     """
     The asset manager loads the files packaged by the engine. You must use paths that are relative to your asset folder.
     """
-    def __init__(self, main: engine.core.Main, path):
+    def __init__(self, main: engine.actor.Main, path):
         self.path = "game"
         self.game_name = main.game_name
-        self.main: engine.core.Main = main
+        self.main: engine.actor.Main = main
 
         #loading assets
         asset_path = path
@@ -43,7 +43,7 @@ class FileManager:
         self.data = read_assets(asset_path+"data.pak")
 
 
-    def load_image(self, path, scene: engine.core.Scene, normal:str|None=None, size: tuple = None, name:str = "image"):
+    def load_image(self, path, scene: engine.actor.Scene, normal:str|None=None, size: tuple = None, name:str = "image"):
         tex = self.load_texture(path)
 
         normal_tex = None
@@ -57,7 +57,7 @@ class FileManager:
             
         return engine.graphics.Image(tex, 'image', scene, img_size, normal=normal_tex)
     
-    def load_composite(self, path, scene: engine.core.Scene):
+    def load_composite(self, path, scene: engine.actor.Scene):
         data = self.load_json(path)
 
         images: list[engine.graphics.Image] = []

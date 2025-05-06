@@ -57,7 +57,7 @@ def empty_chunk_frag_data(chunk_size):
 
 
 class ChunkShader(engine.graphics.Shader):
-    def __init__(self, scene: engine.core.Scene, image: "ChunkImage"):
+    def __init__(self, scene: engine.actor.Scene, image: "ChunkImage"):
         self.image = image
         super().__init__(scene, scene.files.load_text("engine/shader/graphics/world.vert"), scene.files.load_text("engine/shader/graphics/chunk.frag"))
 
@@ -86,7 +86,7 @@ class ChunkShader(engine.graphics.Shader):
         self.image.scene.texture_locker.remove(self.image.normal_name)
 
 class ChunkImage(engine.graphics.Image):
-    def __init__(self, chunk: "Chunk", scene: engine.core.Scene):
+    def __init__(self, chunk: "Chunk", scene: engine.actor.Scene):
         self.chunk = chunk
         super().__init__(None, self.chunk.image_key, scene, size=(self.chunk.tilemap.chunk_world_size, self.chunk.tilemap.chunk_world_size))
         self.set_shader(ChunkShader(self.scene, self))
@@ -113,7 +113,7 @@ class ChunkImage(engine.graphics.Image):
             self.render_object.render(mode=moderngl.TRIANGLE_STRIP)
 
 class Tileset:
-    def __init__(self, scene: engine.core.Scene, data):
+    def __init__(self, scene: engine.actor.Scene, data):
         self.scene = scene
         self.spritesheet = self.scene.files.load_spritesheet(data['spritesheet'])
         self.type = data['type']
@@ -226,11 +226,11 @@ class Object:
         return self.position + self.chunk.world_position
 
     def check_collisions(self):
-        for actor in (e for e in self.chunk.tilemap.scene.entities if isinstance(e, engine.core.Actor)):
+        for actor in (e for e in self.chunk.tilemap.scene.entities if isinstance(e, engine.actor.Actor)):
             if actor.collision_type != "none" and self.chunk.tilemap.get_chunk_pos(self) == self.chunk.position:
                 self.on_collision(actor)
                 
-    def on_collision(self, other: engine.core.Actor):
+    def on_collision(self, other: engine.actor.Actor):
         pass
 
     def draw(self):
@@ -377,7 +377,7 @@ class Layer:
     collision: bool
 
 class TileMap:
-    def __init__(self, scene: engine.core.Scene, name: str, tile_size = 64, chunk_size = 16, pos: vector = vector(0,0)):
+    def __init__(self, scene: engine.actor.Scene, name: str, tile_size = 64, chunk_size = 16, pos: vector = vector(0,0)):
         self.tilesets: dict[str, Tileset] = {}
         self.chunks: list[Chunk] = []
         self.chunk_key_locker = engine.data.IndexKeyLocker()
