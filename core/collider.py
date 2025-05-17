@@ -1,37 +1,97 @@
 import pygame
-from pygame import Vector2 as vector
+from FreeBodyEngine.math import Vector, Vector3
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, Union
 
-class Collider:
-    def __init__(self, position: vector):
-        pass
 
-    def collide_point(self, point: vector):
-        raise NotImplementedError(f"Point collision not implemented on Collide: {str(self)}")
 
+class Collider(ABC):
+    """
+    A generic collider object.
+
+
+    :param position: The position of the collider.
+    :type position: Vector
+    """
+    def __init__(self, position: Vector, rotation: float):
+        self.position = position
+        self.rotation = rotation
+
+    @abstractmethod
+    def collide(self, other: Union['Collider', Vector]) -> bool:
+        """
+        Checks collision with any collider object or point.
+
+        :param other: Checked object.
+        :type other: Collider | Vector
+
+        :rtype: bool
+        """
+        if isinstance(other, CircleCollider): return self.collide_circle(other)
+        elif isinstance(other, RectangleCollider): return self.collide_rectangle(other)
+        elif isinstance(other, Vector): return self.collide_point(other)
+        else: raise TypeError(f"Object of class {other.__class__} cannot be collided with.")
+
+    @abstractmethod
+    def collide_point(self, point: Vector) -> bool:
+        """
+        Checks for collision against a point.
+
+        :param point: The checked point.
+        :type point: Vector
+
+        :rtype: bool
+        """
+        raise NotImplementedError(f"Point collision not implemented on Collider: {str(self)}")
+
+    @abstractmethod
+    def collide_circle(self, other: "CircleCollider") -> bool:
+        """
+        Checks for collision against a circle collider.
+
+        
+        :param other: The checked collider.
+        :type other: CircleCollider
+        
+        :return    bool: collision?
+        """
+        raise NotImplementedError(f"Circle collision not implemented on Collider: {str(self)}")
     
-    def collide_circle(self, other: "CircleCollider"):
-        raise NotImplementedError(f"Circle collision not implemented on Collide: {str(self)}")
-    
-    def collide_rectangle(self, other: "RectangleCollider"):
-        raise NotImplementedError(f"Rect collision not implemented on Collide: {str(self)}")
-    
+    @abstractmethod
+    def collide_rectangle(self, other: "RectangleCollider") -> bool:
+        """
+        Checks for collision against a rectangle collider.
+
+        Parameters:
+            other (RectangleCollider): The checked collider.
+        
+        Returns:
+            bool: collision?
+        """
+        raise NotImplementedError(f"Rect collision not implemented on Collider: {str(self)}")
+
 
 class CircleCollider(Collider):
-    def __init__(self, raduis: int, position: vector):
+    """
+    A circular collider object.
+    
+    :param radius: The Radius of the collider shape.
+    :type radius: int
+    :param position: The center of the collider.
+    :type position: Vector
+    """
+    def __init__(self, raduis: int, position: Vector, rotation: float):
         self.position = position
         self.radius = raduis
+        self.rotation = rotation
 
-    def collide_point(self, point: vector):
+    def collide_point(self, point: Vector):
         dist = self.position.distance_to(point)
-        if dist <= self.radius:
-            return True
-        return False
+        return dist <= self.radius
 
     def collide_circle(self, other: "CircleCollider"):
         dist = self.position.distance_to(other.position)
-        if dist <= self.radius + other.radius:
-            return True
-        return False
+        return dist <= self.radius + other.radius
     
     def collide_rect(self, other: "RectangleCollider"):
         # Find the closest point on the rectangle to the circle center
@@ -41,17 +101,27 @@ class CircleCollider(Collider):
         closest_y = max(y, min(self.position.y, y + h))
 
         # Compute the distance from the circle's center to this closest point
-        closest_point = vector(closest_x, closest_y)
+        closest_point = Vector(closest_x, closest_y)
         distance = other.position.distance_to(closest_point)
-        return distance <= other.radius
+        return distance <= self.radius
 
 
 class RectangleCollider(Collider):
-    def __init__(self, position: vector, size: tuple):
+    """
+    A rectangular collider object.
+    
+    :param position: The center of the collider.
+    :type position: Vector
+    :param size: The size of the collider shape (width, height).
+    :type size: tuple
+    """
+
+    def __init__(self, position: Vector, size: tuple, rotation: float):
         self.position = position  # Top-left corner
         self.size = size          # (width, height)
+        self.rotation = rotation
 
-    def collide_point(self, point: vector):
+    def collide_point(self, point: Vector):
         x, y = self.position.x, self.position.y
         w, h = self.size
         return (x <= point.x <= x + w) and (y <= point.y <= y + h)
@@ -64,7 +134,7 @@ class RectangleCollider(Collider):
         closest_y = max(y, min(other.position.y, y + h))
 
         # Compute the distance from the circle's center to this closest point
-        closest_point = vector(closest_x, closest_y)
+        closest_point = Vector(closest_x, closest_y)
         distance = other.position.distance_to(closest_point)
         return distance <= other.radius
 
@@ -81,14 +151,31 @@ class RectangleCollider(Collider):
             y1 > y2 + h2
         )
 
-
-
 class Ray:
-    def __init__(self, origin: vector, direction: vector):
+    """
+    A ray object.
+    
+    :param origin: The starting position of the ray.
+    :type origin: Vector
+
+    :param direction: The direction of the ray.    
+    :type direction: Vector
+    """
+
+    def __init__(self, origin: Vector, direction: Vector):
         self.origin = origin
         self.direction = direction.normalized()
 
-    def intersect_circle(self, circle: CircleCollider):
+    def intersect_circle(self, circle: CircleCollider) -> Vector | None:
+        """
+        Checks for intersection with a circle collider.
+
+        :param circle: The checked circle.
+        :type circle: CircleCollider
+
+        :returns: The point of intersection (Vector), or None if there is no intersection. 
+        :rtype: Vector or None
+        """
         oc = self.origin - circle.position
         d = self.direction
 
@@ -114,6 +201,15 @@ class Ray:
         return None  # Behind ray
 
     def intersect_rectangle(self, rect: RectangleCollider):
+        """
+        Checks for intersection with a rectangle collider.
+
+        :param circle: The checked circle.
+        :type circle: RectangleCollider
+
+        :returns: The point of intersection, or None if there is no intersection. 
+        :rtype: Vector or None
+        """
         x, y = rect.position.x, rect.position.y
         w, h = rect.size
 
@@ -133,3 +229,17 @@ class Ray:
 
         hit_point = self.origin + self.direction * tmin
         return hit_point
+    
+    def interscet(self, collider: Collider):
+                
+
+        if isinstance(collider, RectangleCollider):
+            return self.intersect_rectangle(collider)
+        if isinstance(collider, CircleCollider):
+            return self.intersect_circle(collider)
+        
+        raise ValueError(f"Provided collider type is not supported, type: {collider.__class__}")
+
+    def update(self, dt):
+        for collider in self.scene.colliders:
+            self.intersect(collider)
