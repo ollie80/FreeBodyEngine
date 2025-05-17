@@ -1,14 +1,35 @@
+from FreeBodyEngine.core.scene import Scene
+from FreeBodyEngine.math import Vector 
+from abc import ABC, abstractmethod
+import uuid
 
-class Entity:
-    def __init__(self, position: vector, scene, size=vector(32, 32), tag='none', anchor="center"):
-        self.scene: Scene = scene
-        self.tag = tag
+class Entity(ABC):
+    """
+    A generic entity class.
+
+    :param position: The world position of the entity.
+    :type position: Vector
+    """
+    def __init__(self, position: Vector):
         self.position = position
-        self.screen_position = position
-        self.components: list[Component] = []
-        self.size = size
+        self.is_initialized = False
         
-        self.anchor = anchor
+    
+    def _initialize(self, scene: Scene):
+        self.is_initialized = True
+        self.scene = scene
+
+        self.id = uuid.uuid4()
+        while self.id in self.scene.entities: # ensures id isn't already used  
+            self.id = uuid.uuid4() 
+        
+        self.scene.entities[self.id] = self
+
+        self.on_initialize()
+
+    @abstractmethod
+    def on_initialize(self):
+        pass
 
     @property
     def center(self):
@@ -19,28 +40,34 @@ class Entity:
         self.position = new_center - (self.size / 2)  # Adjusts position based on new center
 
     def kill(self):
+        """
+        Removes the entity from its scene.
+        """
         if self in self.scene.entities:
             self.scene.entities.remove(self)
         self.on_kill()
 
     def update(self, dt):
         self.on_update(dt)
-        
-        for component in self.components:
-            component.update(dt)
-        self.on_post_update()     
+
     
+    @abstractmethod
     def on_event_loop(self, event):
         pass
     
+    @abstractmethod
     def on_kill(self):
         pass
-    
+
+    @abstractmethod
     def on_draw(self): 
         pass
 
+    @abstractmethod
     def on_post_update(self):
         pass
 
+    @abstractmethod
     def on_update(self, dt):
         pass
+

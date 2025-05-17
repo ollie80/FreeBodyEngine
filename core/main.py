@@ -1,87 +1,121 @@
+from FreeBodyEngine.core.scene import Scene
+from FreeBodyEngine.graphics.manager import GraphicsManager
+from FreeBodyEngine.core.window import GLFWWindow, SDLWindow
+from FreeBodyEngine.graphics.gl.renderer import Renderer as GLRenderer
+from FreeBodyEngine.core.window import Window
 
-class Main: 
-    def __init__(self, SDL, window_size: tuple = [800, 800], starting_scene: Scene = None, flags=pygame.RESIZABLE, fps: int = 60, display: int = 0, asset_dir=str):
-        pygame.init()
-        
-        self.game_name = "FreeBodyEngine"
-        self.files = engine.files.FileManager(self, asset_dir)
-        self.SDL = SDL
-        self.window_size = window_size
-        self.fps_cap = fps
-        self.volume = 100
-        self.fps_timer = engine.core.Timer(10)
-        self.fps_timer.activate()
-        self.screen = pygame.display.set_mode(self.window_size, flags, display=display)
-        
-        self.clock = pygame.time.Clock()
-        self.dt = 0
+from typing import Union, Literal
+import pygame
+from sys import exit
+from FreeBodyEngine.utils import abstractmethod
 
-        self.glCtx = moderngl.create_context()
-        self.scenes: dict[str, Scene] = {}
-        self.active_scene: Scene = None
+def create_window(main: 'Main', graphics_api, size, title, display) -> Window:
+    if graphics_api == "opengl":
+        SDLWindow(main, size, graphics_api, title, display)
 
-        self.transition_manager = SceneTransitionManager(self)
-
-    def event_loop(self):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                exit()
-            if event.type == pygame.VIDEORESIZE:
-                self.window_size = pygame.display.get_window_size()
-                for scene in self.scenes:
-                    self.scenes[scene].on_resize()
-            self.on_event_loop(event)
-            if self.active_scene:
-                self.active_scene.event_loop(event)
-
-    def on_event_loop(self, event):
+    elif graphics_api == "vulkan":
         pass
 
-    def add_scene(self, scene: Scene, name: str):
-        self.scenes[name] = scene
+def create_renderer(main, graphics_api) -> GraphicsManager:
+    if graphics_api == "opengl":
+        return GraphicsManager(main, GLRenderer())
 
-    def remove_scene(self, name: str):
-        if self.scenes[name] == self.active_scene:
-            self.active_scene = None
+class Main:
+    """
+    The main object. Runs the game, and handles files, graphics, input and events.  
+    
+    :param name: Name of the game, mainly used for window title, and save files.
+    :type name: str
+
+    :param window_size: The size of the window that will be created.
+    :type window_size: tuple[int, int]
+    
+    :param fps: The maximum FPS (frames per second) that the game can run at.
+    :type fps: int
+    
+    :param display: The display that the window will be created in.
+    :type display: int
+    
+    :param dev: Option to start in developer mode. WARNING, if the game is not built and this is set to False, the file manager will not work.
+    :type dev: bool
+
+    :param pygame_flags: Flags that will be passed onto pygame during window creation.
+    :type pygame_flags: int
+    """
+    def __init__(self, name: str = "New Game", window_size: tuple = [800, 800], fps: int = 69, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl"):
+        self.name = name
+
+        # scenes
+        self.scenes: dict[str, Scene] = {}
+        self.active_scene: Scene = None
+    
+        # system managers
+        self.audio = None
+
+        self.fps = fps
+
+        # caption
+        dev_mode = ""
+        if dev:
+            dev_mode = "DEV_MODE"
+
+        # create window
+        self.window = create_window(self, graphics_api, window_size, self.name + dev_mode, display)
+
+
+    def add(self, scene: Scene):
+        """
+        Adds a scene and initializes it.
+
+        :param scene: The scene to be added.
+        :type scene: Scene
+        """
+        scene._initialize(self)
+
+    def remove(self, name: str):
+        """
+        Removes a scene.
+
+        :param name: Name of the scene.
+        :type name: str
+        """
         del self.scenes[name]
 
-    def change_scene(self, name: str, transition: "SceneTransition" = None):
-        if transition == None:
-            self._set_scene(name)
-        else:
-            self.transition_manager.transition(transition, name)
+    def change_scene(self, name: str):
+        self._set_scene(name)
 
     def _set_scene(self, name: str):
         self.active_scene = self.scenes[name]
+        
 
-    def has_scene(self, targetScene):
-        for scene in self.scenes:
-            if scene == targetScene:
-                return True
-        return False
+    def quit(self):
+        self.on_quit()
+        self.window.close()
+        exit()
+    
+    def _event_loop(self):
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self.quit()
+            if event.type == pygame.WINDOWRESIZED:
+                self.window_size = self.screen.size
 
-    def run(self, profiler):
-        total_fps = 0
-        ticks = 0
-        pygame.display.set_caption(f"Engine Dev       FPS: {round(self.clock.get_fps())}")
+            self.event_loop(event)
 
-        if profiler:
-            profiler_thread = threading.Thread(target=engine.debug.create_profiler_window, daemon=True)
-            profiler_thread.start()
-            
-        while True: 
-            dt = self.clock.tick(self.fps_cap) / 1000
-            total_fps += self.clock.get_fps()
-            ticks += 1
-            self.fps_timer.update(dt)
-            if self.fps_timer.complete:
-                pygame.display.set_caption(f"Engine Dev       FPS: {round(total_fps/ticks)}")
-                self.fps_timer.activate()
-            self.event_loop()
-            self.transition_manager.update(dt)
+    @abstractmethod
+    def event_loop(self, event):
+        pass
 
-            if self.active_scene:
-                self.active_scene.update(dt)
-            self.transition_manager.draw()
-            pygame.display.flip() 
+    @abstractmethod
+    def on_quit(self):
+        pass
+
+    def run(self):
+        while True:
+
+            if self.active_scene != None:
+                self.active_scene._update(0.1)
+                
+
+
+        
