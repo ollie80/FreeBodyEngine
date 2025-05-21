@@ -1,4 +1,3 @@
-import pygame
 from FreeBodyEngine.math import Vector, Vector3
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Union

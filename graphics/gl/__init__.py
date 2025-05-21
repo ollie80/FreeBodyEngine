@@ -1,4 +1,4 @@
-from .renderer import GLRenderer as Renderer
-from .shader import GLShader as Shader
+from .renderer import GLRenderer
+from .shader import GLShader
 
-__all__ = ["Renderer", "Shader"]
+__all__ = ["GLRenderer", "GLShader"]

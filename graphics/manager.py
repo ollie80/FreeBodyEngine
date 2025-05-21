@@ -21,6 +21,7 @@ class GraphicsManager:
         self.renderer = renderer
         self.images: list['Image'] = []
 
+
     def draw(self, camera: 'Camera'):
         """
         Draws the scene from the perspective of a camera.
@@ -31,7 +32,7 @@ class GraphicsManager:
         
         for image in self.images:
             self.renderer.draw_image(image, camera)
-    
+
 
 # class _GraphicsManager:
 #     def __init__(self, scene: engine.actor.Scene, ctx: moderngl.Context):

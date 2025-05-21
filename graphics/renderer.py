@@ -1,10 +1,11 @@
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from FreeBodyEngine.graphics.manager import GraphicsManager
+    from FreeBodyEngine.core.main import Main
     from FreeBodyEngine.graphics.material import Material
     from FreeBodyEngine.graphics.color import Color
     from FreeBodyEngine.graphics.image import Image
+    from FreeBodyEngine.graphics.mesh import Mesh
     from FreeBodyEngine.core.camera import Camera
 
 
@@ -16,11 +17,11 @@ class Renderer:
     The purpose of the renderer is to abstract rendering with different graphics APIs.
     The Renderer uses NDC (Normalised Device Coordinates) instead of pixel coordinates.
 
-    :param manager: The graphics manager.
-    :type manager: GraphicsManager
+    :param main: The main object.
+    :type main: Main
     """
-    def __init__(self, manager: 'GraphicsManager'):
-        self.manager = manager
+    def __init__(self, main: 'Main'):
+        self.main = main
 
     @abstractmethod
     def draw_line(self, start: tuple[float, float], end: tuple[float, float], width: int, color: 'Color'):
@@ -31,13 +32,17 @@ class Renderer:
         :type start: tuple[float, float]
         :param end: The second point (NDC).
         :type end: tuple[float, float]
-        :param width: The thickness of the line (Pixels).
+        :param width: The thickness of the line (NDC).
         :type width: int 
         """
         pass
     
     @abstractmethod
-    def draw_image(self, image: 'Image', camera: 'Camera'):
+    def draw_image(self, image: 'Image', material: 'Material', camera: 'Camera'):
+        pass
+    
+    @abstractmethod
+    def draw_mesh(self, image: 'Mesh', material: 'Material', camera: 'Camera'):
         pass
 
     @abstractmethod
@@ -47,7 +52,7 @@ class Renderer:
 
         :param start: The center of the circle (NDC).
         :type start: tuple[float, float]
-        :param radius: The radius of the 
+        :param radius: The radius of the circle (NDC).
         :type radius: float
         """
         pass
@@ -61,4 +66,3 @@ class Renderer:
 # - Vulkan Renderer
 # - DirectX Renderer
 # - Metal Renderer
-#   PS5 + Switch 2?
