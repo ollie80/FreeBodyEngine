@@ -1,9 +1,9 @@
 from FreeBodyEngine.core.scene import Scene
 from FreeBodyEngine.math import Vector 
-from abc import ABC, abstractmethod
+from FreeBodyEngine.utils import abstractmethod
 import uuid
 
-class Entity(ABC):
+class Entity:
     """
     A generic entity class.
 

@@ -10,5 +10,14 @@ from FreeBodyEngine import graphics
 from FreeBodyEngine import utils
 
 
+_main_object: core.main.Main = None
 
-__all__ = [ "graphics", "utils", "core", "math"]
+def get_main():
+    if _main_object == None:
+        raise RuntimeError("No main object has been created.")
+    return _main_object
+
+__all__ = [ "graphics", "utils", "core", "math", "get_main"]
+
+
+

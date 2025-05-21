@@ -1,3 +1,12 @@
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from FreeBodyEngine.core.main import Main
+
+class InputManager:
+    def __init__(self, main: 'Main', actions_data:dict[str, list[str]]=None):
+        pass
+
 
 # class InputManager: # im very sorry for what you're about to read
 #     def __init__(self, scene: Scene):

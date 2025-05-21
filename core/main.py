@@ -1,24 +1,23 @@
 from FreeBodyEngine.core.scene import Scene
 from FreeBodyEngine.graphics.manager import GraphicsManager
-from FreeBodyEngine.core.window import GLFWWindow, SDLWindow
-from FreeBodyEngine.graphics.gl.renderer import Renderer as GLRenderer
+from FreeBodyEngine.core.window import Win32Window
+from FreeBodyEngine.graphics.gl import GLRenderer
 from FreeBodyEngine.core.window import Window
 
 from typing import Union, Literal
-import pygame
 from sys import exit
 from FreeBodyEngine.utils import abstractmethod
 
-def create_window(main: 'Main', graphics_api, size, title, display) -> Window:
-    if graphics_api == "opengl":
-        SDLWindow(main, size, graphics_api, title, display)
+def create_window(main: 'Main', window, size, title, display) -> Window:
+    if window == "win32":
+        return Win32Window(main, size, window, display)
+    else:
+        raise NotImplementedError(f"No window implemented with name {window}.")
 
-    elif graphics_api == "vulkan":
-        pass
 
 def create_renderer(main, graphics_api) -> GraphicsManager:
     if graphics_api == "opengl":
-        return GraphicsManager(main, GLRenderer())
+        return GLRenderer(main)
 
 class Main:
     """
@@ -60,8 +59,8 @@ class Main:
             dev_mode = "DEV_MODE"
 
         # create window
-        self.window = create_window(self, graphics_api, window_size, self.name + dev_mode, display)
-
+        self.window = create_window(self, 'win32', window_size, self.name + dev_mode, display)
+        self.renderer = create_renderer(self, graphics_api)
 
     def add(self, scene: Scene):
         """
@@ -90,7 +89,6 @@ class Main:
 
     def quit(self):
         self.on_quit()
-        self.window.close()
         exit()
     
     def _event_loop(self):
@@ -106,13 +104,12 @@ class Main:
     def event_loop(self, event):
         pass
 
-    @abstractmethod
     def on_quit(self):
         pass
 
     def run(self):
         while True:
-
+            self.window.update(0.1)
             if self.active_scene != None:
                 self.active_scene._update(0.1)
                 
