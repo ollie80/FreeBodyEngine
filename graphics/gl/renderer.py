@@ -3,11 +3,15 @@ from FreeBodyEngine.graphics.gl import context
 from typing import TYPE_CHECKING
 import numpy as np
 
+from OpenGL import WGL
 from OpenGL.GL import *
+from FreeBodyEngine.graphics.color import Color
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
-    from FreeBodyEngine.graphics.color import Color
+    from FreeBodyEngine.core.camera import Camera
+    from FreeBodyEngine.graphics.material import Material
+    from FreeBodyEngine.graphics.gl import GLImage
 
 def create_shader_program(vertex_src, fragment_src):
     vertex_shader = compile_shader(vertex_src, GL_VERTEX_SHADER)
@@ -39,7 +43,6 @@ def compile_shader(source, shader_type):
     
     return shader
 
-
 class GLRenderer(Renderer):
     """
     The OpenGL renderer. Uses OpenGL version 330 Core.
@@ -47,15 +50,21 @@ class GLRenderer(Renderer):
     def __init__(self, main: 'Main'):
         super().__init__(main)
         if self.main.window.window_type == "win32":
-            self.context = context.create_context_win32(self.main.window._window)
+            self.context = context.create_context_win32(self.main.window)
+        
 
-
+    def destroy(self):
+        if self.main.winow.window_type == "win32":
+            WGL.wglMakeCurrent(self.main.window.hdc, None)
+        WGL.wglDeleteContext(self.context)
+        
     def clear(self, color: 'Color'):
         # Set the clear color to red (R=1, G=0, B=0, A=1)
         glClearColor(*color.float_normalized_a)
 
         # Clear the screen (color buffer only)
         glClear(GL_COLOR_BUFFER_BIT)
+
 
     def draw_line(self, start, end, width, color: 'Color'):
         glLineWidth(width)
@@ -86,5 +95,5 @@ class GLRenderer(Renderer):
     def draw_circle(self, radius, position, color):
         pass
 
-    def draw_image(self, image, material, camera):
-        pass
+    def draw_image(self, image: 'GLImage', material: 'Material', camera: 'Camera'):
+        pass        

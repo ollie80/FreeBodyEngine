@@ -1,6 +1,7 @@
 from FreeBodyEngine.core.entity import Entity
 from FreeBodyEngine.core import collider
 from FreeBodyEngine.math import Vector
+from FreeBodyEngine import delta
 
 class PhysicsBody(Entity):
     """
@@ -37,10 +38,9 @@ class PhysicsBody(Entity):
     def rotation(self, new: float):
         self.collider.rotation = new
 
-
-    def _integrate_forces(self, dt):
+    def _integrate_forces(self):
         acceleration = self.forces / self.mass
-
+        dt = delta()
         self.vel += acceleration * dt
         self.vel *= (1 - self.friction * dt)
         self.position += self.vel * dt
@@ -67,7 +67,7 @@ class PhysicsBody(Entity):
         """
         self.forces += force
     
-    def update(self, dt):
-        self.on_update(dt)
-        self._integrate_forces(dt)
+    def update(self):
+        self.on_update()
+        self._integrate_forces()
         self.on_post_update()

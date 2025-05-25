@@ -37,10 +37,20 @@ class Renderer:
         """
         pass
     
+
+    @abstractmethod
+    def clear(self):
+        pass 
+
+    @abstractmethod
+    def destroy(self):
+        pass
+
     @abstractmethod
     def draw_image(self, image: 'Image', material: 'Material', camera: 'Camera'):
         pass
-    
+        
+
     @abstractmethod
     def draw_mesh(self, image: 'Mesh', material: 'Material', camera: 'Camera'):
         pass
@@ -56,13 +66,3 @@ class Renderer:
         :type radius: float
         """
         pass
-
-    
-
-
-    
- 
-# ------- TODO ----------
-# - Vulkan Renderer
-# - DirectX Renderer
-# - Metal Renderer

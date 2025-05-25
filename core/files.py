@@ -1,12 +1,31 @@
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
+import PIL
+from FreeBodyEngine import get_main, warning
 
-from FreeBodyEngine.core.main import Main
-
+if TYPE_CHECKING:
+    from FreeBodyEngine.core.main import Main
+from FreeBodyEngine.graphics.image import Image
 import os
 import io
 
 import struct
+
+def load_sprite(path: str):
+    if not get_main().headless_mode:
+        return get_main().files.load_sprite(path)
+    else:
+        warning("Cannot load a sprite while in headless mode as it requires a renderer.")
+
+def load_image(path: str):
+    if not get_main().headless_mode:
+        return get_main().files.load_image(path)
+    else:
+        warning("Cannot load an image while in headless mode as it requires a renderer.")
+
+def load_sprite(path: str):
+    return get_main().files.load_sprite(path)
 
 def read_assets(path):
     assets = {}
@@ -31,7 +50,7 @@ class FileManager:
         self.path = path
         self.data = read_assets(path + "/data.pak")
         self.images = read_assets(path + "/images.pak")
-        self.meshes = read_assets(path + "/meshes.pak")
+        # self.meshes = read_assets(path + "/meshes.pak")
 
     def load_json(self, path: str):
         return json.loads(self.load_data(path))
@@ -56,6 +75,6 @@ class FileManager:
 
     def load_image(self, path: str):
         if path in self.images.keys():
-            return self.images[path]
+            return Image(self.images[path])
         else:
             raise FileExistsError(f"No image at path '{path}'.")

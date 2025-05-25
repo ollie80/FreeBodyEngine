@@ -51,9 +51,9 @@ class Scene:
         """
         pass
 
-    def _update(self, dt):
+    def _update(self):
         for entity in self.entities:
-            self.entities[entity].update(dt)
+            self.entities[entity].update()
             self.entities[entity].on_post_update()
 
 # class SceneTransition:
