@@ -35,6 +35,6 @@ class Window:
         pass
 
     @abstractmethod
-    def update(self, dt):
+    def update(self):
         pass
 

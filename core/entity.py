@@ -47,8 +47,9 @@ class Entity:
             self.scene.entities.remove(self)
         self.on_kill()
 
-    def update(self, dt):
-        self.on_update(dt)
+    def update(self):
+        self.on_update()
+        
 
     
     @abstractmethod

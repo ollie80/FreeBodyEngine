@@ -8,4 +8,4 @@ class GLImage(Image):
         img_data = self._image.tobytes()
         width, height = self._image.size
         self.texture = glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, img_data)
-    
+        

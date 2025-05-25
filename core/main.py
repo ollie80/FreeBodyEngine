@@ -1,8 +1,13 @@
 from FreeBodyEngine.core.scene import Scene
 from FreeBodyEngine.graphics.manager import GraphicsManager
 from FreeBodyEngine.core.window import Win32Window
+from FreeBodyEngine.graphics.renderer import Renderer
 from FreeBodyEngine.graphics.gl import GLRenderer
 from FreeBodyEngine.core.window import Window
+from FreeBodyEngine.core.files import FileManager
+from FreeBodyEngine.core.logger import Logger
+from FreeBodyEngine.core import Time
+from FreeBodyEngine.graphics.color import Color
 
 from typing import Union, Literal
 from sys import exit
@@ -15,7 +20,7 @@ def create_window(main: 'Main', window, size, title, display) -> Window:
         raise NotImplementedError(f"No window implemented with name {window}.")
 
 
-def create_renderer(main, graphics_api) -> GraphicsManager:
+def create_renderer(main, graphics_api) -> Renderer:
     if graphics_api == "opengl":
         return GLRenderer(main)
 
@@ -41,15 +46,26 @@ class Main:
     :param pygame_flags: Flags that will be passed onto pygame during window creation.
     :type pygame_flags: int
     """
-    def __init__(self, name: str = "New Game", window_size: tuple = [800, 800], fps: int = 69, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl"):
+    def __init__(self, name: str = "New Game", window_size: tuple = [800, 800], fps: int = 69, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl", headless: bool = False):
+        from FreeBodyEngine import _set_main
+        _set_main(self)
+        
+        self.headless_mode = headless
         self.name = name
-
+        
         # scenes
         self.scenes: dict[str, Scene] = {}
         self.active_scene: Scene = None
     
         # system managers
         self.audio = None
+        self.logger = Logger()
+        self.time = Time()
+
+        if dev:
+            self.files = FileManager('./dev/assets/')
+        else:
+            self.files = FileManager('./dev/assets')
 
         self.fps = fps
 
@@ -58,9 +74,10 @@ class Main:
         if dev:
             dev_mode = "DEV_MODE"
 
-        # create window
-        self.window = create_window(self, 'win32', window_size, self.name + dev_mode, display)
-        self.renderer = create_renderer(self, graphics_api)
+        # create window and graphics
+        if not self.headless_mode:
+            self.window = create_window(self, 'win32', window_size, self.name + dev_mode, display)
+            self.renderer = create_renderer(self, graphics_api)
 
     def add(self, scene: Scene):
         """
@@ -109,9 +126,15 @@ class Main:
 
     def run(self):
         while True:
-            self.window.update(0.1)
+            self.time.update()
+            if not self.headless_mode:
+                self.window.update()
+                self.renderer.clear(Color("#ff0000"))
+                self.window.draw()
+
             if self.active_scene != None:
-                self.active_scene._update(0.1)
+                self.active_scene._update()
+            self.logger.update()
                 
 
 
