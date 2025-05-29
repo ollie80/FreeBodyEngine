@@ -1,10 +1,10 @@
 from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine.core.entity import Entity
+from core.node import Node2D
 from FreeBodyEngine.math import Vector
 import numpy as np
 import math
 
-class Camera(Entity):
+class Camera(Node2D):
     """
     A generic camera object. The camera doesn't draw anything, its only purpose is to provide matricies to the renderer.
     

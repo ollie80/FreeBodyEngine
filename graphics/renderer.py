@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING
+from FreeBodyEngine.utils import abstractmethod
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -9,8 +10,6 @@ if TYPE_CHECKING:
     from FreeBodyEngine.core.camera import Camera
 
 
-
-from abc import ABC, abstractmethod
 
 class Renderer:
     """

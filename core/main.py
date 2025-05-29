@@ -8,7 +8,7 @@ from FreeBodyEngine.core.files import FileManager
 from FreeBodyEngine.core.logger import Logger
 from FreeBodyEngine.core import Time
 from FreeBodyEngine.graphics.color import Color
-
+from FreeBodyEngine import log, warning
 from typing import Union, Literal
 from sys import exit
 from FreeBodyEngine.utils import abstractmethod
@@ -105,8 +105,9 @@ class Main:
         
 
     def quit(self):
+        log("Quiting game.")
         self.on_quit()
-        exit()
+        exit(0)
     
     def _event_loop(self):
         for event in pygame.event.get():
@@ -126,6 +127,7 @@ class Main:
 
     def run(self):
         while True:
+            
             self.time.update()
             if not self.headless_mode:
                 self.window.update()

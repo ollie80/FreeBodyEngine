@@ -3,11 +3,13 @@ import subprocess
 import sys
 
 def build(args):
-    print("Building not yet implemented.")
+    subprocess.run(["python", "FreeBodyEngine/build/builder.py", '--dev', *args], shell=True)
 
 def run(args):
-    subprocess.run(["python", "FreeBodyEngine/dev/run.py", *args], shell=True)
-
+    try:
+        subprocess.run(["python", "FreeBodyEngine/dev/run.py", *args], shell=True)
+    except KeyboardInterrupt:
+        sys.exit(0)
     
 
 def create(args):

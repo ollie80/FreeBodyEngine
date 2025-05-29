@@ -77,7 +77,7 @@ class Win32Window(Window):
         return Win32Cursor(image)
 
     def close(self):
-        win32gui.ReleaseDC(self.hdc)
+        win32gui.ReleaseDC(self._window, self.hdc)
         win32gui.DestroyWindow(self._window)
         self.main.quit()
     
