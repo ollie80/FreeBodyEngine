@@ -4,7 +4,7 @@ import sys
 import json
 
 # Define paths
-build_script = os.path.abspath("./FreeBodyEngine/build/build.py")
+build_script = os.path.abspath("./FreeBodyEngine/build/builder.py")
 
 run_flags = ["--dev"]
 
@@ -22,5 +22,9 @@ build_config = json.loads(txt.read())
 main_script = os.path.abspath(build_config['main_file'])
 
 
-# Run the main script
-subprocess.run(["python", main_script, *run_flags, *flags])
+# run the main script safely
+try:
+    subprocess.run(["python", main_script, *run_flags, *flags])
+
+except KeyboardInterrupt:
+    sys.exit(0)

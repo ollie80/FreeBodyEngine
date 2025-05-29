@@ -1,9 +1,10 @@
-from FreeBodyEngine.core.entity import Entity
-from FreeBodyEngine.core import collider
+from core.node import Node2D
+from FreeBodyEngine.core.collider import Collider2D
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine import delta
+from typing import Union
 
-class PhysicsBody(Entity):
+class PhysicsBody(Node2D):
     """
     A basic arcade physics object.
 
@@ -22,21 +23,13 @@ class PhysicsBody(Entity):
     :param friction: The friction that will be applied to the body.
     :type friction: float
     """
-    def __init__(self, position: Vector, collider: collider.Collider, mass: int = 1, velocity: Vector = Vector(0, 0), friction: float = 0.98):
+    def __init__(self, position: Vector, mass: int = 1, velocity: Vector = Vector(0, 0), friction: float = 0.98):
         super().__init__(position)
-        self.collider = collider
         self.vel = velocity
         self.mass = mass
         self.friction = friction
+        self.requirements = [Collider2D]
         self.forces = Vector(0, 0)
-
-    @property
-    def rotation(self):
-        return self.collider.rotation
-
-    @rotation.setter
-    def rotation(self, new: float):
-        self.collider.rotation = new
 
     def _integrate_forces(self):
         acceleration = self.forces / self.mass
@@ -53,10 +46,9 @@ class PhysicsBody(Entity):
                 if self.collider.collide(entity.collider):
                     self._resolve_collision(entity.collider)
 
-    def _resolve_collision(self, other: collider.Collider):
+    def _resolve_collision(self, other: Union[Collider2D, 'PhysicsBody']):
         if self.collider.position.x > self.collider.collide(other):
-            print("resolve collision")
-
+            pass
 
     def apply_force(self, force: Vector):
         """

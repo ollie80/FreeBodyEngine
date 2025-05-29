@@ -2,8 +2,9 @@ from FreeBodyEngine.utils import abstractmethod
 import uuid
 from typing import TYPE_CHECKING
 
+from core.node import RootNode, Node
+
 if TYPE_CHECKING:
-    from FreeBodyEngine.core.entity import Entity
     from FreeBodyEngine.core.main import Main
     
 
@@ -13,8 +14,9 @@ class Scene:
     """
     def __init__(self, name: str):
         self.name = name
-        self.entities: dict[uuid.UUID, "Entity"] = []
+        self.root = RootNode()
         self.isinitialized: bool = False
+        
 
     def _initialize(self, main: "Main"):
         self.main = main
@@ -25,24 +27,23 @@ class Scene:
     def on_initialize(self):
         pass
 
-    def add(self, entity: "Entity"):
+    def add(self, *node: "Node"):
         """
         Adds the entity to the scene and initializes it. 
         
         :param entity: The entity to be added.
         :type entity: Entity
         """
-        entity._initialize(self)
+        self.root.add(*node)
     
-    def remove(self, id: uuid.UUID):
+    def remove(self, *ids: uuid.UUID):
         """
         Removes the entity with the given id.
 
         :param id: The id of the entity.
         :type id: UUID
         """
-        if id in self.entities.keys():
-            del self.entities[id]
+        self.root.remove(ids)
 
     @abstractmethod
     def on_update(self, dt):
@@ -52,9 +53,7 @@ class Scene:
         pass
 
     def _update(self):
-        for entity in self.entities:
-            self.entities[entity].update()
-            self.entities[entity].on_post_update()
+        self.root.update()
 
 # class SceneTransition:
 #     def __init__(self, main: "Main", vert, frag, duration, curve = engine.math.Linear()):

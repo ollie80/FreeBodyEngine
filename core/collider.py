@@ -1,23 +1,23 @@
 from FreeBodyEngine.math import Vector, Vector3
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Union
+from FreeBodyEngine.utils import abstractmethod
+from FreeBodyEngine import get_main
+from typing import TYPE_CHECKING, Literal, Union
+from FreeBodyEngine.core.node import Node2D
+from FreeBodyEngine.core.scene import Scene
 
-
-
-class Collider(ABC):
+class CollisionShape:
     """
-    A generic collider object.
+    A Collision Shape. Contains logic for basic arcade collisions.
 
 
     :param position: The position of the collider.
     :type position: Vector
     """
     def __init__(self, position: Vector, rotation: float):
-        self.position = position
-        self.rotation = rotation
+        pass
 
     @abstractmethod
-    def collide(self, other: Union['Collider', Vector]) -> bool:
+    def collide(self, other: Union['CollisionShape', Vector]) -> bool:
         """
         Checks collision with any collider object or point.
 
@@ -26,8 +26,8 @@ class Collider(ABC):
 
         :rtype: bool
         """
-        if isinstance(other, CircleCollider): return self.collide_circle(other)
-        elif isinstance(other, RectangleCollider): return self.collide_rectangle(other)
+        if isinstance(other, CircleCollisionShape): return self.collide_circle(other)
+        elif isinstance(other, RectangleCollisionShape): return self.collide_rectangle(other)
         elif isinstance(other, Vector): return self.collide_point(other)
         else: raise TypeError(f"Object of class {other.__class__} cannot be collided with.")
 
@@ -44,7 +44,7 @@ class Collider(ABC):
         raise NotImplementedError(f"Point collision not implemented on Collider: {str(self)}")
 
     @abstractmethod
-    def collide_circle(self, other: "CircleCollider") -> bool:
+    def collide_circle(self, other: "CircleCollisionShape") -> bool:
         """
         Checks for collision against a circle collider.
 
@@ -57,7 +57,7 @@ class Collider(ABC):
         raise NotImplementedError(f"Circle collision not implemented on Collider: {str(self)}")
     
     @abstractmethod
-    def collide_rectangle(self, other: "RectangleCollider") -> bool:
+    def collide_rectangle(self, other: "RectangleCollisionShape") -> bool:
         """
         Checks for collision against a rectangle collider.
 
@@ -69,8 +69,7 @@ class Collider(ABC):
         """
         raise NotImplementedError(f"Rect collision not implemented on Collider: {str(self)}")
 
-
-class CircleCollider(Collider):
+class CircleCollisionShape(CollisionShape):
     """
     A circular collider object.
     
@@ -88,11 +87,11 @@ class CircleCollider(Collider):
         dist = self.position.distance_to(point)
         return dist <= self.radius
 
-    def collide_circle(self, other: "CircleCollider"):
+    def collide_circle(self, other: "CircleCollisionShape"):
         dist = self.position.distance_to(other.position)
         return dist <= self.radius + other.radius
     
-    def collide_rect(self, other: "RectangleCollider"):
+    def collide_rect(self, other: "RectangleCollisionShape"):
         # Find the closest point on the rectangle to the circle center
         x, y = other.position.x, other.position.y
         w, h = other.size
@@ -104,8 +103,7 @@ class CircleCollider(Collider):
         distance = other.position.distance_to(closest_point)
         return distance <= self.radius
 
-
-class RectangleCollider(Collider):
+class RectangleCollisionShape(CollisionShape):
     """
     A rectangular collider object.
     
@@ -125,7 +123,7 @@ class RectangleCollider(Collider):
         w, h = self.size
         return (x <= point.x <= x + w) and (y <= point.y <= y + h)
     
-    def collide_circle(self, other: CircleCollider):
+    def collide_circle(self, other: "CircleCollisionShape"):
         # Find the closest point on the rectangle to the circle center
         x, y = self.position.x, self.position.y
         w, h = self.size
@@ -137,7 +135,7 @@ class RectangleCollider(Collider):
         distance = other.position.distance_to(closest_point)
         return distance <= other.radius
 
-    def collide_rectangle(self, other: "RectangleCollider"):
+    def collide_rectangle(self, other: "RectangleCollisionShape"):
         x1, y1 = self.position.x, self.position.y
         w1, h1 = self.size
         x2, y2 = other.position.x, other.position.y
@@ -150,9 +148,25 @@ class RectangleCollider(Collider):
             y1 > y2 + h2
         )
 
-class Ray:
+
+class Collider2D(Node2D):
+    def __init__(self, collision_shape: Literal['circle', 'rectangle'], position = Vector(), rotation = 0, scale = Vector(1, 1)):
+        super().__init__(position, rotation, scale)        
+        self.collision_shape = collision_shape
+    
+
+class RectangleCollider2D(Collider2D):
+    def __init__(self, position = Vector(), rotation = 0, scale = Vector(1, 1)):
+        super().__init__(RectangleCollisionShape(), position, rotation, scale)
+        # make world transformations set the transforms of the collider shape
+
+    
+
+    
+
+class Ray2D:
     """
-    A ray object.
+    A 2D ray object.
     
     :param origin: The starting position of the ray.
     :type origin: Vector
@@ -161,11 +175,12 @@ class Ray:
     :type direction: Vector
     """
 
-    def __init__(self, origin: Vector, direction: Vector):
+    def __init__(self, origin: Vector, direction: Vector, scene: 'Scene'):
         self.origin = origin
         self.direction = direction.normalized()
+        self.scene = scene
 
-    def intersect_circle(self, circle: CircleCollider) -> Vector | None:
+    def intersect_circle(self, circle: CircleCollisionShape) -> Vector | None:
         """
         Checks for intersection with a circle collider.
 
@@ -199,7 +214,7 @@ class Ray:
 
         return None  # Behind ray
 
-    def intersect_rectangle(self, rect: RectangleCollider):
+    def intersect_rectangle(self, rect: RectangleCollisionShape):
         """
         Checks for intersection with a rectangle collider.
 
@@ -229,16 +244,57 @@ class Ray:
         hit_point = self.origin + self.direction * tmin
         return hit_point
     
-    def interscet(self, collider: Collider):
-                
+    def intersect(self, collider: Union[Collider2D, CollisionShape]):
+            
+        if isinstance(collider, Collider2D):
+            if isinstance(collider.collision_shape, RectangleCollisionShape):
+                return self.intersect_rectangle(collider.collision_shape)
+            
+            elif isinstance(collider.collision_shape, CircleCollisionShape):
+                return self.intersect_circle(collider.collision_shape)
 
-        if isinstance(collider, RectangleCollider):
+        elif isinstance(collider, RectangleCollisionShape):
             return self.intersect_rectangle(collider)
-        if isinstance(collider, CircleCollider):
+        elif isinstance(collider, CircleCollisionShape):
             return self.intersect_circle(collider)
-        
-        raise ValueError(f"Provided collider type is not supported, type: {collider.__class__}")
+        else:
+            raise ValueError(f"Provided collider type is not supported, type: {collider.__class__}")
 
-    def update(self, dt):
-        for collider in self.scene.colliders:
-            self.intersect(collider)
+    def cast(self, max_dist: float = 100):
+        colliders: list[Collider2D] = self.scene.root.find(Collider2D)
+        found = []
+        for collider in colliders:
+            if collider.world_position.distance_to(self.origin) < max_dist:
+                point = self.intersect(collider)
+                if point:
+                    found.append(point)
+        
+            
+
+
+class Raycaster2D:
+    def __init__(self):
+        pass
+
+def cast_ray(position: Vector, direction: Vector, scene: 'Scene' = None):
+    """
+    Casts a ray.
+
+    :param position: The point the ray is cast from.
+    :type position: Vector 
+
+    :param direction: The direction that the ray is cast in.
+    :type direction: Vector
+
+    :param scene: The scene that the ray will be cast in, defaults to the curent scene.
+    :type scene: Scene
+    """
+    if scene == None:
+        scene = get_main().active_scene
+        if scene == None:
+            warning('Cannot cast ray as no scene was specified and there is no active scene.')
+            return None
+        
+        ray = Ray2D(position, direction, scene)
+        return ray.cast()
+    

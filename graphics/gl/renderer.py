@@ -50,14 +50,13 @@ class GLRenderer(Renderer):
     def __init__(self, main: 'Main'):
         super().__init__(main)
         if self.main.window.window_type == "win32":
-            self.context = context.create_context_win32(self.main.window)
-        
+            self.context = context.create_context_win32(self.main.window)        
 
     def destroy(self):
         if self.main.winow.window_type == "win32":
             WGL.wglMakeCurrent(self.main.window.hdc, None)
         WGL.wglDeleteContext(self.context)
-        
+
     def clear(self, color: 'Color'):
         # Set the clear color to red (R=1, G=0, B=0, A=1)
         glClearColor(*color.float_normalized_a)
