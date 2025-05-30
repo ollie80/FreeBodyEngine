@@ -1,0 +1,1 @@
+"""Web version will be made with pyodide's WASM building and JS module."""

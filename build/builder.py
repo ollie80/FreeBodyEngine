@@ -11,10 +11,6 @@ import venv
 import struct
 import venv
 
-import venv.scripts
-
-import venv.scripts.common
-
 
 SUPPORTED_PLATFORMS = ["windows", "darwin", "linux"]
 
@@ -175,7 +171,7 @@ class Builder:
         self.bundle_assets(font_paths[1], 'image', self.temp_path)
 
         self.build_code()
-        print("Successfully built game for release.")
+        print(f"Successfully built game for release, platform: {self.platform}.")
 
 
     def build_for_dev(self):

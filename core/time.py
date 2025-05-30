@@ -11,13 +11,21 @@ class Time:
         self.frame_count = 0
         self.fps = 0.0
 
-    def update(self):
+    def update(self, fps_cap): 
         current_time = time.time()
         raw_delta = current_time - self._last_time
+
+        min_frame_time = 1.0 / fps_cap
+        if raw_delta < min_frame_time:
+            time.sleep(min_frame_time - raw_delta)
+            current_time = time.time()
+            raw_delta = current_time - self._last_time
+
         self.unscaled_delta_time = raw_delta
         self.delta_time = raw_delta * self.time_scale
         self.total_time = current_time - self._start_time
         self._last_time = current_time
         self.frame_count += 1
+
         if self.delta_time > 0:
             self.fps = 1.0 / self.delta_time

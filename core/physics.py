@@ -1,7 +1,7 @@
 from core.node import Node2D
 from FreeBodyEngine.core.collider import Collider2D
 from FreeBodyEngine.math import Vector
-from FreeBodyEngine import delta
+from FreeBodyEngine import delta, log
 from typing import Union
 
 class PhysicsBody(Node2D):
@@ -23,22 +23,24 @@ class PhysicsBody(Node2D):
     :param friction: The friction that will be applied to the body.
     :type friction: float
     """
-    def __init__(self, position: Vector, mass: int = 1, velocity: Vector = Vector(0, 0), friction: float = 0.98):
+    def __init__(self, position: Vector = Vector(), mass: int = 1, velocity: Vector = Vector(0, 0), friction: float = 0.98):
         super().__init__(position)
         self.vel = velocity
         self.mass = mass
         self.friction = friction
         self.requirements = [Collider2D]
-        self.forces = Vector(0, 0)
+        self.forces = Vector()
 
     def _integrate_forces(self):
         acceleration = self.forces / self.mass
         dt = delta()
+        
         self.vel += acceleration * dt
-        self.vel *= (1 - self.friction * dt)
+
+        self.vel *= (self.friction * dt)
         self.position += self.vel * dt
 
-        self.forces = Vector(0, 0)
+        self.forces = Vector()
 
     def _check_collisions(self):
         for entity in self.scene.entities:

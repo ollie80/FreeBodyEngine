@@ -134,14 +134,14 @@ class FuncDecl(Node):
     def get_debug(self):
         return (f"Function('{self.name}') -> {self.return_type}", *self.params, *self.body)
 
-class StructMethod(Node):
+class StructField(Node):
     def __init__(self, name: str, type: str, precision: str):
         self.name = name
         self.type = type
         self.precision = precision
 
     def get_debug(self):
-        return (f"Method('{self.name}', '{self.type}')",)
+        return (f"Field('{self.name}', '{self.type}')",)
 
 class FuncCall(Node):
     def __init__(self, name, args):
@@ -157,7 +157,7 @@ class FuncArg(Node):
         return (f"Argument '{self.val}'",)
 
 class StructDecl(Node):
-    def __init__(self, name: str, methods: list[StructMethod]):
+    def __init__(self, name: str, methods: list[StructField]):
         self.name = name
         self.methods = methods
 
@@ -170,6 +170,14 @@ class Identifier(Type):
 
     def get_debug(self):
         return (f"Identifier('{self.name}')",)
+
+class MethodIdentifier(Identifier):
+    def __init__(self, struct_name: str, method_name: str):
+        self.struct_name = struct_name
+        self.method_name = method_name
+
+    def get_debug(self):
+        return (f"MethodIdentifier('{self.struct_name}'.'{self.method_name}')")
 
 class Int(Type):
     def __init__(self, value: int):

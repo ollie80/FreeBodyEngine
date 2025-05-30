@@ -2,14 +2,17 @@ from datetime import datetime
 from functools import wraps
 
 colors = {
-    "black": 30, "red": 31, "green": 32, "yellow": 33, "blue": 34, "magenta": 35, "cyan": 36, "white": 37
+    "black": 30, "red": 31, "green": 32, "yellow": 33, "blue": 34, "magenta": 35, "cyan": 36, "white": 37, "reset": 0
 }
 
 def get_timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
-def print_colored(text, color):
-    print(f"\033[{colors[color]}m{text}\033[0m")
+def print_colored(*text: str, color='reset'):
+    s = ""
+    for t in text:
+        s += f"\033[{colors[color]}m" + str(t) + "\033[0m" 
+    print(s)
 
 class Logger:
     """
@@ -33,16 +36,16 @@ class Logger:
         return decorator
     
     @store_log('DEBUG')
-    def log(self, msg):
-        print(msg)
+    def log(self, *msg, color: str = "reset"):
+        print_colored(*msg, color=color)
 
     @store_log("ERROR")
     def error(self, msg):
-        print_colored(f"ERROR: {msg}", "red")
+        print_colored(f"ERROR: {msg}", color="red")
 
     @store_log('WARNING')
     def warning(self, msg):
-        print_colored(f"WARNING: {msg}", "yellow")
+        print_colored(f"WARNING: {msg}", color="yellow")
 
     def get_history(self) -> str:
         return '\n'.join(f"[{ts}] {type_}: {msg}" for ts, type_, msg in self.history)

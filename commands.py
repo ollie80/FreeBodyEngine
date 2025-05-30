@@ -1,34 +1,40 @@
 # engine/fb.py
 import subprocess
 import sys
+from . import user_commands
 
-def build(args):
+commands = []
+
+def get_command(command):
+    return commands
+
+def build(args, name):
     subprocess.run(["python", "FreeBodyEngine/build/builder.py", '--dev', *args], shell=True)
 
-def run(args):
+def run(args, name):
     try:
         subprocess.run(["python", "FreeBodyEngine/dev/run.py", *args], shell=True)
     except KeyboardInterrupt:
         sys.exit(0)
     
 
-def create(args):
+def create(args, name):
     if len(args) > 0:
         pass
     else:
-        print("Usage: fb create <command>")
+        print("Usage: freebody/fb create <command>")
     
         
-def _help(args):
+def _help(args, name):
     print("FreeBody Engine CLI")
-    print("Usage: fb <command>")
+    print("Usage: freebody/fb <command>")
     print("Commands: build, run")
     sys.exit(1)
 
 
 def main():
-    commands = {"build": [["build", "b"], build], "run": [["run", "r"], run], "create": [["create", "c"], create], "help": [["help", "h"], _help]}
-
+    global commands
+    commands = [[["build", "b"], build], [["run", "r"], run], [["create", "c"], create], [["help", "h"], _help]] + user_commands.commands
 
     if len(sys.argv) < 2:
         _help([])    
@@ -42,8 +48,8 @@ def main():
     found = False
 
     for command in commands:
-        if cmd in commands[command][0]:
-            commands[command][1](args)
+        if cmd in command[0]:
+            command[1](args, command)
             found = True
             break
 

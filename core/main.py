@@ -128,7 +128,7 @@ class Main:
     def run(self):
         while True:
             
-            self.time.update()
+            self.time.update(self.fps)
             if not self.headless_mode:
                 self.window.update()
                 self.renderer.clear(Color("#ff0000"))
@@ -136,7 +136,11 @@ class Main:
 
             if self.active_scene != None:
                 self.active_scene._update()
+                self.on_update()
             self.logger.update()
+
+    def on_update(self):
+        pass
                 
 
 
