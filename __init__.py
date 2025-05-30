@@ -26,7 +26,7 @@ def get_main():
 
 def delta() -> float:
     """Returns deltatime for the current frame in seconds."""
-    return get_main().time.deltatime
+    return get_main().time.delta_time
 
 def warning(msg):
     get_main().logger.warning(msg)
@@ -35,8 +35,8 @@ def handle_signal(signal, frame):
     get_main().quit()
     sys.exit(0)
 
-def log(msg):
-    get_main().logger.log(msg)
+def log(*msg):
+    get_main().logger.log(*msg, color="reset")
 
 from FreeBodyEngine import core
 from FreeBodyEngine import math

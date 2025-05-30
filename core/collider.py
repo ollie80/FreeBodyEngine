@@ -105,7 +105,7 @@ class CircleCollisionShape(CollisionShape):
 
 class RectangleCollisionShape(CollisionShape):
     """
-    A rectangular collider object.
+    A rectangular collider object for RAABB collision detection.
     
     :param position: The center of the collider.
     :type position: Vector
@@ -113,10 +113,15 @@ class RectangleCollisionShape(CollisionShape):
     :type size: tuple
     """
 
-    def __init__(self, position: Vector, size: tuple, rotation: float):
+    def __init__(self, position: Vector, rotation: float,  size: Vector):
         self.position = position  # Top-left corner
         self.size = size          # (width, height)
         self.rotation = rotation
+
+    @property
+    def bottomleft(self):
+        return 
+    
 
     def collide_point(self, point: Vector):
         x, y = self.position.x, self.position.y
@@ -150,9 +155,9 @@ class RectangleCollisionShape(CollisionShape):
 
 
 class Collider2D(Node2D):
-    def __init__(self, collision_shape: Literal['circle', 'rectangle'], position = Vector(), rotation = 0, scale = Vector(1, 1)):
+    def __init__(self, collision_shape: type[CollisionShape], position = Vector(), rotation = 0, scale = Vector(1, 1)):
         super().__init__(position, rotation, scale)        
-        self.collision_shape = collision_shape
+        self.collision_shape = collision_shape(position, rotation, scale)
     
 
 class RectangleCollider2D(Collider2D):
@@ -177,7 +182,7 @@ class Ray2D:
 
     def __init__(self, origin: Vector, direction: Vector, scene: 'Scene'):
         self.origin = origin
-        self.direction = direction.normalized()
+        self.direction = direction.normalized
         self.scene = scene
 
     def intersect_circle(self, circle: CircleCollisionShape) -> Vector | None:
@@ -218,22 +223,20 @@ class Ray2D:
         """
         Checks for intersection with a rectangle collider.
 
-        :param circle: The checked circle.
-        :type circle: RectangleCollider
-
-        :returns: The point of intersection, or None if there is no intersection. 
-        :rtype: Vector or None
+        :param rect: The rectangle collider.
+        :returns: The point of intersection, or None if there is no intersection.
         """
         x, y = rect.position.x, rect.position.y
         w, h = rect.size
+        
 
         inv_dir_x = 1 / self.direction.x if self.direction.x != 0 else float('inf')
         inv_dir_y = 1 / self.direction.y if self.direction.y != 0 else float('inf')
-
         t1 = (x - self.origin.x) * inv_dir_x
         t2 = (x + w - self.origin.x) * inv_dir_x
         t3 = (y - self.origin.y) * inv_dir_y
         t4 = (y + h - self.origin.y) * inv_dir_y
+        print(inv_dir_x, inv_dir_y, t1, t2, t3, t4)
 
         tmin = max(min(t1, t2), min(t3, t4))
         tmax = min(max(t1, t2), max(t3, t4))
@@ -241,8 +244,12 @@ class Ray2D:
         if tmax < 0 or tmin > tmax:
             return None  # No intersection
 
+        if tmin < 0:
+            return None  # Intersection is behind the ray
+
         hit_point = self.origin + self.direction * tmin
         return hit_point
+
     
     def intersect(self, collider: Union[Collider2D, CollisionShape]):
             
@@ -261,16 +268,24 @@ class Ray2D:
             raise ValueError(f"Provided collider type is not supported, type: {collider.__class__}")
 
     def cast(self, max_dist: float = 100):
-        colliders: list[Collider2D] = self.scene.root.find(Collider2D)
+        colliders: list[Collider2D] = self.scene.root.find_nodes_with_type(Collider2D)
         found = []
         for collider in colliders:
-            if collider.world_position.distance_to(self.origin) < max_dist:
+            if collider.world_position.distance(self.origin) < max_dist:
                 point = self.intersect(collider)
                 if point:
                     found.append(point)
-        
-            
 
+        if len(found) > 0:
+            closest = found[0]
+            for point in found:
+                if self.origin.distance(point) < self.origin.distance(closest):
+                    closest = point
+            
+            return closest
+        
+        else:
+            return None
 
 class Raycaster2D:
     def __init__(self):

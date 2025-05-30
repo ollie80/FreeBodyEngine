@@ -104,7 +104,7 @@ class GLGenerator(Generator):
 
         return r
 
-    def generate_method(self, node: StructMethod):
+    def generate_method(self, node: StructField):
         prec = ""
         if node.precision != None:
             prec = f"{self.precisions[node.precision]} "

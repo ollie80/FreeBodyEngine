@@ -35,6 +35,92 @@ class Vector(GenericVector):
         else:
             self.x, self.y = x, 0
 
+    def __iadd__(self, other):
+        if isinstance(other, Vector):
+            self.x += other.x
+            self.y += other.y
+            return self
+        elif isinstance(other, (float, int)):
+            self.x += other
+            self.y += other
+            return self
+
+    def __add__(self, other):
+        if isinstance(other, Vector):
+            return Vector(self.x + other.x, self.y + other.y)
+        if isinstance(other, (int, float)):
+            return Vector(self.x + other, self.y + other)
+
+    def __isub__(self, other):
+        if isinstance(other, Vector):
+            self.x -= other.x
+            self.y -= other.y
+            return self
+        elif isinstance(other, (float, int)):
+            self.x -= other
+            self.y -= other
+            return self
+
+    def __sub__(self, other):
+        if isinstance(other, Vector):
+            return Vector(self.x - other.x, self.y - other.y)
+        if isinstance(other, (int, float)):
+            return Vector(self.x - other, self.y - other)
+
+    def __imul__(self, other):
+        if isinstance(other, Vector):
+            self.x *= other.x
+            self.y *= other.y
+            return self
+        elif isinstance(other, (float, int)):
+            self.x *= other
+            self.y *= other
+            return self
+
+    def __mul__(self, other):
+        if isinstance(other, Vector):
+            return Vector(self.x * other.x, self.y * other.y)
+        if isinstance(other, (int, float)):
+            return Vector(self.x * other, self.y * other)
+
+    def __itruediv__(self, other):
+        if isinstance(other, Vector):
+            self.x /= other.x
+            self.y /= other.y
+            return self
+        elif isinstance(other, (float, int)):
+            self.x /= other
+            self.y /= other
+            return self
+
+    def __truediv__(self, other):
+        if isinstance(other, Vector):
+            return Vector(self.x / other.x, self.y / other.y)
+        if isinstance(other, (int, float)):
+            return Vector(self.x / other, self.y / other)
+
+    @property    
+    def magnitude(self):
+        return math.sqrt(self.x**2 + self.y**2)
+
+    @property
+    def normalized(self):
+        mag = self.magnitude
+        if mag == 0:
+            return Vector(0, 0)  # Or raise an error
+        return Vector(self.x / mag, self.y / mag) 
+
+    def distance(self, to: 'Vector'):
+        return abs(self.magnitude - to.magnitude)
+
+    def __iter__(self):
+        return iter((self.x, self.y))  # returns an iterator over a tuple
+
+
+
+    def __repr__(self):
+        return f"[{self.x}, {self.y}]"
+
 class Vector3(GenericVector):
     pass
 
