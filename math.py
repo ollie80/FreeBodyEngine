@@ -116,14 +116,14 @@ class Vector(GenericVector):
     def __iter__(self):
         return iter((self.x, self.y))  # returns an iterator over a tuple
 
-
-
     def __repr__(self):
         return f"[{self.x}, {self.y}]"
 
 class Vector3(GenericVector):
     pass
 
+
+VECTOR_LIKE = Union[GenericVector, float, Sequence[float]]
 
 class LayeredNoise:
     def __init__(self, layers: int, seed: int, start_octaves: int = 3):
@@ -210,8 +210,118 @@ class GenericRotation:
 class Rotation():
     pass
 
+class Transform:
+    def __init__(self, position: VECTOR_LIKE, rotation: float, scale: VECTOR_LIKE):
+        self.position = Vector(position)
+        self.rotation = rotation
+        self.scale = Vector(scale)
+
+    def copy(self):
+        return Transform(self.position.copy(), self.rotation, self.scale.copy())
+
+    def neg(self):
+        return Transform(-self.position, -self.rotation, -self.scale)
+    
+    def __eq__(self, other):
+        if isinstance(other, Transform):
+            return (self.position == other.position and
+                    self.rotation == other.rotation and
+                    self.scale == other.scale)
+    
+    def __add__(self, other):
+        if isinstance(other, Transform):
+            return Transform(self.position + other.position, self.rotation + other.rotation, self.scale + other.scale)
+
+    def __iadd__(self, other):
+        if isinstance(other, Transform):
+            self.position += other.position
+            self.rotation += other.rotation
+            self.scale += other.scale
+            return self
+    
+    def __sub__(self, other):
+        if isinstance(other, Transform):
+            return Transform(self.position - other.position, self.rotation - other.rotation, self.scale - other.scale)
+
+    def __isub__(self, other):
+        if isinstance(other, Transform):
+            self.position -= other.position
+            self.rotation -= other.rotation
+            self.scale -= other.scale
+            return self
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return Transform(self.position * other,
+                            self.rotation * other,
+                            self.scale * other)
+        elif isinstance(other, Transform):
+            return Transform(self.position * other.position,
+                            self.rotation + other.rotation,
+                            self.scale * other.scale)
+        raise TypeError("Transform can only be multiplied by a scalar or another Transform")
+
+    def __imul__(self, other):
+        if isinstance(other, (int, float)):
+            self.position *= other
+            self.rotation *= other
+            self.scale *= other
+            return self
+        elif isinstance(other, Transform):
+            self.position *= other.position
+            self.rotation += other.rotation
+            self.scale *= other.scale
+            return self
+        raise TypeError("Transform can only be multiplied by a scalar or another Transform")
+
+    def __truediv__(self, other):
+        if isinstance(other, (int, float)):
+            return Transform(self.position / other,
+                            self.rotation / other,
+                            self.scale / other)
+        elif isinstance(other, Transform):
+            return Transform(self.position / other.position,
+                            self.rotation - other.rotation,
+                            self.scale / other.scale)
+        raise TypeError("Transform can only be divided by a scalar or another Transform")
+
+    def __itruediv__(self, other):
+        if isinstance(other, (int, float)):
+            self.position /= other
+            self.rotation /= other
+            self.scale /= other
+            return self
+        elif isinstance(other, Transform):
+            self.position /= other.position
+            self.rotation -= other.rotation
+            self.scale /= other.scale
+            return self
+        raise TypeError("Transform can only be divided by a scalar or another Transform")
+
+    def to_matrix(self):
+        # Construct 2D affine transform matrix: T * R * S
+        cos_r = math.cos(math.radians(self.rotation))
+        sin_r = math.sin(math.radians(self.rotation))
+
+        sx, sy = self.scale.x, self.scale.y
+        px, py = self.position.x, self.position.y
+
+        return [
+            [cos_r * sx, -sin_r * sy, px],
+            [sin_r * sx,  cos_r * sy, py],
+            [0,           0,          1]
+        ]
+
+
+    def compose_with(self, parent_transform: 'Transform') -> 'Transform':
+        # Apply parent transform to self (full matrix multiplication)
+        parent_mat = parent_transform.to_matrix()
+        local_mat = self.to_matrix()
+        result_mat = multiply_matrices(parent_mat, local_mat)
+        return Transform.from_matrix(result_mat)
+
 class Curve(ABC):
-    """The generic curve function.w"""
+    """The generic curve function."""
     @abstractmethod
     def get_value(self, x):
         pass
@@ -269,3 +379,5 @@ class BounceOut(Curve):
             if x < 2.5 / d1
             else n1 * (x - 2.625 / d1) * (x - 2.625 / d1) + 0.984375
         )
+
+

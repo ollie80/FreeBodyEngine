@@ -1,11 +1,14 @@
 import json
+import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
 import PIL
-from FreeBodyEngine import get_main, warning
+from FreeBodyEngine import get_main, warning, error
+from FreeBodyEngine.graphics.sprite import Sprite
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
+
 from FreeBodyEngine.graphics.image import Image
 import os
 import io
@@ -23,6 +26,18 @@ def load_image(path: str):
         return get_main().files.load_image(path)
     else:
         warning("Cannot load an image while in headless mode as it requires a renderer.")
+
+def load_material(path: str):
+    if not get_main().headless_mode:
+        return get_main().files.load_material(path)
+    else:
+        warning("Cannot load a material while in headless mode as it requires a renderer.")
+
+def load_shader(path: str):
+    if not get_main().headless_mode:
+        return get_main().files.load_shader(path)
+    else:
+        warning("Cannot load a shader while in headless mode as it requires a renderer.")
 
 def load_sprite(path: str):
     return get_main().files.load_sprite(path)
@@ -46,35 +61,103 @@ class FileManager:
     """
     The asset manager loads the files packaged by the engine. Uses paths that are relative to the asset folder specified in the build config.
     """
-    def __init__(self, path):
-        self.path = path
-        self.data = read_assets(path + "/data.pak")
-        self.images = read_assets(path + "/images.pak")
+    def __init__(self, main: 'Main', path, dev):
+        self.path: str = path
+        self.engine_path = 'FreeBodyEngine'
+        self.dev = dev
+        if not self.dev:
+            self.data = read_assets(path + "/data.pak")
+            self.images = read_assets(path + "/images.pak")
+        
+        self.main = main
         # self.meshes = read_assets(path + "/meshes.pak")
+
+    def get_file_path(self, path: str):
+        n_path = path
+        if path.startswith('engine'):
+            n_path = n_path.removeprefix('engine')
+            n_path = self.engine_path + "/engine_assets" + n_path            
+            print(n_path)
+        else:
+            n_path = (self.path) + '/' + path
+            print(n_path)
+        return os.path.abspath(n_path)
+
+    def file_exsists(self, path):
+        if self.dev:
+            if os.path.exists(self.get_file_path(path)):
+                return True
+        else:
+
+            if (path in self.images.keys()) or (path in self.data.keys()):
+                return True
+
+    def get_data_file(self, path, default = None):
+        file = self.data.get(path, default)
+        if file == None:
+            error(f"File at path: '{path}' not found.")
+
+    def load_shader(self, path: str):
+        return self.main.renderer.load_shader(self.load_data(path))
 
     def load_json(self, path: str):
         return json.loads(self.load_data(path))
 
+    def load_toml(self, path: str):
+        return tomllib.loads(self.load_data(path))
+
     def load_data(self, path: str):
-        if path in self.data.keys():
-            return io.BytesIO(self.data[path]).read()
+        if not self.dev:
+            if path in self.data.keys():
+                return io.BytesIO(self.data[path]).read().decode('UTF-8')
+            else:
+                raise FileExistsError(f"No data file at path '{path}'.")
+
         else:
-            raise FileExistsError(f"No data file at path '{path}'.")
+            sys_path = self.get_file_path(path)
+            if os.path.exists(sys_path):
+                return open(sys_path).read()
+            else:
+                raise FileExistsError(f"No data file at path '{sys_path}'.")
+
+    def load_material(self, path: str):
+        """
+        Load an '.fbmat' file.
+        """
+        data = self.load_toml(path)
+        
+        mat = self.main.graphics.load_material(data)
+        return mat 
+
+    def load_image(self, path: str):
+        if self.file_exsists(path):
+            if self.dev:
+                self.main.graphics.load_image(open(self.get_file_path(path), 'rb').read())
+            else:
+                self.main.graphics.load_image(self.images[path])
+        else:
+            raise FileExistsError(f"No image at path '{path}'.")
 
 
     def load_sprite(self, path: str):
         """
         Loads an .fbspr file.
         """
-        data = self.load_json(path)
+        data = self.load_toml(path)
         type = data.get('type', "static")
         
-        if type == "static":    
-            image = self.load_image()
-            self.main.graphics.create_sprite()
+        if type == "static":
+            img_path = data.get('image')
+            if not img_path:
+                raise ValueError(f'No image specified in sprite file "{path}".')
+            image = self.load_image(img_path)
+        
+        mat_path = data.get('material')
+        if not mat_path:
+            raise ValueError(f'No material specified in sprite file "{path}".')
+        mat = self.load_material(mat_path)
 
-    def load_image(self, path: str):
-        if path in self.images.keys():
-            return Image(self.images[path])
-        else:
-            raise FileExistsError(f"No image at path '{path}'.")
+        visible = data.get('visible', True)
+        z = data.get('z', 0)
+
+        return Sprite(image, mat, visible, z)

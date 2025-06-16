@@ -1,5 +1,5 @@
 """
-FreeBody Engine created by ollie80
+FreeBodyEngine created by ollie80
 """
 
 import sys
@@ -31,6 +31,9 @@ def delta() -> float:
 def warning(msg):
     get_main().logger.warning(msg)
 
+def error(msg):
+    get_main().logger.error(msg)
+
 def handle_signal(signal, frame):
     get_main().quit()
     sys.exit(0)
@@ -42,15 +45,15 @@ from FreeBodyEngine import core
 from FreeBodyEngine import math
 # from FreeBodyEngine import net
 # from FreeBodyEngine import ui
+from FreeBodyEngine.core.files import load_image, load_material, load_sprite, load_shader
 from FreeBodyEngine import graphics
 from FreeBodyEngine import utils
 
 from FreeBodyEngine.graphics.color import Color as color
-from FreeBodyEngine.core.files import load_image
 from FreeBodyEngine.core.window import create_cursor, set_cursor
 from FreeBodyEngine.math import Vector as vector
 
-__all__ = [ "graphics", "utils", "core", "math", "get_main", "_set_main", "load_image", "create_cursor", "set_cursor", "warning", "delta", "init", "color", "vector", "log"]
+__all__ = ["utils", "core", "math", "get_main", "_set_main", "load_material", "load_image", "load_shader", "load_sprite", "graphics", "create_cursor", "set_cursor", "warning", "delta", "init", "color", "vector", "log"]
 
 
 

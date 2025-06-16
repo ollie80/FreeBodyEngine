@@ -28,7 +28,7 @@ def create(args, name):
 def _help(args, name):
     print("FreeBody Engine CLI")
     print("Usage: freebody/fb <command>")
-    print("Commands: build, run")
+    print("Commands: ", *(str(c[0][0]) + ", " if commands.index(c) < len(commands)-1 else str(c[0][0]) for c in commands))
     sys.exit(1)
 
 

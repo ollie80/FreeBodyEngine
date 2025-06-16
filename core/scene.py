@@ -2,7 +2,7 @@ from FreeBodyEngine.utils import abstractmethod
 import uuid
 from typing import TYPE_CHECKING
 
-from core.node import RootNode, Node
+from FreeBodyEngine.core.node import RootNode, Node
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -14,10 +14,9 @@ class Scene:
     """
     def __init__(self, name: str):
         self.name = name
-        self.root = RootNode()
+        self.root = RootNode(self)
         self.isinitialized: bool = False
         
-
     def _initialize(self, main: "Main"):
         self.main = main
         self.main.scenes[self.name] = self

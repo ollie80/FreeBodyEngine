@@ -48,7 +48,6 @@ class Win32Window(Window):
         self._atom = win32gui.RegisterClass(self._window_class)
         self._window_class.style = win32con.CS_OWNDC
 
-
         # Create the window
         self._window = win32gui.CreateWindow(
             self._atom,
@@ -76,11 +75,33 @@ class Win32Window(Window):
     def _create_cursor(self, image: 'Image'):
         return Win32Cursor(image)
 
+    @property
+    def size(self):
+        rect = win32gui.GetWindowRect(self._window)
+        return (rect[2], rect[3])
+    
+    @size.setter
+    def size(self, new: tuple[int, int]):
+        rect = win32gui.GetWindowRect(self._window)
+        
+        win32gui.MoveWindow(self._window, rect[0], rect[1], *new, True)
+
+    @property
+    def position(self) -> tuple[int, int]:
+        rect = win32gui.GetWindowRect(self._window)
+        return (rect[0], rect[0])
+    
+    @property
+    def position(self, new: tuple[int, int]):
+        rect = win32gui.GetWindowRect(self._window)
+        win32gui.MoveWindow(self._window, rect[0], rect[1], *new, True)
+        
+
     def close(self):
         win32gui.ReleaseDC(self._window, self.hdc)
         win32gui.DestroyWindow(self._window)
         self.main.quit()
-    
+
     def draw(self):
         ctypes.windll.gdi32.SwapBuffers(self.hdc)
 

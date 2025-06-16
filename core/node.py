@@ -1,14 +1,22 @@
-from FreeBodyEngine.math import Vector 
 from FreeBodyEngine.utils import abstractmethod
-import uuid
+from FreeBodyEngine.math import Transform, Vector
 from FreeBodyEngine import warning, log
-from typing import Union
+
+
+from typing import Union, TYPE_CHECKING
+if TYPE_CHECKING:
+    from FreeBodyEngine.core.scene import Scene
+
+import uuid
 
 class GenericNode:
     """
     Base class of the Node Tree Node. 
     """
     def __init__(self):
+        self.inheritance_hierarchy = [cls.__name__ for cls in self.__class__.__mro__ if cls != object]
+        self.inheritance_hierarchy.reverse()
+        self.scene: 'Scene'
         self.is_initialized = False
         self.children: dict[uuid.UUID, Node] = {}
         self.id = 1
@@ -25,11 +33,11 @@ class GenericNode:
         for node in nodes:
             if self.is_initialized:
                 node._initialize(self)
-                self.children[node.id] = node
+            self.children[node.id] = node
     
-    def find_nodes_with_type(self, type: type['Node']):
+    def find_nodes_with_type(self, type: str) -> list['Node']:
         found = []
-        if isinstance(self, type):
+        if self.inherits_from(type):
             found.append(self)
         for child in self.children:
             found += self.children[child].find_nodes_with_type(type)
@@ -39,6 +47,13 @@ class GenericNode:
         self.on_update()
         for node in self.children:
             self.children[node].update()
+
+    def inherits_from(self, *type: str) -> bool:
+        for t in type:
+            inherits = t in self.inheritance_hierarchy
+            if inherits:
+                return True
+        return False
 
     def get_tree_dict(self):
         """
@@ -88,15 +103,15 @@ class RootNode(GenericNode):
     """
     A root node object.
     """
-    def __init__(self):
+    def __init__(self, scene: 'Scene'):
         super().__init__()
         self.is_initialized = True
+        self.scene: 'Scene' = scene
 
     def kill(self):
         warning("Cannot kill a root node.")
 
     
-
 class Node(GenericNode):
     """
     The Node class.
@@ -105,31 +120,28 @@ class Node(GenericNode):
         super().__init__()
         self.is_initialized = False
         self.parent: GenericNode
-        self.id: uuid.UUID
 
-        # Requirements are children that the node needs to function.
-        self.requirements: list[type[Node]] = []
-        self.parental_requirement: type[Node] = Node
+        self.id: uuid.UUID = uuid.uuid4()
+
+        # Requirements are children that the node needs to function, not having a required child will log a warning.
+        self.requirements: list[str] = []
+        self.parental_requirement: str = "Node"
         
     def _initialize(self, parent: GenericNode):
         self.is_initialized = True
-
-        if not isinstance(parent, self.parental_requirement) and not isinstance(parent, RootNode):
-            warning(f'Node "{self}" requires a parent node of "{self.parental_requirement}", instead got parent of type "{parent.__class__}".')
+        if not parent.inherits_from('RootNode', self.parental_requirement):
+            warning(f'Node "{self}" requires a parent node of "{self.parental_requirement}" or "RootNode", instead got parent of type "{parent.__class__.__name__}".')
 
         for requirement in self.requirements:
-                if not any(isinstance(child, requirement) for child in self.children):
-                    warning(f"Node '{self}' is missing required child node '{requirement.__name__}'.")
+                if not any(self.children[child].inherits_from(requirement) for child in self.children):
+                    warning(f"Node '{self}' is missing required child node '{requirement}'.")
         
+        self.scene = parent.scene
         self.parent = parent
 
         for child in self.children:
             self.children[child]._initialize(self)
 
-        self.id = uuid.uuid4()
-        while self.id in self.parent.children: # ensures id isn't already used
-            self.id = uuid.uuid4() 
-        
         self.parent.children[self.id] = self
 
         self.on_initialize()
@@ -165,68 +177,16 @@ class Node(GenericNode):
         pass
 
 class Node2D(Node):
+
     def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1)):
         super().__init__()
-        self.parental_requirement = Node2D
+        self.parental_requirement = "Node2D"
 
-        self.position = position # local position
-        self.rotation = rotation 
-        self.scale = scale
-
-        
-    @property
-    def world_position(self):
-        """
-        Position of the node relative to the world (scene).
-        """
-        if isinstance(self.parent, Node2D):
-            return self.parent.world_position + self.position
-        else:
-            return self.position
-
-    @world_position.setter
-    def world_position(self, new):
-        if isinstance(self.parent, Node2D):
-            self.position = new - self.parent.world_position
-        
-        else:
-            self.position = new
-
+        self.transform = Transform(position, rotation, scale)
 
     @property
-    def world_rotation(self):
-        """
-        Rotation of the node relative to the world (scene).
-        """
-        if isinstance(self.parent, Node2D):
-            return self.rotation + self.parent.world_rotation
-
+    def world_transform(self):
+        if self.parent.inherits_from('Node2D'):
+            return self.transform.compose_with(self.parent.world_transform)
         else:
-            return self.rotation
-        
-    @world_rotation.setter
-    def world_rotation(self, new):
-        if isinstance(self.parent, Node2D):
-            self.rotation = new - self.parent.world_rotation
-
-        else:
-            self.rotation = new
-        
-
-    @property
-    def world_scale(self):
-        """
-        Scale of the node relative to the world (scene).
-        """
-        if isinstance(self.parent, Node2D):
-            return self.scale + self.parent.world_scale
-        
-        else:
-            return self.scale 
-    
-    @world_scale.setter
-    def world_scale(self, new):
-        if isinstance(self.parent, Node2D):
-            self.scale = new - self.parent.world_scale
-        else:
-            self.scale = new
+            return self.transform

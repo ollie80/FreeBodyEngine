@@ -16,9 +16,25 @@ class Window:
     def __init__(self, main: 'Main', size: tuple[int, int], window_type: str, title="FreeBodyEngine", display=None):
         self.main = main
         self.window_type = window_type
-
+        
+    @property
     @abstractmethod
-    def set_size(self, size: tuple[int, int]):
+    def size(self) -> tuple[int, int]:
+        pass
+
+    @size.setter
+    @abstractmethod
+    def size(self, new: tuple[int, int]):
+        pass
+
+    @property
+    @abstractmethod
+    def position(self) -> tuple[int, int]:
+        pass
+
+    @size.setter
+    @abstractmethod
+    def position(self, new: tuple[int, int]):
         pass
 
     @abstractmethod
@@ -32,6 +48,10 @@ class Window:
 
     @abstractmethod
     def close(self):
+        pass
+
+    @abstractmethod
+    def draw(self):
         pass
 
     @abstractmethod

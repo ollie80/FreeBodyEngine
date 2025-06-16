@@ -15,7 +15,7 @@ import venv
 SUPPORTED_PLATFORMS = ["windows", "darwin", "linux"]
 
 FONT_FILE_TYPES = ["ttf"]
-DATA_FILE_TYPES = ["txt", "json", "fbusl", 'mp3', 'wav']
+DATA_FILE_TYPES = ["txt", "json", "fbusl", "fbmat", "fbspr", 'mp3', 'wav', 'toml']
 IMAGE_FILE_TYPES = ["png", "jpg", "jpeg"]
 MESH_FILE_TYPES = ["fbx"]
 
@@ -42,6 +42,7 @@ class Builder:
         self.code_path = os.path.abspath(self.get_user_setting('code'))
         self.build_path = os.path.abspath('./build/')
         self.temp_path = os.path.abspath('./build/temp/')
+        
         self.output_path = os.path.abspath('./dist/')
         self.main_file = self.get_user_setting('main_file')
 
@@ -51,6 +52,8 @@ class Builder:
             print("Cannot build for web in dev mode, building for your system platform instead.")
 
         if "--dev" in args:
+            self.output_path = os.path.abspath('./dev/assets/')
+
             self.build_for_dev()
         else:
             self.build_for_release()
@@ -68,7 +71,7 @@ class Builder:
         """
         Converts a system path into an output path.
         """
-        return path.removeprefix(root_dir)
+        return os.path.abspath(path).removeprefix(root_dir + "\\")
     
     def get_platform_dependencies(self, platform: str):
         if platform == "windows":
@@ -113,6 +116,7 @@ class Builder:
             for path in paths:
                 data = open(f"{path}", "rb").read()
                 out_path = self.get_out_path(path, root_dir)
+                print(out_path)
                 file.write(struct.pack("<H", len(out_path)))
                 file.write(out_path.encode("utf-8"))
                 file.write(struct.pack("<I", len(data)))
@@ -163,26 +167,21 @@ class Builder:
 
         self.bundle_assets(data, 'data', self.asset_path)
         
-        self.bundle_assets(images, 'image', self.asset_path)
+        self.bundle_assets(images, 'images', self.asset_path)
         self.bundle_assets(meshes, 'mesh', self.asset_path)
         
         font_paths = self.convert_font(fonts)
         self.bundle_assets(font_paths[0], 'data', self.temp_path)
-        self.bundle_assets(font_paths[1], 'image', self.temp_path)
+        self.bundle_assets(font_paths[1], 'images', self.temp_path)
 
         self.build_code()
         print(f"Successfully built game for release, platform: {self.platform}.")
 
 
-    def build_for_dev(self):
-        images, data, meshes, fonts = self.locate_assets()
-        self.bundle_assets(data, 'data', self.asset_path)
-        self.bundle_assets(images, 'image', self.asset_path)
-        self.bundle_assets(meshes, 'mesh', self.asset_path)
-        
-        font_paths = self.convert_fonts(fonts)
-        self.bundle_assets(font_paths[0], 'data', self.temp_path)
-        self.bundle_assets(font_paths[1], 'image', self.temp_path)
+    def build_for_dev(self):        
+        # font_paths = self.convert_fonts(fonts)
+        # self.bundle_assets(font_paths[0], 'data', self.temp_path)
+        # self.bundle_assets(font_paths[1], 'images', self.temp_path)
 
         print("Successfully built game for development.")
 

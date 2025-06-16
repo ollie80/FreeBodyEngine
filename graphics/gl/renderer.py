@@ -1,47 +1,24 @@
 from FreeBodyEngine.graphics.renderer import Renderer
 from FreeBodyEngine.graphics.gl import context
-from typing import TYPE_CHECKING
-import numpy as np
-
-from OpenGL import WGL
-from OpenGL.GL import *
 from FreeBodyEngine.graphics.color import Color
+from FreeBodyEngine.graphics.gl.texture import GLTextureManager
+from FreeBodyEngine.graphics.gl import GLImage
+from FreeBodyEngine.graphics.sprite import Sprite
+from FreeBodyEngine.graphics.gl.shader import GLShader
+from FreeBodyEngine.graphics.gl.material import GLMaterial
 
+from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
     from FreeBodyEngine.core.camera import Camera
     from FreeBodyEngine.graphics.material import Material
-    from FreeBodyEngine.graphics.gl import GLImage
+    from FreeBodyEngine.math import Vector
 
-def create_shader_program(vertex_src, fragment_src):
-    vertex_shader = compile_shader(vertex_src, GL_VERTEX_SHADER)
-    fragment_shader = compile_shader(fragment_src, GL_FRAGMENT_SHADER)
+import numpy as np
 
-    program = glCreateProgram()
-    glAttachShader(program, vertex_shader)
-    glAttachShader(program, fragment_shader)
-    glLinkProgram(program)
+from OpenGL import WGL
+from OpenGL.GL import *
 
-    if glGetProgramiv(program, GL_LINK_STATUS) != GL_TRUE:
-        error = glGetProgramInfoLog(program).decode()
-        raise RuntimeError(f"Shader link error:\n{error}")
-
-    glDeleteShader(vertex_shader)
-    glDeleteShader(fragment_shader)
-
-    return program
-
-
-def compile_shader(source, shader_type):
-    shader = glCreateShader(shader_type)
-    glShaderSource(shader, source)
-    glCompileShader(shader)
-
-    if glGetShaderiv(shader, GL_COMPILE_STATUS) != GL_TRUE:
-        error = glGetShaderInfoLog(shader).decode()
-        raise RuntimeError(f"Shader compile error:\n{error}")
-    
-    return shader
 
 class GLRenderer(Renderer):
     """
@@ -50,7 +27,15 @@ class GLRenderer(Renderer):
     def __init__(self, main: 'Main'):
         super().__init__(main)
         if self.main.window.window_type == "win32":
-            self.context = context.create_context_win32(self.main.window)        
+            self.context = context.create_context_win32(self.main.window)  
+        
+        self.texture_manager = GLTextureManager()
+
+    def load_image(self, data):
+        return GLImage(self, data)
+
+    def load_material(self, data):
+        return Material(data)
 
     def destroy(self):
         if self.main.winow.window_type == "win32":
@@ -58,12 +43,15 @@ class GLRenderer(Renderer):
         WGL.wglDeleteContext(self.context)
 
     def clear(self, color: 'Color'):
-        # Set the clear color to red (R=1, G=0, B=0, A=1)
         glClearColor(*color.float_normalized_a)
 
-        # Clear the screen (color buffer only)
         glClear(GL_COLOR_BUFFER_BIT)
 
+    def load_shader(self, vertex, fragment):
+        return GLShader(vertex, fragment)
+
+    def load_material(self, data):
+        return GLMaterial(data)
 
     def draw_line(self, start, end, width, color: 'Color'):
         glLineWidth(width)
@@ -94,5 +82,5 @@ class GLRenderer(Renderer):
     def draw_circle(self, radius, position, color):
         pass
 
-    def draw_image(self, image: 'GLImage', material: 'Material', camera: 'Camera'):
-        pass        
+    def draw_image(self, image: 'GLImage', material: 'Material', pos: 'Vector', camera: 'Camera'):
+        image.texture.use()
