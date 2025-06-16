@@ -1,4 +1,4 @@
-from core.node import Node2D
+from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.collider import Collider2D
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine import delta, log
@@ -23,22 +23,30 @@ class PhysicsBody(Node2D):
     :param friction: The friction that will be applied to the body.
     :type friction: float
     """
-    def __init__(self, position: Vector = Vector(), mass: int = 1, velocity: Vector = Vector(0, 0), friction: float = 0.98):
-        super().__init__(position)
+    def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1), mass: int = 1, velocity: Vector = Vector(0, 0), rotational_velocity: float = 0.0, friction: float = 0.98):
+        super().__init__(position, rotation, scale)
         self.vel = velocity
+        self.rot_vel = rotational_velocity
         self.mass = mass
         self.friction = friction
-        self.requirements = [Collider2D]
+        self.requirements = ["Collider2D"]
         self.forces = Vector()
+        self.rot_forces = 0
 
     def _integrate_forces(self):
+        rot_accel = self.rot_forces / self.mass
+        
         acceleration = self.forces / self.mass
         dt = delta()
         
         self.vel += acceleration * dt
-
+        self.rot_vel += rot_accel * dt
+    
         self.vel *= (self.friction * dt)
-        self.position += self.vel * dt
+        self.transform.position += self.vel * dt
+
+        self.rot_vel *= (self.friction * dt)
+        self.transform.rotation += self.rot_vel
 
         self.forces = Vector()
 
@@ -60,6 +68,9 @@ class PhysicsBody(Node2D):
         :type force: vector
         """
         self.forces += force
+
+    def apply_rotation_force(self, force: float):
+        self.rot_forces += force
     
     def update(self):
         self.on_update()

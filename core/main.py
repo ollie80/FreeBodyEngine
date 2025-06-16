@@ -9,9 +9,12 @@ from FreeBodyEngine.core.logger import Logger
 from FreeBodyEngine.core import Time
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine import log, warning
+from FreeBodyEngine.utils import abstractmethod
 from typing import Union, Literal
 from sys import exit
-from FreeBodyEngine.utils import abstractmethod
+import os
+import json
+
 
 def create_window(main: 'Main', window, size, title, display) -> Window:
     if window == "win32":
@@ -63,9 +66,14 @@ class Main:
         self.time = Time()
 
         if dev:
-            self.files = FileManager('./dev/assets/')
+            if os.path.exists('build.json'): 
+                build_settings = json.loads(open('build.json').read())
+                asset_path = build_settings.get('assets', './assets')
+            else:
+                print('No build file found at ./build.json.')
+            self.files = FileManager(self, asset_path, dev)
         else:
-            self.files = FileManager('./dev/assets')
+            self.files = FileManager(self, './dev/assets', dev)
 
         self.fps = fps
 
@@ -78,6 +86,7 @@ class Main:
         if not self.headless_mode:
             self.window = create_window(self, 'win32', window_size, self.name + dev_mode, display)
             self.renderer = create_renderer(self, graphics_api)
+            self.graphics = GraphicsManager(self, self.renderer)
 
     def add(self, scene: Scene):
         """
@@ -107,20 +116,7 @@ class Main:
     def quit(self):
         log("Quiting game.")
         self.on_quit()
-        exit(0)
-    
-    def _event_loop(self):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.quit()
-            if event.type == pygame.WINDOWRESIZED:
-                self.window_size = self.screen.size
-
-            self.event_loop(event)
-
-    @abstractmethod
-    def event_loop(self, event):
-        pass
+        exit(0)    
 
     def on_quit(self):
         pass
@@ -131,8 +127,6 @@ class Main:
             self.time.update(self.fps)
             if not self.headless_mode:
                 self.window.update()
-                self.renderer.clear(Color("#ff0000"))
-                self.window.draw()
 
             if self.active_scene != None:
                 self.active_scene._update()

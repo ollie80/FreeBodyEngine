@@ -1,4 +1,5 @@
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
+from FreeBodyEngine.utils import abstractmethod
 
 class Generator:
     """
@@ -7,5 +8,6 @@ class Generator:
     def __init__(self, tree: Tree):
         self.tree = tree
 
+    @abstractmethod
     def generate(self) -> str:
         pass

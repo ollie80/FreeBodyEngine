@@ -4,7 +4,7 @@ from FreeBodyEngine.math import Vector
 import numpy as np
 import math
 
-class Camera(Node2D):
+class Camera2D(Node2D):
     """
     A generic camera object. The camera doesn't draw anything, its only purpose is to provide matricies to the renderer.
     
@@ -31,16 +31,16 @@ class Camera(Node2D):
     def _update_rect(self):
         center_x, center_y = self.position.x, self.position.y
         width, height = (
-            self.scene.main.window_size[0] / self.zoom,
-            self.scene.main.window_size[1] / self.zoom,
+            self.scene.main.window.size[0] / self.zoom,
+            self.scene.main.window.size[1] / self.zoom,
         )
 
 
     def _update_projection_matrix(self):
         # Orthographic projection matrix
         self._update_rect()
-        width = self.scene.main.window_size[0]
-        height = self.scene.main.window_size[1]
+        width = self.scene.main.window.size[0]
+        height = self.scene.main.window.size[1]
         left = -width / 2
         right = width / 2
         bottom = -height / 2
@@ -101,7 +101,7 @@ class Camera(Node2D):
         # Combine translation and rotation
         self.view_matrix = np.dot(translation_matrix, rotation_matrix)
 
-    def update(self, dt):
-        super().update(dt)
+    def update(self):
+        super().update()
         self._update_projection_matrix()
         self._update_view_matrix()

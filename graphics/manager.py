@@ -1,12 +1,23 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload, Union
+from FreeBodyEngine import warning
+from FreeBodyEngine.graphics.image import Image 
+from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
+from FreeBodyEngine.graphics.image import Image 
+from FreeBodyEngine.math import GenericVector, Transform
+from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
-    from FreeBodyEngine.graphics.image import Image 
-    from FreeBodyEngine.core.camera import Camera
+    from FreeBodyEngine.core.camera import Camera2D
     from FreeBodyEngine.graphics.renderer import Renderer
 
 RENDERING_MODES = ["full", "albedo", "lighting", "normal", "emission"]
+
+@dataclass 
+class DrawCall:
+    obj: any
+    pos: GenericVector
+
 
 class GraphicsManager:
     """
@@ -19,20 +30,49 @@ class GraphicsManager:
         self.main = main
         self.rendering_mode = "full"
         self.renderer = renderer
-        self.images: list['Image'] = []
+        self.draw_calls: list[DrawCall] = []
+
+    @overload
+    def draw(self, image: "Image") -> None: ...
+    @overload
+    def draw(self, sprite: "Sprite") -> None: ...
+    # @overload
+    # def draw(self, mesh: "Mesh") -> None: ...
+    def draw(self, obj: Union["Image", "Sprite"], transform) -> None:
+        if isinstance(obj, Image):
+            self.draw_calls.append(DrawCall((obj)))
+        elif isinstance(obj, Sprite):
+            self.draw_calls.append(DrawCall(obj, transform))
+        #elif isinstance(obj, Mesh):
+        #    self._draw_mesh(obj)
+        else:
+            warning(f"Cannot draw object of type: {type(obj)}")
 
 
-    def draw(self, camera: 'Camera'):
+    def _draw_sprite(self, sprite: Sprite, transform: Transform, camera: 'Camera2D'):
+        self.renderer.draw_image(sprite.image, sprite.material, transform, camera)
+
+    def _draw_image(self, image, material, transform: Transform, camera):
+        self.renderer.draw_image(image, material, transform, camera)
+
+    def load_material(self, data):
+        return self.renderer.load_material(data)
+
+    def load_image(self, data):
+        return self.renderer.load_image(data)
+
+    def _draw_2D(self, camera: 'Camera2D'):
         """
         Draws the scene from the perspective of a camera.
 
         :pararm camera: The camera that the scene will be drawn from.
         :type camera: Camera
         """
-        
-        for image in self.images:
-            self.renderer.draw_image(image, camera)
 
+        sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
+        for sprite in sprites:
+            self._draw_sprite(sprite._sprite, sprite.world_transform)
+            
 
 # class _GraphicsManager:
 #     def __init__(self, scene: engine.actor.Scene, ctx: moderngl.Context):

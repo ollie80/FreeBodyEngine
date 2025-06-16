@@ -236,7 +236,6 @@ class Ray2D:
         t2 = (x + w - self.origin.x) * inv_dir_x
         t3 = (y - self.origin.y) * inv_dir_y
         t4 = (y + h - self.origin.y) * inv_dir_y
-        print(inv_dir_x, inv_dir_y, t1, t2, t3, t4)
 
         tmin = max(min(t1, t2), min(t3, t4))
         tmax = min(max(t1, t2), max(t3, t4))
@@ -268,7 +267,7 @@ class Ray2D:
             raise ValueError(f"Provided collider type is not supported, type: {collider.__class__}")
 
     def cast(self, max_dist: float = 100):
-        colliders: list[Collider2D] = self.scene.root.find_nodes_with_type(Collider2D)
+        colliders: list[Collider2D] = self.scene.root.find_nodes_with_type('Collider2D')
         found = []
         for collider in colliders:
             if collider.world_position.distance(self.origin) < max_dist:

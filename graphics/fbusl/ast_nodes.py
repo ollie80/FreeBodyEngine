@@ -35,51 +35,53 @@ class Tree:
         return "\n".join(lines)
 
 class Node:
-    pass
+    def __init__(self, pos: int):
+        self.pos = pos
 
 class Expression(Node):
-    pass
+    def __init__(self, pos: int):
+        super().__init__(pos)
 
 class BinOp(Expression):
-    def __init__(self, left, op, right):
+    def __init__(self, pos: int, left, op, right):
+        super().__init__(pos)
         self.left = left
         self.op = op
         self.right = right
-
     def get_debug(self):
         return (f"BinOp('{self.op}')", self.left, self.right)
-  
+
 class VarDecl(Node):
-    def __init__(self, name, type, val, precision):
+    def __init__(self, pos, name, type, val, precision):
+        super().__init__(pos)
         self.name = name
         self.type = type
         self.val = val
         self.precision = precision
-
     def get_debug(self):
-
         return (f"VariableDeclaration('{self.name}', '{self.type}')", self.val)
 
 class UniformDecl(Node):
-    def __init__(self, name, type, precision):
+    def __init__(self, pos, name, type, precision):
+        super().__init__(pos)
         self.name = name
         self.type = type
         self.precision = precision
-
     def get_debug(self):
         return (f"UniformDeclaration('{self.name}', '{self.type}')",)
 
 class InputDecl(Node):
-    def __init__(self, name, type, precision):
+    def __init__(self, pos, name, type, precision):
+        super().__init__(pos)
         self.name = name
         self.type = type
         self.precision = precision
-
     def get_debug(self):
         return (f"InputDeclaration('{self.name}', '{self.type}')",)
 
 class OutputDecl(Node):
-    def __init__(self, name, type, precision):
+    def __init__(self, pos, name, type, precision):
+        super().__init__(pos)
         self.name = name
         self.type = type
         self.precision = precision
@@ -87,159 +89,163 @@ class OutputDecl(Node):
         return (f"OutputDeclaration('{self.name}', '{self.type}')",)
 
 class Define(Node):
-    def __init__(self, name, val):self.name=name;self.val=val;
+    def __init__(self, pos, name, val):
+        super().__init__(pos)
+        self.name = name
+        self.val = val
     def get_debug(self):
-        return (f"Definition('self.name')", self.val)
+        return (f"Definition('{self.name}')", self.val)
 
 class Set(Node):
-    def __init__(self, ident: 'Identifier', value: any):
+    def __init__(self, pos, ident, value):
+        super().__init__(pos)
         self.ident = ident
         self.value = value
-
     def get_debug(self):
-        return (f"Set", self.ident, self.value)
+        return ("Set", self.ident, self.value)
 
 class SetMethod(Set):
-    def __init__(self, identifier: "Identifier", method: "Identifier", value: any):
-        super().__init__(identifier, value)
+    def __init__(self, pos, identifier, method, value):
+        super().__init__(pos, identifier, value)
         self.method = method
     def get_debug(self):
-        return (f"SetMethod({self.identifier})", self.method, self.value)
+        return (f"SetMethod({self.ident})", self.method, self.value)
 
 class Type(Node):
-    pass
+    def __init__(self, pos):
+        super().__init__(pos)
 
 class Param(Node):
-    def __init__(self, name: str, type: str):
+    def __init__(self, pos, name, type):
+        super().__init__(pos)
         self.name = name
         self.type = type
-
     def get_debug(self):
-        return (f"Param({self.name}: {self.type})", )
+        return (f"Param({self.name}: {self.type})",)
 
 class Return(Node):
-    def __init__(self, expr: Expression):
+    def __init__(self, pos, expr):
+        super().__init__(pos)
         self.expr = expr
-
     def get_debug(self):
         return ("Return", self.expr)
 
 class FuncDecl(Node):
-    def __init__(self, name: str, return_type: str, params: list[Param], body: list[Node]):
+    def __init__(self, pos, name, return_type, params, body):
+        super().__init__(pos)
         self.name = name
-        self.params = params
         self.return_type = return_type
+        self.params = params
         self.body = body
-
     def get_debug(self):
         return (f"Function('{self.name}') -> {self.return_type}", *self.params, *self.body)
 
 class StructField(Node):
-    def __init__(self, name: str, type: str, precision: str):
+    def __init__(self, pos, name, type, precision):
+        super().__init__(pos)
         self.name = name
         self.type = type
         self.precision = precision
-
     def get_debug(self):
         return (f"Field('{self.name}', '{self.type}')",)
 
 class FuncCall(Node):
-    def __init__(self, name, args):
+    def __init__(self, pos, name, args):
+        super().__init__(pos)
         self.name = name
         self.args = args
     def get_debug(self):
         return (f"FunctionCall('{self.name}')", *self.args)
 
 class FuncArg(Node):
-    def __init__(self, val):
+    def __init__(self, pos, val):
+        super().__init__(pos)
         self.val = val
     def get_debug(self):
-        return (f"Argument '{self.val}'",)
+        return ("Argument", self.val)
 
 class StructDecl(Node):
-    def __init__(self, name: str, methods: list[StructField]):
+    def __init__(self, pos, name, methods):
+        super().__init__(pos)
         self.name = name
         self.methods = methods
-
     def get_debug(self):
         return (f"Struct('{self.name}')", *self.methods)
 
 class Identifier(Type):
-    def __init__(self, name: str):
+    def __init__(self, pos, name):
+        super().__init__(pos)
         self.name = name
-
     def get_debug(self):
         return (f"Identifier('{self.name}')",)
 
 class MethodIdentifier(Identifier):
-    def __init__(self, struct_name: str, method_name: str):
+    def __init__(self, pos, struct_name, method_name):
+        super().__init__(pos, f"{struct_name}.{method_name}")
         self.struct_name = struct_name
         self.method_name = method_name
-
     def get_debug(self):
-        return (f"MethodIdentifier('{self.struct_name}'.'{self.method_name}')")
+        return (f"MethodIdentifier('{self.struct_name}.{self.method_name}')",)
 
 class Int(Type):
-    def __init__(self, value: int):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-
     def get_debug(self):
         return (f"Integer({self.value})",)
 
 class Float(Type):
-    def __init__(self, value: float):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-
     def get_debug(self):
         return (f"Float({self.value})",)
 
 class Bool(Type):
-    def __init__(self, value: bool):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-    
     def get_debug(self):
         return (f"Boolean({self.value})",)
-    
-class Vec2(Type):
-    def __init__(self, value):
-        self.value = value
 
+class Vec2(Type):
+    def __init__(self, pos, value):
+        super().__init__(pos)
+        self.value = value
     def get_debug(self):
-        return (f"Vector2({self.value})")
+        return (f"Vector2({self.value})",)
 
 class Vec3(Type):
-    def __init__(self, value):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-
     def get_debug(self):
-        return (f"Vector3({self.value})")
+        return (f"Vector3({self.value})",)
 
 class Vec4(Type):
-    def __init__(self, value):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-
     def get_debug(self):
-        return (f"Vector4({self.value})")
-    
+        return (f"Vector4({self.value})",)
+
 class Mat2(Type):
-    def __init__(self, value):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-
     def get_debug(self):
-        return (f"Matrix2x2({self.value})")
+        return (f"Matrix2x2({self.value})",)
 
 class Mat3(Type):
-    def __init__(self, value):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-
     def get_debug(self):
-        return (f"Matrix3x3({self.value})")
-    
+        return (f"Matrix3x3({self.value})",)
 
 class Mat4(Type):
-    def __init__(self, value):
+    def __init__(self, pos, value):
+        super().__init__(pos)
         self.value = value
-
     def get_debug(self):
-        return (f"Matrix4x4({self.value})")
-    
+        return (f"Matrix4x4({self.value})",)

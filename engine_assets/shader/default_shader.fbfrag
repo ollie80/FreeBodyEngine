@@ -1,0 +1,18 @@
+@define
+pi = 3.14159
+
+@uniform
+uv: vec2
+
+@input
+vert: vec2
+
+struct test4:
+    low this: int
+    med is: float
+    high a: vec2
+    struc: mat3
+
+def test(test1: int, test2: float) -> int:
+    return test1
+

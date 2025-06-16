@@ -7,8 +7,8 @@ if TYPE_CHECKING:
     from FreeBodyEngine.graphics.color import Color
     from FreeBodyEngine.graphics.image import Image
     from FreeBodyEngine.graphics.mesh import Mesh
-    from FreeBodyEngine.core.camera import Camera
-
+    from FreeBodyEngine.core.camera import Camera2D
+    from FreeBodyEngine.math import Vector, Transform
 
 
 class Renderer:
@@ -23,6 +23,26 @@ class Renderer:
         self.main = main
 
     @abstractmethod
+    def load_image(self, data):
+        pass
+
+    @abstractmethod
+    def load_material(self, data):
+        pass
+
+    @abstractmethod
+    def load_shader(self, vertex, fragment):
+        pass
+
+    @abstractmethod
+    def clear(self):
+        pass 
+
+    @abstractmethod
+    def destroy(self):
+        pass
+
+    @abstractmethod
     def draw_line(self, start: tuple[float, float], end: tuple[float, float], width: int, color: 'Color'):
         """
         Draws a line between the first and second point.
@@ -35,23 +55,13 @@ class Renderer:
         :type width: int 
         """
         pass
-    
 
     @abstractmethod
-    def clear(self):
-        pass 
-
-    @abstractmethod
-    def destroy(self):
+    def draw_image(self, image: 'Image', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
         pass
 
     @abstractmethod
-    def draw_image(self, image: 'Image', material: 'Material', camera: 'Camera'):
-        pass
-        
-
-    @abstractmethod
-    def draw_mesh(self, image: 'Mesh', material: 'Material', camera: 'Camera'):
+    def draw_mesh(self, image: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
         pass
 
     @abstractmethod

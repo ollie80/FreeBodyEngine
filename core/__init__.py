@@ -3,7 +3,7 @@ from FreeBodyEngine.core.time import Time
 from FreeBodyEngine.core import files
 from FreeBodyEngine.core import state
 from FreeBodyEngine.core import tilemap
-from core import node
+from FreeBodyEngine.core import node
 from FreeBodyEngine.core import timer
 from FreeBodyEngine.core import logger
 from FreeBodyEngine.core import scene
