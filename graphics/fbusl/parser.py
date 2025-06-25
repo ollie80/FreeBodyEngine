@@ -17,8 +17,9 @@ TOKEN_TYPES = [
     ("ARROW", r"->"),
     ("DECORATOR", r"@(?:uniform|input|output|define)"),
     ("PRECISION", r"(low|med|high)"),
-    ("KEYWORD", r"\b(def|return|struct)\b"),
-    ("TYPE", r"\b(void|float|int|vec2|vec3|bool|vec4|mat2|mat3|mat4|struct)\b"),
+    ("KEYWORD", r"\b(def|return|struct|if|elif|else|not|and|or)\b"),
+    ("COMPARISON", r"(==|!=|<=|>=|<|>)"),
+    ("TYPE", r"\b(void|float|int|bool|sampler2D|sampler3D)\b"),
     ("IDENT", r"[a-zA-Z_][a-zA-Z0-9_]*"),
     ("FLOAT", r"\d+\.\d+"),
     ("INT", r"\d+"),
@@ -83,20 +84,29 @@ def tokenize(code: str, file_path) -> List[Token]:
 
     return tokens
 
-class FBUSLParser:
+class FBUSLParser: # im so  sorry
     """Parses FBUSL code into an AST."""
     def __init__(self, tokens, file_path):
         self.tokens: list[Token] = tokens
         self.index = 0
         self.file_path = file_path
+        
 
 
-    def peek(self) -> Token:
-        return self.tokens[self.index]
-
+    def peek(self, offset = 0) -> Token:
+        if not self.index + offset > len(self.tokens) - 1:
+            return self.tokens[self.index + offset]
+        return 0
+    
     def expect(self, kind: str, value: str = None):
-
+        
         tok = self.peek()
+
+        if tok == 0:
+            if value == None:
+                throw_error(f"Missing '{kind}'", self.tokens[len(self.tokens)-1].pos, self.file_path)
+            else:
+                throw_error(f"Missing '{kind}' '{value}'", self.tokens[len(self.tokens)-1].pos, self.file_path)
 
         if value != None:
             if tok.value != value:
@@ -118,9 +128,11 @@ class FBUSLParser:
         while self.index < len(self.tokens):
             tree.children.append(self.parse_next())
         for node in tree.children:
+
             if node == None:
                 tree.children.remove(node)
         return tree    
+    
 
     def parse_next(self) -> Node:
         tok = self.peek()
@@ -136,11 +148,18 @@ class FBUSLParser:
             elif tok.value == 'return':
                 return self.parse_return()
             
+            elif tok.value in ['if', 'elif', 'else']:
+                return self.parse_if_statement()
+            
+        elif tok.kind == "TYPE":
+            return self.parse_typecast()
+
         elif tok.kind == "PRECISION" or tok.kind == "IDENT":
             return self.parse_var()
         
         elif tok.kind == "DECORATOR":
             return self.parse_decorator()
+
 
     def parse_decorator(self):
         decorator = self.expect('DECORATOR').value
@@ -168,6 +187,14 @@ class FBUSLParser:
 
         return Define(name.pos, name.value, val)
 
+    def parse_typecast(self):    
+        type = self.expect("TYPE").value
+        self.expect("SYMBOL", "(")
+        target = self.parse_expression()
+        self.expect("SYMBOL", ")")
+        return TypeCast(target.pos, target, type)
+    
+
     def parse_uniform(self):
         precision = None
         if self.peek().kind == "PRECISION":
@@ -176,11 +203,36 @@ class FBUSLParser:
         name = self.expect('IDENT')
         self.expect('SYMBOL', ':')
         
-        type = self.expect('TYPE').value
+        if self.peek().kind == "TYPE":
+            type = self.expect('TYPE').value
+        else:
+            type = self.expect('IDENT').value
 
         return UniformDecl(name.pos, name.value, type, precision)
 
+    def parse_if_statement(self):
+        type = self.expect("KEYWORD")
+        condition = None
+        
+        if type.value != "else":
+            condition = self.parse_expression()
+        self.expect('SYMBOL', ':')
+        self.expect('NEWLINE')
+        self.expect('INDENT')
 
+        body = []
+        while self.peek().kind != "DEDENT":
+            body.append(self.parse_next())
+            self.expect('NEWLINE')
+        self.expect("DEDENT")
+
+        if type.value == 'if':
+            return IfStatement(type.pos, condition, body)    
+        if type.value == 'elif':
+            return ElseIfStatement(type.pos, condition, body)
+        if type.value == 'else':
+            return ElseStatement(type.pos, body)
+        
     def parse_inout(self, inout_type: str):
         precision = None
         if self.peek().kind == "PRECISION":
@@ -189,7 +241,10 @@ class FBUSLParser:
         name = self.expect('IDENT')
         self.expect('SYMBOL', ':')
         
-        type = self.expect('TYPE').value
+        if self.peek().kind == "TYPE":
+            type = self.expect('TYPE').value
+        else:
+            type = self.expect('IDENT').value
 
         if inout_type == "in":
             return InputDecl(name.pos, name.value, type, precision)
@@ -210,11 +265,13 @@ class FBUSLParser:
         if self.peek().kind != "SYMBOL" or self.peek().value != ")":
             params.append(self.parse_param())
             while self.peek().kind == "SYMBOL" and self.peek().value == ",":
-                self.consume()
+                self.consume() 
                 params.append(self.parse_param())
         self.expect("SYMBOL", ")")
-        self.expect("ARROW", "->")
-        return_type = self.expect("TYPE").value
+        return_type = None
+        if self.peek().kind == "ARROW":
+            self.expect("ARROW", "->")
+            return_type = self.expect("TYPE").value
 
         self.expect("SYMBOL", ":")
         self.expect("NEWLINE")
@@ -222,11 +279,9 @@ class FBUSLParser:
 
         body = []
         while self.peek().kind != "DEDENT":
-            stmt = self.parse_next()
-            
+            stmt = self.parse_next()    
             if stmt:
                 body.append(stmt)
-        
 
         self.expect("DEDENT")
         return FuncDecl(name.pos, name.value, return_type, params, body)
@@ -234,15 +289,82 @@ class FBUSLParser:
     def parse_param(self) -> Param:
         name = self.expect('IDENT')
         self.expect("SYMBOL", ":")
-        type = self.expect("TYPE").value
+        type = self.consume().value
 
         return Param(name.pos, name.value, type)
+    
+    def parse_expression(self):
+        expr = self.parse_logical_or()
+
+        if self.peek().kind == "KEYWORD" and self.peek().value == "if":
+            self.consume() 
+            condition = self.parse_logical_or()
+            self.expect("KEYWORD", "else")
+            false_expr = self.parse_expression()
+            return TernaryExpression(expr.pos, expr, false_expr, condition)
+
+        return expr
+
+    def parse_logical_or(self):
+        left = self.parse_logical_and()
+        while self.peek().kind == "KEYWORD" and self.peek().value == "or":
+            self.consume()
+            right = self.parse_logical_and()
+            left = Or(left.pos, left, right)
+        return left
+
+    def parse_logical_and(self):
+        left = self.parse_equality()
+        while self.peek().kind == "KEYWORD" and self.peek().value == "and":
+            self.consume()
+            right = self.parse_equality()
+            left = And(left.pos, left, right)
+        return left
+
+    def parse_equality(self):
+        left = self.parse_condition()
+        while self.peek().kind == "COMPARISON" and self.peek().value in ["==", "!="]:
+            comparison = self.consume().value
+            right = self.parse_condition()
+            left = Condition(left.pos, left, right, comparison)
+        return left
+
+    def parse_condition(self):
+        left = self.parse_term()
+        while self.peek().kind == "COMPARISON" and self.peek().value in ["<", ">", "<=", ">="]:
+            comparison = self.consume().value
+            right = self.parse_term()
+            left = Condition(left.pos, left, right, comparison)
+        return left
+
+    def parse_term(self):
+        left = self.parse_factor()
+        while self.peek().kind == "OPERATOR" and self.peek().value in ["+", "-"]:
+            op = self.consume().value
+            right = self.parse_factor()
+            left = BinOp(left.pos, left, op, right)
+        return left
+
+    def parse_factor(self):
+        left = self.parse_unary()
+        while self.peek().kind == "OPERATOR" and self.peek().value in ["*", "/"]:
+            op = self.consume().value
+            right = self.parse_unary()
+            left = BinOp(left.pos, left, op, right)
+        return left
+
+    def parse_unary(self):
+        if self.peek().kind == "KEYWORD" and self.peek().value == "not":
+            op_tok = self.consume()
+            operand = self.parse_unary()
+            return Not(op_tok.pos, operand)
+        return self.parse_value()
 
     def parse_var(self):
         precision = None
         if self.peek().kind == "PRECISION":
             precision = self.expect('PRECISION').value
-        name = self.expect('IDENT').value
+        name = self.expect('IDENT')
         
         if self.peek().value == ":":
             return self.parse_var_decl(name, precision)
@@ -250,16 +372,23 @@ class FBUSLParser:
         elif precision == None:
             return self.parse_var_set(name)
         
+        else:
+            throw_error('Cannot change precision of defined value', name.pos, self.file_path)
+
     def parse_var_decl(self, name, precision):
         self.expect("SYMBOL", ":")
+        
+        if self.peek().kind == "TYPE":
+            type = self.expect('TYPE').value
+        else:
+            type = self.expect('IDENT').value
 
-        type = self.expect("TYPE").value
         val = None
         if self.peek().kind == 'OPERATOR' and self.peek().value == "=":
             self.consume()
             val = self.parse_expression()
             
-        return VarDecl(name, type, val, precision)
+        return VarDecl(name.pos, name.value, type, val, precision)
 
     def parse_var_set(self, name):
         self.expect("OPERATOR", "=")
@@ -268,18 +397,14 @@ class FBUSLParser:
         if self.peek().kind != "NEWLINE":
             expression = self.parse_expression()
 
-        return Set(Identifier(name), expression)
-
-    def parse_expression(self):
-        while self.peek().kind != "NEWLINE":
-            return self.parse_math()
+        return Set(name.pos, Identifier(name.pos, name.value), expression)
             
     def parse_math(self):
         left = self.parse_value()
         while self.peek().kind == "OPERATOR" and self.peek().value in "+-*/":
             op = self.consume().value
             right = self.parse_value()
-            left = BinOp(left, op, right)
+            left = BinOp(left.pos, left, op, right)
         return left
 
     def parse_value(self):
@@ -290,27 +415,31 @@ class FBUSLParser:
             return Float(tok.pos, self.consume().value)
         elif tok.kind == "IDENT":
             return self.parse_get()
+        elif tok.kind == "TYPE" and self.peek(1).value == "(":
+            return self.parse_typecast()
         else:
-            self.error("Unexpected token in expression", tok)
+            throw_error(f"Unexpected token '{tok.value}'", tok.pos, self.file_path)
 
-    def parse_get(self) -> Identifier:
-        name = self.expect('IDENT')
-        if self.peek().kind == "SYMBOL" and self.peek().value == ".":
-            self.expect("SYMBOL", ":")
-            field_name = self.expect
-            return MethodIdentifier(name.pos, name.value, field_name)
-        
-        elif self.peek().kind == "SYMBOL" and self.peek().value == "(":
-            self.expect("SYMBOL", "(")
-            args = []
-            while (self.peek().value != ")"):
-                if self.peek().value == ",":
-                    self.consume()
-                args.append(FuncArg(self.parse_expression()))
-            self.expect("SYMBOL", ")")
-            return FuncCall(name.pos, name.value, args)
+    def parse_get(self) -> Node:
+        node = Identifier(self.peek().pos, self.expect("IDENT").value)
 
-        return Identifier(name.pos, name.value)
+        while self.peek().kind == "SYMBOL" and self.peek().value in [".", "("]:
+            if self.peek().value == ".":
+                self.expect("SYMBOL", ".")
+                field = self.expect("IDENT").value
+                node = MethodIdentifier(node.pos, node, field)
+
+            elif self.peek().value == "(":
+                self.expect("SYMBOL", "(")
+                args = []
+                while self.peek().value != ")":
+                    if self.peek().value == ",":
+                        self.consume()
+                    args.append(Arg(node.pos, self.parse_expression()))
+                self.expect("SYMBOL", ")")
+                node = Call(node.pos, node.name, args)
+        return node
+
     
     def parse_field(self) -> StructField:
         precision = None
@@ -319,7 +448,12 @@ class FBUSLParser:
             
         name = self.expect('IDENT')
         self.expect("SYMBOL", ":")
-        type = self.expect("TYPE").value
+
+        if self.peek().kind == "TYPE":
+            type = self.expect('TYPE').value
+        else:
+            type = self.expect('IDENT').value
+
         return StructField(name.pos, name.value, type, precision)
 
     def parse_struct(self) -> StructDecl:
@@ -335,7 +469,7 @@ class FBUSLParser:
             fields.append(self.parse_field())
             if self.peek().kind == "NEWLINE":
                 self.expect('NEWLINE')
-        self.expect("DEDENT")        
+        self.expect("DEDENT")
 
         return StructDecl(name.pos, name.value, fields)
 

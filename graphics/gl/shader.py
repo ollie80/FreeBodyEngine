@@ -1,12 +1,13 @@
 from FreeBodyEngine.graphics.fbusl.generator import Generator
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
+from FreeBodyEngine.graphics.fbusl.semantic import SemanticAnalyser 
 from FreeBodyEngine.graphics.shader import Shader
-from FreeBodyEngine.graphics.fbusl import compile as compile_fbusl
+from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
 from OpenGL.GL import *
 from dataclasses import dataclass
 import numpy
-from FreeBodyEngine.math import Vector, Vector3
+from typing import Union
 
 
 @dataclass
@@ -35,7 +36,6 @@ def create_shader_program(vertex_src, fragment_src):
 
 def compile_shader(source, shader_type):
     shader = glCreateShader(shader_type)
-    print(source)
     glShaderSource(shader, source)
     glCompileShader(shader)
 
@@ -45,17 +45,11 @@ def compile_shader(source, shader_type):
 
     return shader
 
-def create_fbusl_shader(fbusl_source):
-    return 
-
 
 class GLShader(Shader):
-    def __init__(self, vertex_source, fragment_source):
-        compiled_vert = compile_fbusl(vertex_source, GLGenerator)
-        compiled_frag = compile_fbusl(fragment_source, GLGenerator)
-        print(compiled_vert)
-        super().__init__(compiled_vert, compiled_frag)
+    def __init__(self, vertex_source, fragment_source, injector):
         
+        super().__init__(vertex_source, fragment_source, GLGenerator, injector)
         self._shader = create_shader_program(self.vertex_source, self.fragment_source)
         self.uniforms = self._shader
         
@@ -165,15 +159,15 @@ class GLGenerator(Generator):
     """
     GLSL implementation of the FBUSL code generator. 
     """
-    def __init__(self, tree):
-        self.tree = tree
+    def __init__(self, tree, analyser: SemanticAnalyser):
+        self.tree: Tree = tree
+        self.analyser = analyser
         self.precisions = {"high": "highp", "med": "mediump", "low": "lowp"}
         self.default_precision = "high"
-    
+
     def generate(self, default_precision="high") -> str:
         self.default_precision = default_precision
-        string = ""
-        string += "#version 330 core\n"
+        string = "#version 330 core\n"
 
         for child in self.tree.children:
             string += str(self.generate_node(child))
@@ -212,35 +206,76 @@ class GLGenerator(Generator):
         
         elif isinstance(node, VarDecl):
             return self.generate_var(node)
+
+        elif isinstance(node, MethodIdentifier):
+            return self.generate_field_identifier(node)
+
+        elif isinstance(node, Identifier):
+            return self.generate_identifier(node)
         
+        elif isinstance(node, (IfStatement, ElseStatement)):
+            return self.generate_if_statement(node)
+        
+        elif isinstance(node, TernaryExpression):
+            return self.generate_ternary_expression(node)
+        
+        elif isinstance(node, Condition):
+            return self.generate_condition(node)
+
+        elif isinstance(node, TypeCast):
+            return self.generate_typecast(node)
+
+        elif isinstance(node, Call):
+            return self.generate_call(node)
+
         return None
+    
+    def generate_call(self, node: Call):
+        args = ""
+        i = 0
+        s = ""
+        for arg in node.args:
+            s += self.generate_node(arg.val)
+            if i < len(node.args)-1:
+                s += ', '
+            i+=1
+        return f"{node.name}({s})"
+
+    def generate_identifier(self, node: Identifier):
+        return f"{node.name}"
+    
+    def generate_field_identifier(self, node: MethodIdentifier):        
+        if not node.struct:
+            return f"{self.generate_node(node.struct_name)}.{node.method_name}"
+        else:
+            return f"{self.generate_node(node.struct_name)}[{node.method_name}]"
 
     def generate_var(self, node: VarDecl):
-        prec = f"{self.precisions[self.default_precision]}"
-        if node.precision != None:
-            prec = f"{self.precisions[node.precision]}"
-        return f"\n {prec} {node.type} {node.name} = {self.generate_node(node.val)};\n"
+        prec = f"{node.precision} "
+        if node.precision == None:
+            prec = f""
+        return f"{prec}{node.type} {node.name} = {self.generate_node(node.val)}"
 
     def generate_input(self, node: InputDecl) -> str:
-        prec = f"{self.precisions[self.default_precision]}"
-        if node.precision != None:
-            prec = f"{self.precisions[node.precision]}"
-        return f"\nuniform {prec} {node.type} {node.name};\n"
+        prec = f" {node.precision} "
+        if node.precision == None:
+            prec = " "
+        return f"\nin{prec}{node.type} {node.name};\n"
     
     def generate_output(self, node: OutputDecl) -> str:
-        prec = f"{self.precisions[self.default_precision]}"
-        if node.precision != None:
-            prec = f"{self.precisions[node.precision]}"
-        return f"\nuniform {prec} {node.type} {node.name};\n"
+        prec = f" {node.precision} "
+        if node.precision == None:
+            prec = " "
+        return f"\nout{prec}{node.type} {node.name};\n"
     
     def generate_uniform(self, node: UniformDecl) -> str:
-        prec = f"{self.precisions[self.default_precision]}"
-        if node.precision != None:
-            prec = f"{self.precisions[node.precision]}"
-        return f"\nuniform {prec} {node.type} {node.name};\n"
+        prec = f" {node.precision} "
+        if node.precision == None:
+            prec = " "
+        return f"\nuniform{prec}{node.type} {node.name};\n"
     
     def generate_definition(self, node: Define) -> str:
-        return f"#define {node.name} {node.val}\n"
+        return f"#define {node.name} {self.generate_node(node.val)}\n"
 
     def generate_param(self, node: Param) -> str:
         return f"{node.type} {node.name}"     
@@ -251,6 +286,26 @@ class GLGenerator(Generator):
     def generate_return(self, node: Return):
         return f"return {self.generate_node(node.expr)}"            
     
+    def generate_if_statement(self, node: Union[IfStatement, ElseStatement]):
+        body = ""
+        for b_node in node.body:
+            body+=f"    {self.generate_node(b_node)};\n"
+
+        if isinstance(node, ElseIfStatement):
+            return f"else if ({self.generate_node(node.condition)})" + "{\n" + body + "    }"
+
+        elif isinstance(node, IfStatement):
+            return f"if ({self.generate_node(node.condition)})" + "{\n" + body + "    }"
+
+        else:
+            return "else {\n" + body + "    }"
+    
+    def generate_condition(self, node: Condition):
+        return f"{self.generate_node(node.left)} {node.comparison} {self.generate_node(node.right)}"
+
+    def generate_ternary_expression(self, node: TernaryExpression):
+        return f"{self.generate_node(node.condition)} ? {self.generate_node(node.left)} : {self.generate_node(node.right)}"
+
     def generate_function(self, node: FuncDecl) -> str:
         r = "\n"
         params = ""
@@ -260,13 +315,20 @@ class GLGenerator(Generator):
             if i < len(node.params) - 1:
                 params += ", "  
             i += 1
-        r += f"{node.return_type} {str(node.name)}({params})" + " {\n"
+
+        return_type = "void"
+        if node.return_type != None:
+            return_type = node.return_type
+        r += f"{return_type} {str(node.name)}({params})" + " {\n"
         
         for b_node in node.body:
             r += f"    {self.generate_node(b_node)};\n"
         r += "};"
 
         return r
+
+    def generate_typecast(self, node: TypeCast):
+        return f"{node.type}({self.generate_node(node.target)})"
 
     def generate_method(self, node: StructField):
         prec = ""
@@ -292,3 +354,4 @@ class GLGenerator(Generator):
             right = self.generate_node(node.right)
             r += str(left) + str(node.op) + str(right)
         return r
+

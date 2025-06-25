@@ -1,9 +1,11 @@
 """
-The FreeBody Universal Shader Language is a Transpiled Language.
-It is designed to include features present in many shader
-languages (GLSL, HLSL, MSL) so it can be compiled into them.
+The FreeBody Universal Shader Language is a Transpiled Shader Language.
+It includes features present in many shader languages so it can
+be easily compiled into them.
 """
+
 import sys
+
 def throw_error(msg, line, file_path = None):
     f = file_path
     if file_path == None:

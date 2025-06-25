@@ -116,7 +116,6 @@ class Builder:
             for path in paths:
                 data = open(f"{path}", "rb").read()
                 out_path = self.get_out_path(path, root_dir)
-                print(out_path)
                 file.write(struct.pack("<H", len(out_path)))
                 file.write(out_path.encode("utf-8"))
                 file.write(struct.pack("<I", len(data)))

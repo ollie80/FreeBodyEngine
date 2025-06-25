@@ -1,49 +1,21 @@
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
+from FreeBodyEngine.utils import abstractmethod
+from typing import Literal
+
 
 class Injector:
     """
-    Injects FBE material functionality into the shader.
+    Injects into an FBUSL AST.
     """
-    def __init__(self, tree):
+    def __init__(self, tree, shader_type: Literal["vert", "frag"], file_path):
         self.tree: Tree = tree
-        self.main_name = None
-        self.new = Tree()
-        
+        self.shader_type = shader_type 
+        self.file_path = file_path
+
+    @abstractmethod
+    @classmethod
+    def get_builtins() -> dict[str, list]:
+        return {}
+
     def inject(self):
-        self.overide_main()
-        self.inject_main()
-
-    def overide_main(self):
-        # overide main function
-        funcs = []
-        main_calls: list[FuncCall] = []
-        main = None
-
-        for node in self.tree:
-            if isinstance(node, FuncDecl):
-                if node.name == "main":
-                    main = node
-                funcs.append(node.name)
-            if isinstance(node, FuncCall):
-                if node.name == "main":
-                    main_calls.append(node)
-
-        if main == None:
-            raise SyntaxError("No main function defined.")
-        else:
-            i = 0
-            new_name = f"user_main{i}"
-            
-            while new_name in funcs:
-                i += 1
-                new_name = f'user_main{i}'
-            
-            main.name = new_name
-
-            for call in main_calls:
-                call.name = new_name
-            
-            self.main_name = new_name
-        
-    def inject_main(self):
-        pass
+        return self.tree

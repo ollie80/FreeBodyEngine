@@ -111,6 +111,77 @@ class SetMethod(Set):
     def get_debug(self):
         return (f"SetMethod({self.ident})", self.method, self.value)
 
+class Not(Node):
+    def __init__(self, pos, node: Node):
+        super().__init__(pos)
+        self.node = node
+
+    def get_debug(self):
+        return (f"Not", self.node)
+
+
+class And(Node):
+    def __init__(self, pos, left: Node, right: Node):
+        super().__init__(pos)
+        self.left = left
+        self.right = right
+
+    def get_debug(self):
+        return (f"Not", self.left, self.right)
+
+
+class Or(Node):
+    def __init__(self, pos, left: Node, right: Node):
+        super().__init__(pos)
+        self.left = left
+        self.right = right
+
+    def get_debug(self):
+        return (f"Not", self.left, self.right)
+
+
+class IfStatement(Node):
+    def __init__(self, pos, condition, body):
+        super().__init__(pos)
+        self.condition = condition
+        self.body = body
+        
+
+    def get_debug(self):
+        return (f"IfStatment", self.condition, self.body)
+    
+class ElseIfStatement(IfStatement):
+    def get_debug(self):
+        return (f"ElseIfStatement", self.condition, self.body)
+
+class ElseStatement(Node):
+    def __init__(self, pos, body):
+        super().__init__(pos)
+        self.body = body
+    
+    def get_debug(self):
+        return (f"ElseStatement", self.body)
+
+class Condition(Node):
+    def __init__(self, pos, left, right, comparision):
+        super().__init__(pos)
+        self.left = left
+        self.right = right
+        self.comparison = comparision
+
+    def get_debug(self):
+        return (f"Condition({self.comparison})", self.left, self.right)
+
+class TernaryExpression(Node):
+    def __init__(self, pos, left, right, condition):    
+        super().__init__(pos)
+        self.left = left
+        self.right = right
+        self.condition = condition
+    
+    def get_debug(self):
+        return (f"TernaryExpression", self.left, self.right, self.condition)
+
 class Type(Node):
     def __init__(self, pos):
         super().__init__(pos)
@@ -135,10 +206,11 @@ class FuncDecl(Node):
         super().__init__(pos)
         self.name = name
         self.return_type = return_type
-        self.params = params
+        self.params: list[Param] = params
         self.body = body
     def get_debug(self):
         return (f"Function('{self.name}') -> {self.return_type}", *self.params, *self.body)
+
 
 class StructField(Node):
     def __init__(self, pos, name, type, precision):
@@ -149,15 +221,15 @@ class StructField(Node):
     def get_debug(self):
         return (f"Field('{self.name}', '{self.type}')",)
 
-class FuncCall(Node):
+class Call(Node):
     def __init__(self, pos, name, args):
         super().__init__(pos)
         self.name = name
-        self.args = args
+        self.args: list[Arg] = args
     def get_debug(self):
-        return (f"FunctionCall('{self.name}')", *self.args)
+        return (f"Call('{self.name}')", *self.args)
 
-class FuncArg(Node):
+class Arg(Node):
     def __init__(self, pos, val):
         super().__init__(pos)
         self.val = val
@@ -179,13 +251,23 @@ class Identifier(Type):
     def get_debug(self):
         return (f"Identifier('{self.name}')",)
 
+class TypeCast(Node):
+    def __init__(self, pos, target, type: str):
+        super().__init__(pos)
+        self.type = type
+        self.target = target
+
+    def get_debug(self):
+        return (f"TypeCast", self.target, self.type)
+
+
 class MethodIdentifier(Identifier):
-    def __init__(self, pos, struct_name, method_name):
-        super().__init__(pos, f"{struct_name}.{method_name}")
-        self.struct_name = struct_name
+    def __init__(self, pos, struct, method_name):
+        super().__init__(pos, f"{struct}.{method_name}")
+        self.struct = struct
         self.method_name = method_name
     def get_debug(self):
-        return (f"MethodIdentifier('{self.struct_name}.{self.method_name}')",)
+        return (f"MethodIdentifier('{self.method_name}')", self.struct)
 
 class Int(Type):
     def __init__(self, pos, value):

@@ -1,5 +1,5 @@
-from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.graphics.gl.shader import GLShader
+from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.graphics.fbusl import compile
 from OpenGL.GL import *
 

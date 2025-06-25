@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING
 from FreeBodyEngine.utils import abstractmethod
+from FreeBodyEngine.graphics.fbusl.injector import Injector 
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -13,9 +14,7 @@ if TYPE_CHECKING:
 
 class Renderer:
     """
-    The purpose of the renderer is to abstract rendering with different graphics APIs.
-    The Renderer uses NDC (Normalised Device Coordinates) instead of pixel coordinates.
-
+    Renders graphics objects to the window's framebuffer. 
     :param main: The main object.
     :type main: Main
     """
@@ -31,9 +30,9 @@ class Renderer:
         pass
 
     @abstractmethod
-    def load_shader(self, vertex, fragment):
+    def load_shader(self, vertex, fragment, injector: Injector = Injector):
         pass
-
+    
     @abstractmethod
     def clear(self):
         pass 
