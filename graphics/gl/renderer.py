@@ -6,6 +6,7 @@ from FreeBodyEngine.graphics.gl import GLImage
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.gl.shader import GLShader
 from FreeBodyEngine.graphics.gl.material import GLMaterial
+from FreeBodyEngine.graphics.fbusl.injector import Injector 
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
     from FreeBodyEngine.core.camera import Camera
     from FreeBodyEngine.graphics.material import Material
     from FreeBodyEngine.math import Vector
+
 
 import numpy as np
 
@@ -47,8 +49,8 @@ class GLRenderer(Renderer):
 
         glClear(GL_COLOR_BUFFER_BIT)
 
-    def load_shader(self, vertex, fragment):
-        return GLShader(vertex, fragment)
+    def load_shader(self, vertex, fragment, injector: Injector = Injector):
+        return GLShader(vertex, fragment, injector)
 
     def load_material(self, data):
         return GLMaterial(data)

@@ -44,5 +44,4 @@ def create_context(window: 'Win32Window'):
         
     if not WGL.wglMakeCurrent(hdc, hrc):
         raise RuntimeError("Failed to activate OpenGL context.")
-    print("HRC: ", hrc) 
     return hrc

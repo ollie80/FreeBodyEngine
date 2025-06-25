@@ -77,10 +77,8 @@ class FileManager:
         if path.startswith('engine'):
             n_path = n_path.removeprefix('engine')
             n_path = self.engine_path + "/engine_assets" + n_path            
-            print(n_path)
         else:
             n_path = (self.path) + '/' + path
-            print(n_path)
         return os.path.abspath(n_path)
 
     def file_exsists(self, path):
@@ -97,8 +95,8 @@ class FileManager:
         if file == None:
             error(f"File at path: '{path}' not found.")
 
-    def load_shader(self, path: str):
-        return self.main.renderer.load_shader(self.load_data(path))
+    def load_shader_source(self, path: str):
+        return self.load_data(path)
 
     def load_json(self, path: str):
         return json.loads(self.load_data(path))
