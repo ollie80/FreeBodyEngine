@@ -146,8 +146,4 @@ class Main:
                 self.window.draw()
 
     def on_update(self):
-        pass
-                
-
-
-        
+        pass       
