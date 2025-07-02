@@ -16,6 +16,4 @@ def compile(source, generator: type[fbusl.generator.Generator], injector: type[f
     
     gen = generator(ast, analyser)
     g = gen.generate()
-    with open(f"test.fb{shader_type}", "w") as file:
-        file.write(g)
     return g

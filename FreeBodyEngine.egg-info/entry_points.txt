@@ -1,0 +1,3 @@
+[console_scripts]
+fb = FreeBodyEngine.cli.commands:main
+freebody = FreeBodyEngine.cli.commands:main

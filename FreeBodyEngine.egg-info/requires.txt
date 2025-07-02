@@ -1,0 +1,4 @@
+PyOpenGL>=3.1.9
+pywin32>=310
+numpy>=2.3.1
+glfw>=2.9.0
