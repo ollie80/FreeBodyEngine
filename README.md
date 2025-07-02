@@ -11,12 +11,17 @@ This engine is **very** early in development, you **will** run into many bugs.
 
 ## Installation
 If you have python installed, simply run:
-`pip install git+https://github.com/ollie80/FreeBodyEngine.git`
+
+```pip install git+https://github.com/ollie80/FreeBodyEngine.git```
 
 
 ## Quick Start Guide
 To create a project use the command:
-`freebody create project <PROJECT_NAME>`
+
+```freebody create project <PROJECT_NAME>```
+
 
 To run the project, move to the project's directory and then run:
-`freebody run`
+
+```freebody run```
+
