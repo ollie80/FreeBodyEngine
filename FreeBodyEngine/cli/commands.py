@@ -39,10 +39,13 @@ def build_handler(args):
 
 def run_handler(args):
     if len(args) == 0:
-        try:
-            run_project()
-        except KeyboardInterrupt:
-            sys.exit(0)
+        if os.path.exists('./fbproject.toml'):
+            try:
+                run_project()
+            except KeyboardInterrupt:
+                sys.exit(0)
+        else:
+            print("No project specified.")
     else:
         id =  args[0]
         if project_registry.project_exisits(id):
