@@ -12,8 +12,9 @@ if TYPE_CHECKING:
 _main_object: 'Main' = None
 
 def init():
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
+    """Initialise FreeBodyEngine"""
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
 
 def _set_main(main: 'Main'):
     global _main_object
@@ -29,16 +30,19 @@ def delta() -> float:
     return get_main().time.delta_time
 
 def warning(msg):
+    """Raises a warning."""
     get_main().logger.warning(msg)
 
 def error(msg):
+    """Throws an error."""
     get_main().logger.error(msg)
 
-def handle_signal(signal, frame):
+def _handle_signal(signal, frame):
     get_main().quit()
     sys.exit(0)
 
 def log(*msg):
+    """Logs any number of messages to the console."""
     get_main().logger.log(*msg, color="reset")
 
 from FreeBodyEngine import core
@@ -49,11 +53,9 @@ from FreeBodyEngine.core.files import load_image, load_material, load_sprite, lo
 from FreeBodyEngine import graphics
 from FreeBodyEngine import utils
 
-from FreeBodyEngine.graphics.color import Color as color
 from FreeBodyEngine.core.window import create_cursor, set_cursor
-from FreeBodyEngine.math import Vector as vector
 
-__all__ = ["utils", "core", "math", "get_main", "_set_main", "load_material", "load_image", "load_shader", "load_sprite", "graphics", "create_cursor", "set_cursor", "warning", "delta", "init", "color", "vector", "log"]
+__all__ = ["utils", "core", "math", "graphics", "error", "warning", "log", "get_main", "load_material", "load_image", "load_shader", "load_sprite", "create_cursor", "set_cursor", "delta", "init"]
 
 
 

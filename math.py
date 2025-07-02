@@ -1,7 +1,6 @@
 import math
 import numpy
 import FreeBodyEngine as engine
-from perlin_noise import PerlinNoise
 from typing import Iterable, overload, Union, Sequence
 from abc import ABC, abstractmethod
 
@@ -15,20 +14,6 @@ class GenericVector:
 
 
 VECTOR_LIKE = Union[GenericVector, float, Sequence[float]]
-
-class LayeredNoise:
-    def __init__(self, layers: int, seed: int, start_octaves: int = 3):
-        self.noise_list: list[PerlinNoise] = []
-        for i in range(layers):
-            self.noise_list.append(PerlinNoise(start_octaves * (i + 1), seed))
-
-    def noise(self, pos):
-        noise_val = 0.0
-        multiplier = 1
-        for noise in self.noise_list:
-            noise_val += noise.noise(pos) * multiplier
-            multiplier *= 0.5
-        return noise_val
 
 
 def simplify_fraction(numerator, denominator):
@@ -113,6 +98,7 @@ class Transform:
     def neg(self):
         return Transform(-self.position, -self.rotation, -self.scale)
     
+    @property
     def model(self) -> numpy.ndarray:
         px = self.position.x
         py = self.position.y
@@ -238,20 +224,39 @@ class Transform:
         sx, sy = self.scale.x, self.scale.y
         px, py = self.position.x, self.position.y
 
-        return [
-            [cos_r * sx, -sin_r * sy, px],
+        return numpy.array(
+            [[cos_r * sx, -sin_r * sy, px],
             [sin_r * sx,  cos_r * sy, py],
-            [0,           0,          1]
-        ]
-
-
+            [0,           0,          1]])
+        
     def compose_with(self, parent_transform: 'Transform') -> 'Transform':
         # Apply parent transform to self (full matrix multiplication)
         parent_mat = parent_transform.to_matrix()
         local_mat = self.to_matrix()
-        result_mat = multiply_matrices(parent_mat, local_mat) # type: ignore
+        result_mat = parent_mat @ local_mat # type: ignore
         return Transform.from_matrix(result_mat)
 
+    @classmethod
+    def from_matrix(cls, mat: numpy.ndarray) -> 'Transform':
+        assert mat.shape == (3, 3), "Matrix must be 3x3 for 2D transforms"
+
+        # Extract translation (position)
+        px = mat[0, 2]
+        py = mat[1, 2]
+
+        # Extract scale from matrix columns
+        sx = math.hypot(mat[0, 0], mat[1, 0])
+        sy = math.hypot(mat[0, 1], mat[1, 1])
+
+        # Prevent division by zero
+        if sx == 0 or sy == 0:
+            raise ValueError("Cannot extract rotation from zero scale")
+
+        # Extract rotation (in radians)
+        rot_rad = math.atan2(mat[1, 0] / sx, mat[0, 0] / sx)
+        rotation = math.degrees(rot_rad)
+
+        return cls((px, py), rotation, (sx, sy))
 class Vector(GenericVector):
     @overload
     def __init__(self) -> None: ...

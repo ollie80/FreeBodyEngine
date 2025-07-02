@@ -3,6 +3,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from FreeBodyEngine.core.node import RootNode, Node
+from FreeBodyEngine.core.camera import Camera2D
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -16,13 +17,13 @@ class Scene:
         self.name = name
         self.root = RootNode(self)
         self.isinitialized: bool = False
+        self.camera = None
         
     def _initialize(self, main: "Main"):
         self.main = main
         self.main.scenes[self.name] = self
         self.isinitialized = True
 
-    @abstractmethod
     def on_initialize(self):
         pass
 
@@ -44,7 +45,6 @@ class Scene:
         """
         self.root.remove(ids)
 
-    @abstractmethod
     def on_update(self, dt):
         """
         Called when the scene is updated.
@@ -53,6 +53,14 @@ class Scene:
 
     def _update(self):
         self.root.update()
+
+    def on_draw(self):
+        pass
+
+    def _draw(self):
+        self.on_draw()
+        
+        self.main.graphics.draw(self.camera)
 
 # class SceneTransition:
 #     def __init__(self, main: "Main", vert, frag, duration, curve = engine.math.Linear()):

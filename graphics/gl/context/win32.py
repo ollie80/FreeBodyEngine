@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from FreeBodyEngine.core.window import Win32Window
 
-# Define missing constants manually (PyOpenGL doesn't expose these)
 PFD_DRAW_TO_WINDOW = 0x00000004
 PFD_SUPPORT_OPENGL = 0x00000020
 PFD_DOUBLEBUFFER = 0x00000001
@@ -16,7 +15,7 @@ PFD_TYPE_RGBA = 0
 PFD_MAIN_PLANE = 0
 
 
-def create_context(window: 'Win32Window'):
+def create_win32_opengl_context(window: 'Win32Window', debug):
     hdc = window.hdc
 
     pfd = WGL.PIXELFORMATDESCRIPTOR()
@@ -44,4 +43,6 @@ def create_context(window: 'Win32Window'):
         
     if not WGL.wglMakeCurrent(hdc, hrc):
         raise RuntimeError("Failed to activate OpenGL context.")
-    return hrc
+    
+
+    return hrc 

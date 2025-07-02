@@ -1,5 +1,5 @@
 from FreeBodyEngine.graphics.color import Color
-from core.node import Node2D
+from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.math import Vector
 import numpy as np
 import math
@@ -21,15 +21,14 @@ class Camera2D(Node2D):
     :type background_color: Color
     """
 
-    def __init__(self, position: 'Vector', zoom: float = 1, rotation: float = 0, background_color: Color = Color("#FFFFFF")):
-        super().__init__(position)
+    def __init__(self, position: 'Vector' = Vector(), zoom: float = 1, rotation: float = 0, background_color: Color = Color("#324848")):
+        super().__init__(position, rotation)
         
         self.zoom = zoom
-        self.rotation = rotation
         self.background_color = background_color
 
     def _update_rect(self):
-        center_x, center_y = self.position.x, self.position.y
+        center_x, center_y = self.transform.position.x, self.transform.position.y
         width, height = (
             self.scene.main.window.size[0] / self.zoom,
             self.scene.main.window.size[1] / self.zoom,
@@ -72,7 +71,7 @@ class Camera2D(Node2D):
 
     def _update_view_matrix(self):
         # Translation matrix
-        tx, ty = -self.position.x, self.position.y
+        tx, ty = -self.transform.position.x, self.transform.position.y
         translation_matrix = np.array(
             [
                 [1.0, 0.0, 0.0, 0.0],
@@ -84,7 +83,7 @@ class Camera2D(Node2D):
         )
 
         # Rotation matrix (around the Z-axis)
-        angle = math.radians(self.rotation)
+        angle = math.radians(self.transform.rotation)
         cos_theta = math.cos(angle)
         sin_theta = math.sin(angle)
 

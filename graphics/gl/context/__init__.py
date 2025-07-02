@@ -1,3 +1,3 @@
-from .win32 import create_context as create_context_win32
+from .win32 import create_win32_opengl_context
 
-__all__ = ["create_context_win32"]
+__all__ = ["create_win32_opengl_context"]

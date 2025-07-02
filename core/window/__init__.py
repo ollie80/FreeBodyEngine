@@ -1,5 +1,6 @@
 from FreeBodyEngine.core.window.generic import Window, Cursor
 from FreeBodyEngine.core.window.win32 import Win32Window, Win32Cursor
+from FreeBodyEngine.core.window.glfw import GLFWWindow
 from FreeBodyEngine import get_main, warning
 
 from typing import TYPE_CHECKING

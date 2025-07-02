@@ -12,8 +12,6 @@ class Injector:
         self.shader_type = shader_type 
         self.file_path = file_path
 
-    @abstractmethod
-    @classmethod
     def get_builtins() -> dict[str, list]:
         return {}
 

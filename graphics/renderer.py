@@ -2,12 +2,15 @@ from typing import TYPE_CHECKING
 from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.graphics.fbusl.injector import Injector 
 
+from FreeBodyEngine.graphics.image import Image
+from FreeBodyEngine.graphics.mesh import Mesh
+from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType, Framebuffer
+
+
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
     from FreeBodyEngine.graphics.material import Material
     from FreeBodyEngine.graphics.color import Color
-    from FreeBodyEngine.graphics.image import Image
-    from FreeBodyEngine.graphics.mesh import Mesh
     from FreeBodyEngine.core.camera import Camera2D
     from FreeBodyEngine.math import Vector, Transform
 
@@ -20,6 +23,8 @@ class Renderer:
     """
     def __init__(self, main: 'Main'):
         self.main = main
+        self.mesh_class = Mesh
+        self.image_class = Image        
 
     @abstractmethod
     def load_image(self, data):
@@ -34,7 +39,11 @@ class Renderer:
         pass
     
     @abstractmethod
-    def clear(self):
+    def create_framebuffer(self, width: int, height: int, attachments: dict[str, tuple[AttachmentFormat, AttachmentType]]) -> Framebuffer:
+        pass
+
+    @abstractmethod
+    def clear(self, color: 'Color'):
         pass 
 
     @abstractmethod
@@ -56,11 +65,7 @@ class Renderer:
         pass
 
     @abstractmethod
-    def draw_image(self, image: 'Image', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
-        pass
-
-    @abstractmethod
-    def draw_mesh(self, image: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
+    def draw_mesh(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
         pass
 
     @abstractmethod

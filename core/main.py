@@ -1,6 +1,6 @@
 from FreeBodyEngine.core.scene import Scene
 from FreeBodyEngine.graphics.manager import GraphicsManager
-from FreeBodyEngine.core.window import Win32Window
+from FreeBodyEngine.core.window import Win32Window, GLFWWindow
 from FreeBodyEngine.graphics.renderer import Renderer
 from FreeBodyEngine.graphics.gl import GLRenderer
 from FreeBodyEngine.core.window import Window
@@ -8,17 +8,19 @@ from FreeBodyEngine.core.files import FileManager
 from FreeBodyEngine.core.logger import Logger
 from FreeBodyEngine.core import Time
 from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine import log, warning
+from FreeBodyEngine import log, warning, error
 from FreeBodyEngine.utils import abstractmethod
 from typing import Union, Literal
 from sys import exit
 import os
-import json
+import tomllib
 
 
 def create_window(main: 'Main', window, size, title, display) -> Window:
     if window == "win32":
         return Win32Window(main, size, window, display)
+    if window == 'glfw':
+        return GLFWWindow(main, size, window, title, display)
     else:
         raise NotImplementedError(f"No window implemented with name {window}.")
 
@@ -26,6 +28,8 @@ def create_window(main: 'Main', window, size, title, display) -> Window:
 def create_renderer(main, graphics_api) -> Renderer:
     if graphics_api == "opengl":
         return GLRenderer(main)
+    else:
+        error(f"{graphics_api.capitalize()} renderer is not implemented.")
 
 class Main:
     """
@@ -49,44 +53,48 @@ class Main:
     :param pygame_flags: Flags that will be passed onto pygame during window creation.
     :type pygame_flags: int
     """
-    def __init__(self, name: str = "New Game", window_size: tuple = [800, 800], fps: int = 69, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl", headless: bool = False):
+    def __init__(self, path="./", window_size: tuple = [800, 800], fps: int = 69, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl", headless: bool = False):
         from FreeBodyEngine import _set_main
         _set_main(self)
         
         self.headless_mode = headless
-        self.name = name
         
         # scenes
         self.scenes: dict[str, Scene] = {}
         self.active_scene: Scene = None
-    
+
+
         # system managers
         self.audio = None
         self.logger = Logger()
         self.time = Time()
 
         if dev:
-            if os.path.exists('build.json'): 
-                build_settings = json.loads(open('build.json').read())
-                asset_path = build_settings.get('assets', './assets')
-            else:
-                print('No build file found at ./build.json.')
+
+            if os.path.exists(os.path.join(path, 'fbproject.toml')): 
+                build_settings = tomllib.loads(open(os.path.join(path, 'fbproject.toml')).read())
+                asset_path = os.path.join(path, build_settings.get('assets', './assets'))
+                self.name = build_settings.get('name')
+            
             self.files = FileManager(self, asset_path, dev)
         else:
+            pass
             self.files = FileManager(self, './dev/assets', dev)
 
         self.fps = fps
-
+        self.dev = dev
         # caption
         dev_mode = ""
         if dev:
-            dev_mode = "DEV_MODE"
+            dev_mode = " (DEV)"
 
         # create window and graphics
         if not self.headless_mode:
-            self.window = create_window(self, 'win32', window_size, self.name + dev_mode, display)
+            self.window = create_window(self, 'glfw', window_size, self.name + dev_mode, display)
+            while self.window.is_ready() == False:
+                log('not ready')
             self.renderer = create_renderer(self, graphics_api)
-            self.graphics = GraphicsManager(self, self.renderer)
+            self.graphics = GraphicsManager(self, self.renderer, self.window)
 
     def add(self, scene: Scene):
         """
@@ -132,6 +140,10 @@ class Main:
                 self.active_scene._update()
                 self.on_update()
             self.logger.update()
+
+            if not self.headless_mode:
+                self.active_scene._draw()
+                self.window.draw()
 
     def on_update(self):
         pass

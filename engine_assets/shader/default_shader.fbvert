@@ -1,5 +1,16 @@
+@input
+vertex: vec3
+@input
+uvs: vec2
+@input
+normals: vec2
 
+@output
+vert: vec4
+@output
+uv: vec2
 
 def main():
+    uv = uvs
+    vert = vec4(vertex, 1.0)
     
-

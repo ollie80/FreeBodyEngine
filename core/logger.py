@@ -1,5 +1,7 @@
 from datetime import datetime
 from functools import wraps
+from FreeBodyEngine import get_main
+import os
 
 colors = {
     "black": 30, "red": 31, "green": 32, "yellow": 33, "blue": 34, "magenta": 35, "cyan": 36, "white": 37, "reset": 0
@@ -30,7 +32,11 @@ class Logger:
             @wraps(func)
             def wrapper(self, msg, *args, **kwargs):
                 timestamp = get_timestamp()
-                self.history.append((timestamp, type_, msg))
+                path = get_main().files.get_save_location()
+                os.makedirs(path, exist_ok=True)
+                with open(os.path.join(path, "log.txt"), 'a') as f:
+                    f.write(f"[{timestamp}][{type_}] {msg}\n")
+
                 return func(self, msg, *args, **kwargs)
             return wrapper
         return decorator
@@ -51,7 +57,4 @@ class Logger:
         return '\n'.join(f"[{ts}] {type_}: {msg}" for ts, type_, msg in self.history)
 
     def update(self):
-        if len(self.history) > self.max_history_length:
-            # write log data to disk
-            
-            self.history.clear()
+        pass
