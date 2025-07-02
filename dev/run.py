@@ -1,30 +1,28 @@
 import subprocess
 import os
 import sys
-import json
+import tomllib
+
+from FreeBodyEngine.build.builder import build 
+
+def main(path='./'):
+    try: 
+        flags = sys.argv
+
+        build(path, True)
+
+        run_flags = ["--dev", f"--path={path}"]
+
+        txt = open(f'{path}/fbproject.toml')
+        build_config = tomllib.loads(txt.read())
+
+        main_script = os.path.join(path, build_config['main_file'])
 
 
-try:
-        
-    # Define paths
-    build_script = os.path.abspath("./FreeBodyEngine/build/builder.py")
+        subprocess.run(["python", main_script, *run_flags, *flags])
 
-    run_flags = ["--dev"]
+    except KeyboardInterrupt:
+        sys.exit(0)
 
-    #pass on flags
-    flags = sys.argv
-    del flags[0]
-
-    subprocess.run(["python", build_script, "--dev"], check=True)
-
-    txt = open('build.json')
-    build_config = json.loads(txt.read())
-
-    main_script = os.path.abspath(build_config['main_file'])
-
-
-    subprocess.run(["python", main_script, *run_flags, *flags])
-
-except KeyboardInterrupt:
-    sys.exit(0)
-    
+if __name__ == '__main__':
+    main()

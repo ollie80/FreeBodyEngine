@@ -89,13 +89,13 @@ class SemanticAnalyser:
         self.create_builtints(builtins)
 
     def create_builtints(self, builtins: dict):
-        vars = builtins.get('vars', [])
+        vars = builtins.get('vars', {})
 
         for var in vars:
             self.global_scope.define(Var(var, vars[var].get('type')))
         
         self.functions['round'] = (Function('round', 'float', {"x": "float"}))
-        self.functions['texture'] = (Function('texture', 'vec4', {"sampler": 'sampler2D'}))
+        self.functions['texture'] = (Function('texture', 'vec4', {"sampler": 'sampler2D', "sample_pos": 'vec2'}))
         
 
         # float vectors

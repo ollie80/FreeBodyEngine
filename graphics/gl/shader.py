@@ -4,6 +4,7 @@ from FreeBodyEngine.graphics.fbusl.semantic import SemanticAnalyser
 from FreeBodyEngine.graphics.shader import Shader
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
+from FreeBodyEngine.graphics.gl.image import GLImage
 from OpenGL.GL import *
 from dataclasses import dataclass
 import numpy
@@ -28,9 +29,6 @@ def create_shader_program(vertex_src, fragment_src):
     if glGetProgramiv(program, GL_LINK_STATUS) != GL_TRUE:
         error = glGetProgramInfoLog(program).decode()
         raise RuntimeError(f"Shader link error:\n{error}")
-
-    glDeleteShader(vertex_shader)
-    glDeleteShader(fragment_shader)
 
     return program
 
@@ -61,7 +59,9 @@ class GLShader(Shader):
 
         for i in range(count):
             name, size, type = glGetActiveUniform(self._shader, i)
+            name = name.tobytes().decode('utf-8')
             location = glGetUniformLocation(self._shader, name)
+
 
             self.uniforms[name] = GLUniform(location, size, type)
 
@@ -109,6 +109,9 @@ class GLShader(Shader):
         elif type == GL_FLOAT_MAT4:
             if isinstance(val, numpy.ndarray):
                 return
+            
+        elif type == GL_SAMPLER_2D:
+            pass
 
         fb_error(f'Cannot set uniform "{name}" of type "{type}" to value of type "{val.__class__.__name__}"')
 
@@ -154,6 +157,7 @@ class GLShader(Shader):
             
     def get_uniform(self, name: str):
         return self.uniforms[name]
+
 
 class GLGenerator(Generator):
     """
@@ -245,10 +249,10 @@ class GLGenerator(Generator):
         return f"{node.name}"
     
     def generate_field_identifier(self, node: MethodIdentifier):        
-        if not node.struct:
-            return f"{self.generate_node(node.struct_name)}.{node.method_name}"
+        if node.struct:
+            return f"{self.generate_node(node.struct)}.{node.method_name}"
         else:
-            return f"{self.generate_node(node.struct_name)}[{node.method_name}]"
+            return f"{self.generate_node(node.struct)}[{node.method_name}]"
 
     def generate_var(self, node: VarDecl):
         prec = f"{node.precision} "

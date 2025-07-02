@@ -6,16 +6,17 @@ if TYPE_CHECKING:
     from FreeBodyEngine.graphics.image import Image
     from FreeBodyEngine.graphics.material import Material
     from FreeBodyEngine.core.scene import Scene
+    from FreeBodyEngine.graphics.renderer import Renderer
 
 class Sprite:
-    def __init__(self, image: 'Image', material: 'Material', visisble: bool = True, z=0):
+    def __init__(self, image: 'Image', material: 'Material', renderer: 'Renderer', visisble: bool = True, z=0):
+        self.renderer = renderer
         self.z = z
 
         self.image = image
         self.material = material
-
+        self.quad = self.renderer.mesh_class.generate_quad()
         self.visisble = visisble
-    
 
 class Sprite2D(Node2D):
     def __init__(self, sprite: Sprite, position: Vector = Vector(), rotaition: float = 0.0, scale: Vector = Vector(1, 1)):

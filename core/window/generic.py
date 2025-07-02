@@ -27,6 +27,10 @@ class Window:
     def size(self, new: tuple[int, int]):
         pass
 
+    @abstractmethod
+    def is_ready(self) -> bool:
+        pass
+
     @property
     @abstractmethod
     def position(self) -> tuple[int, int]:

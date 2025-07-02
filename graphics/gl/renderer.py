@@ -3,6 +3,8 @@ from FreeBodyEngine.graphics.gl import context
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.graphics.gl.texture import GLTextureManager
 from FreeBodyEngine.graphics.gl import GLImage
+from FreeBodyEngine.graphics.gl import GLMesh
+from FreeBodyEngine.graphics.gl import GLFramebuffer
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.gl.shader import GLShader
 from FreeBodyEngine.graphics.gl.material import GLMaterial
@@ -20,7 +22,13 @@ import numpy as np
 
 from OpenGL import WGL
 from OpenGL.GL import *
+from OpenGL.GL.ARB.debug_output import * # for debug_callback
 
+
+@GLDEBUGPROC
+def debug_callback(source, type, id, severity, length, message, userParam):
+    msg = ctypes.string_at(message, length).decode('utf-8')
+    print(f"[OpenGL DEBUG] {msg}")
 
 class GLRenderer(Renderer):
     """
@@ -28,10 +36,17 @@ class GLRenderer(Renderer):
     """
     def __init__(self, main: 'Main'):
         super().__init__(main)
-        if self.main.window.window_type == "win32":
-            self.context = context.create_context_win32(self.main.window)  
-        
+
+        self.mesh_class = GLMesh
+        self.image_class = GLImage
         self.texture_manager = GLTextureManager()
+        if self.main.window.window_type == "win32":
+            self.context = context.create_win32_opengl_context(self.main.window, self.main.dev)
+        glEnable(GL_DEBUG_OUTPUT)
+        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS)  
+        glDebugMessageCallback(debug_callback, None)
+        width, height = self.main.window.size
+        glViewport(0, 0, width, height)
 
     def load_image(self, data):
         return GLImage(self, data)
@@ -44,6 +59,12 @@ class GLRenderer(Renderer):
             WGL.wglMakeCurrent(self.main.window.hdc, None)
         WGL.wglDeleteContext(self.context)
 
+    def create_framebuffer(self, width, height, attachments):
+        return GLFramebuffer(width, height, attachments)
+
+    def resize(self, size: tuple[int, int]):
+        glViewport(0, 0, size[0], size[1])
+
     def clear(self, color: 'Color'):
         glClearColor(*color.float_normalized_a)
 
@@ -54,6 +75,15 @@ class GLRenderer(Renderer):
 
     def load_material(self, data):
         return GLMaterial(data)
+
+    def draw_mesh(self, mesh, material: 'GLMaterial', transform, camera):
+        material.use(transform, camera)
+        
+        glUseProgram(material.shader._shader)
+        glBindVertexArray(mesh.vao)
+        glDrawElements(GL_TRIANGLE_FAN, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
+
+        glBindVertexArray(0)
 
     def draw_line(self, start, end, width, color: 'Color'):
         glLineWidth(width)
@@ -67,7 +97,6 @@ class GLRenderer(Renderer):
         glBindBuffer(GL_ARRAY_BUFFER, vbo)
         glBufferData(GL_ARRAY_BUFFER, line_vertices.nbytes, line_vertices, GL_STATIC_DRAW)
 
-        # Enable attribute 0 as position
         glEnableVertexAttribArray(0)
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, None)
 
@@ -83,6 +112,3 @@ class GLRenderer(Renderer):
 
     def draw_circle(self, radius, position, color):
         pass
-
-    def draw_image(self, image: 'GLImage', material: 'Material', pos: 'Vector', camera: 'Camera'):
-        image.texture.use()

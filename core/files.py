@@ -1,7 +1,10 @@
 import json
+import platform
 import tomllib
 from pathlib import Path
 from typing import TYPE_CHECKING
+from importlib.resources import files
+
 import PIL
 from FreeBodyEngine import get_main, warning, error
 from FreeBodyEngine.graphics.sprite import Sprite
@@ -75,8 +78,8 @@ class FileManager:
     def get_file_path(self, path: str):
         n_path = path
         if path.startswith('engine'):
-            n_path = n_path.removeprefix('engine')
-            n_path = self.engine_path + "/engine_assets" + n_path            
+            n_path = n_path.removeprefix('engine/')
+            n_path = files('FreeBodyEngine.engine_assets').joinpath(n_path)            
         else:
             n_path = (self.path) + '/' + path
         return os.path.abspath(n_path)
@@ -103,6 +106,19 @@ class FileManager:
 
     def load_toml(self, path: str):
         return tomllib.loads(self.load_data(path))
+
+    def get_save_location(self):
+        system = platform.system()
+        
+        if system == "Windows":
+            base = os.getenv("APPDATA")
+        elif system == "Darwin":
+            base = os.path.expanduser("~/Library/Application Support")
+        else:  # Linux and others
+            base = os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        
+        return os.path.join(base, self.main.name)
+
 
     def load_data(self, path: str):
         if not self.dev:
@@ -158,4 +174,4 @@ class FileManager:
         visible = data.get('visible', True)
         z = data.get('z', 0)
 
-        return Sprite(image, mat, visible, z)
+        return Sprite(image, mat, self.main.renderer, visible, z)

@@ -1,5 +1,6 @@
 import os
 import json
+import tomllib
 import subprocess
 import shutil
 from pathlib import Path
@@ -26,8 +27,8 @@ LINUX_DEPENDENCIES = ["xlib", "PyOpenGL", "vulkan"]
 WEB_DEPENDENCIES = ["pyodide"]
 
 class Builder:
-    def __init__(self):
-        self.build_settings: dict = load_json('./build.json')
+    def __init__(self, path, dev):
+        self.build_settings: dict = load_toml(f'{path}/fbproject.toml')
         
         args = sys.argv.copy()
         del args[0]
@@ -40,19 +41,19 @@ class Builder:
         
         self.asset_path = os.path.abspath(self.get_user_setting('assets'))
         self.code_path = os.path.abspath(self.get_user_setting('code'))
-        self.build_path = os.path.abspath('./build/')
-        self.temp_path = os.path.abspath('./build/temp/')
+        self.build_path = os.path.abspath(f'{path}/build/')
+        self.temp_path = os.path.abspath(f'{path}/build/temp/')
         
-        self.output_path = os.path.abspath('./dist/')
+        self.output_path = os.path.abspath(f'{path}/dist/')
         self.main_file = self.get_user_setting('main_file')
 
-        if self.platform == "web" and not '--dev' in args:
+        if self.platform == "web" and not dev:
             self.build_for_web()
         elif self.platform == "web":
             print("Cannot build for web in dev mode, building for your system platform instead.")
 
-        if "--dev" in args:
-            self.output_path = os.path.abspath('./dev/assets/')
+        if dev:
+            self.output_path = os.path.abspath(f'{path}/dev/assets/')
 
             self.build_for_dev()
         else:
@@ -199,7 +200,10 @@ def load_json(path: str):
     txt = load_text(path)
     return json.loads(txt)
 
+def load_toml(path: str):
+    txt = load_text(path)
+    return tomllib.loads(txt)
 
-if __name__ == "__main__":
-    builder = Builder()
+def build(path='./', dev=False):
+    Builder(path, dev)
     

@@ -6,11 +6,11 @@ from OpenGL.GL import *
 class GLMaterial(Material):
     def __init__(self, data):
         super().__init__(data)
-        
+        self.shader: GLShader
         
     def change_shader(self, shader: GLShader):
         """
-        
+
         """
         pass
         

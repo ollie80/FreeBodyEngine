@@ -40,6 +40,12 @@ class Win32Window(Window):
         # Register window class
         hInstance = win32api.GetModuleHandle()
         className = "Win32WindowClass"
+        self._is_ready = False
+
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # SYSTEM_DPI_AWARE
+        except:
+            ctypes.windll.user32.SetProcessDPIAware()  # fallback
 
         self._window_class = win32gui.WNDCLASS()
         self._window_class.lpfnWndProc = self.wnd_proc
@@ -53,7 +59,7 @@ class Win32Window(Window):
             self._atom,
             main.name, # title
             win32con.WS_OVERLAPPEDWINDOW, # style
-            100, 100, size[0], size[1], # x, y, width, height
+            0, 0, size[0], size[1], # x, y, width, height
             0, 0, hInstance, None
         )
 
@@ -67,6 +73,8 @@ class Win32Window(Window):
             win32gui.PostQuitMessage(0)
             self.close()
             return 0
+        if msg == win32con.WM_PAINT:
+            self._is_ready = True
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
 
     def _set_cursor(self, cursor: Win32Cursor):
@@ -74,6 +82,9 @@ class Win32Window(Window):
 
     def _create_cursor(self, image: 'Image'):
         return Win32Cursor(image)
+
+    def is_ready(self):
+        return self._is_ready
 
     @property
     def size(self):
