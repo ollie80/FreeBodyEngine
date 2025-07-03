@@ -32,10 +32,10 @@ class Material:
         return self._render_mode
 
     def set_uniform(self, name: str, val: any):
-        self.shader[name] = val
-    
+        self.shader.set_uniform(name, val)
+
     def get_uniform(self, name: str):
-        return self.shader[name]
+        return self.shader.get_uniform(name)
     
     def _set_default_uniforms(self, transform: Transform, camera: 'Camera2D'):
         #frag
@@ -177,7 +177,7 @@ class MaterialInjector(Injector):
                 if isinstance(node, Set) and node.ident.name in remaining_defaults:
                     remaining_defaults.remove(node.ident.name)
 
-        for name in remaining_defaults:
+        for name in defaults:
             self.tree.children.insert(1, OutputDecl(0, f'{name}', f'{defaults[name]}', None))
             main.body.append(Set(main.pos, Identifier(main.pos, name), Call(main.pos, "texture", [Arg(main.pos, Identifier(main.pos, f"{name.upper()}")), Arg(main.pos, Identifier(main.pos, "uv"))])))
             

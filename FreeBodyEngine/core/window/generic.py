@@ -27,6 +27,9 @@ class Window:
     def size(self, new: tuple[int, int]):
         pass
 
+    def _resize(self):
+        self.main.renderer.resize()        
+
     @abstractmethod
     def is_ready(self) -> bool:
         pass

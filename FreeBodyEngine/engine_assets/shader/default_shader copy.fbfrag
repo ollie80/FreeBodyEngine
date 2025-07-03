@@ -1,0 +1,10 @@
+@input
+uv: vec2
+@output
+fragColor: vec4
+
+
+def main():
+
+    fragColor = vec4(uv, 1.0, 1.0)
+

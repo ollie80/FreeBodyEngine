@@ -51,6 +51,10 @@ class Renderer:
         pass
 
     @abstractmethod
+    def resize(self):
+        pass
+
+    @abstractmethod
     def draw_line(self, start: tuple[float, float], end: tuple[float, float], width: int, color: 'Color'):
         """
         Draws a line between the first and second point.

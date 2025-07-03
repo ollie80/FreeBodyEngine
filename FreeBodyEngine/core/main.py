@@ -121,6 +121,7 @@ class Main:
         self.active_scene = self.scenes[name]
         
 
+
     def quit(self):
         log("Quiting game.")
         self.on_quit()

@@ -7,9 +7,10 @@ class Shader:
     """
     def __init__(self, vertex_source, fragment_source, generator, injector):
         
-        self.vertex_source = compile(vertex_source, generator, injector, 'vert')
+        # self.vertex_source = compile(vertex_source, generator, injector, 'vert')
         self.fragment_source = compile(fragment_source, generator, injector, 'frag')
-
+        self.vertex_source = vertex_source
+        # self.fragment_source = fragment_source
 
     @abstractmethod
     def set_uniform(self, name: str, value: any):

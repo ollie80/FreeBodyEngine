@@ -9,11 +9,13 @@ def compile(source, generator: type[fbusl.generator.Generator], injector: type[f
     parser = fbusl.parser.FBUSLParser(tokens, file_path)
     ast = parser.parse()
 
-    # inj = injector(ast, shader_type, file_path)
-    # ast = inj.inject()
     analyser = fbusl.semantic.SemanticAnalyser(ast, injector.get_builtins(shader_type), file_path)
     #ast = analyser.analyse()
-    
+
+    inj = injector(ast, shader_type, file_path)
+    ast = inj.inject()    
     gen = generator(ast, analyser)
     g = gen.generate()
+    with open(f"test.{shader_type}", 'w') as f:
+        f.write(g)
     return g
