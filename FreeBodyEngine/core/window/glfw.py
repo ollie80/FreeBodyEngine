@@ -32,10 +32,15 @@ class GLFWWindow(Window):
             raise RuntimeError("Failed to create GLFW window")
 
         glfw.make_context_current(self._window)
+        glfw.set_window_size_callback(self._window, self.resize)
+
 
     @property
     def size(self) -> tuple[int, int]:
         return glfw.get_window_size(self._window)
+
+    def resize(self, window, width, height):
+        self._resize()
 
     @size.setter
     def size(self, new: tuple[int, int]):
@@ -71,3 +76,4 @@ class GLFWWindow(Window):
         if glfw.window_should_close(self._window):
             
             self.main.quit()
+        

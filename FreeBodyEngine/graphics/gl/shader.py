@@ -10,6 +10,21 @@ from dataclasses import dataclass
 import numpy
 from typing import Union
 
+GL_TYPE_NAMES = {
+    GL_INT: "int",
+    GL_INT_VEC2: "ivec2",
+    GL_INT_VEC3: "ivec3",
+    GL_INT_VEC4: "ivec4",
+    GL_FLOAT: "float",
+    GL_FLOAT_VEC2: "vec2",
+    GL_FLOAT_VEC3: "vec3",
+    GL_FLOAT_VEC4: "vec4",
+    GL_FLOAT_MAT2: "mat2",
+    GL_FLOAT_MAT3: "mat3",
+    GL_FLOAT_MAT4: "mat4",
+    GL_BOOL: "bool",
+    GL_SAMPLER_2D: "sampler2D",
+}
 
 @dataclass
 class GLUniform:
@@ -53,108 +68,133 @@ class GLShader(Shader):
         
         self.uniforms: dict[str, GLUniform] = {}
         self.setup_uniforms()
+        print(self.uniforms)
 
     def setup_uniforms(self):
         count = glGetProgramiv(self._shader, GL_ACTIVE_UNIFORMS)
 
         for i in range(count):
             name, size, type = glGetActiveUniform(self._shader, i)
-            name = name.tobytes().decode('utf-8')
+            name = name.tobytes().decode('utf-8').rstrip('\x00')
             location = glGetUniformLocation(self._shader, name)
 
 
             self.uniforms[name] = GLUniform(location, size, type)
 
-    def check_val_type(self, val: str, type: str, name: str):
-        if type == GL_INT:
+    def check_val_type(self, val: any, gl_type: int, name: str) -> bool:
+        import numpy as np
+        from FreeBodyEngine.math import Vector, Vector3
+
+        def is_vec_of_length(obj, length, types=(int, float)):
+            return isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj)
+
+        if gl_type == GL_INT:
             if isinstance(val, int):
-                return
+                return True
 
-        elif type == GL_INT_VEC2:
-            if isinstance(val, (tuple, list, Vector)):
-                return
+        elif gl_type == GL_INT_VEC2:
+            if is_vec_of_length(val, 2, types=(int,)):
+                return True
 
-        elif type == GL_INT_VEC3:
-            if isinstance(val, (tuple, list, Vector3)):
-                return
+        elif gl_type == GL_INT_VEC3:
+            if is_vec_of_length(val, 3, types=(int,)):
+                return True
 
-        elif type == GL_INT_VEC4:
-            if isinstance(val, (tuple, list)):
-                return
+        elif gl_type == GL_INT_VEC4:
+            if is_vec_of_length(val, 4, types=(int,)):
+                return True
 
-        elif type == GL_FLOAT:
+        elif gl_type == GL_FLOAT:
             if isinstance(val, (float, int)):
-                return
-            
-        elif type == GL_FLOAT_VEC2:
-            if isinstance(val, (tuple, list, Vector)):
-                return
+                return True
 
-        elif type == GL_FLOAT_VEC3:
-            if isinstance(val, (tuple, list, Vector3)):
-                return
+        elif gl_type == GL_FLOAT_VEC2:
+            if is_vec_of_length(val, 2):
+                return True
 
-        elif type == GL_FLOAT_VEC4:
-            if isinstance(val, (tuple, list)):
-                return
+        elif gl_type == GL_FLOAT_VEC3:
+            if is_vec_of_length(val, 3):
+                return True
 
-        elif type == GL_FLOAT_MAT2:
-            if isinstance(val, numpy.ndarray):
-                return
+        elif gl_type == GL_FLOAT_VEC4:
+            if is_vec_of_length(val, 4):
+                return True
 
-        elif type == GL_FLOAT_MAT3:
-            if isinstance(val, numpy.ndarray):
-                return
+        elif gl_type == GL_FLOAT_MAT2:
+            if isinstance(val, np.ndarray) and val.shape == (2, 2):
+                return True
 
-        elif type == GL_FLOAT_MAT4:
-            if isinstance(val, numpy.ndarray):
-                return
-            
-        elif type == GL_SAMPLER_2D:
-            pass
+        elif gl_type == GL_FLOAT_MAT3:
+            if isinstance(val, np.ndarray) and val.shape == (3, 3):
+                return True
 
-        fb_error(f'Cannot set uniform "{name}" of type "{type}" to value of type "{val.__class__.__name__}"')
+        elif gl_type == GL_FLOAT_MAT4:
+            if isinstance(val, np.ndarray) and val.shape == (4, 4):
+                return True
+
+        elif gl_type == GL_SAMPLER_2D:
+            if isinstance(val, int):
+                return True
+
+        fb_error(f'Cannot set uniform "{name}" of type "{GL_TYPE_NAMES.get(gl_type, "Unknown")}" to value of type "{type(val).__name__}"')
+        return False
+
 
     def set_uniform(self, name: str, val: any):
-        if name in self.uniforms.keys():
-            uniform = self.get_uniform(name)
-            type = uniform.type
-            if type == GL_INT and self.check_val_type(val, type, name):
-                glUniform1i(uniform.location, val)
-                
-            elif type == GL_FLOAT and self.check_val_type(val, type, name):
-                glUniform1f(uniform.location, val)
-            
-            elif type == GL_BOOL and self.check_val_type(val, type, name):
-                glUniform1f(uniform.location, val)
-            
-            elif type == GL_FLOAT_VEC2 and self.check_val_type(val, type, name):
-                glUniform2f(uniform.location, val[0], val[1])
-            
-            elif type == GL_FLOAT_VEC3 and self.check_val_type(val, type, name):
-                glUniform3f(uniform.location, val[0], val[1], val[2])
-            
-            elif type == GL_FLOAT_VEC4 and self.check_val_type(val, type, name):
-                glUniform4f(uniform.location, val[0], val[1], val[2], val[3])
-            
-            elif type == GL_INT_VEC2 and self.check_val_type(val, type, name):
-                glUniform2f(uniform.location, val[0], val[1])
-            
-            elif type == GL_INT_VEC3 and self.check_val_type(val, type, name):
-                glUniform3f(uniform.location, val[0], val[1], val[2])
-            
-            elif type == GL_INT_VEC4 and self.check_val_type(val, type, name):
-                glUniform4f(uniform.location, val[0], val[1], val[2], val[3])
+        if name not in self.uniforms:
+            fb_error(f"Uniform '{name}' not found in shader")
+            return
 
-            elif type == GL_FLOAT_MAT2 and self.check_val_type(val, type, name):
-                glUniformMatrix2fv(uniform.location, val) # Matricies use numpy arrays
-            
-            elif type == GL_FLOAT_MAT3 and self.check_val_type(val, type, name):
-                glUniformMatrix3fv(uniform.location, val)
-            
-            elif type == GL_FLOAT_MAT4 and self.check_val_type(val, type, name):
-                glUniformMatrix4fv(uniform.location, val)
-            
+        uniform = self.get_uniform(name)
+        gl_type = uniform.type
+        loc = uniform.location
+
+        # Activate shader before setting uniform
+        glUseProgram(self._shader)
+
+        if not self.check_val_type(val, gl_type, name):
+            return
+
+        if gl_type == GL_INT:
+            glUniform1i(loc, val)
+
+        elif gl_type == GL_BOOL:
+            glUniform1i(loc, int(val))
+
+        elif gl_type == GL_FLOAT:
+            glUniform1f(loc, float(val))
+
+        elif gl_type == GL_INT_VEC2:
+            glUniform2iv(loc, 1, val)
+
+        elif gl_type == GL_INT_VEC3:
+            glUniform3iv(loc, 1, val)
+
+        elif gl_type == GL_INT_VEC4:
+            glUniform4iv(loc, 1, val)
+
+        elif gl_type == GL_FLOAT_VEC2:
+            glUniform2f(loc, val[0], val[1])
+
+        elif gl_type == GL_FLOAT_VEC3:
+            glUniform3f(loc, val[0], val[1], val[2])
+
+        elif gl_type == GL_FLOAT_VEC4:
+            glUniform4f(loc, val[0], val[1], val[2], val[3])
+
+        elif gl_type == GL_FLOAT_MAT2:
+            glUniformMatrix2fv(loc, 1, GL_FALSE, val)
+
+        elif gl_type == GL_FLOAT_MAT3:
+            glUniformMatrix3fv(loc, 1, GL_FALSE, val)
+
+        elif gl_type == GL_FLOAT_MAT4:
+            glUniformMatrix4fv(loc, 1, GL_FALSE, val)
+
+        elif gl_type == GL_SAMPLER_2D:
+            # val is texture unit (int)
+            glUniform1i(loc, val)
+
     def get_uniform(self, name: str):
         return self.uniforms[name]
 

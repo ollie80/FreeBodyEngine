@@ -97,7 +97,7 @@ def get_log_file():
     name = project_registry.get_project_name(get_current_project())
     if name == None:
         print("No project found.")
-        return ""
+        return ''
     system = platform.system()
         
     if system == "Windows":
@@ -114,6 +114,7 @@ def log_read_handler(args):
     log_type = args[1].upper() if len(args) > 1 else None
 
     log = get_log_file()
+        
     if not os.path.exists(log):
         print("No log file found.")
         return

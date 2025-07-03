@@ -48,6 +48,10 @@ class GLRenderer(Renderer):
         width, height = self.main.window.size
         glViewport(0, 0, width, height)
 
+    def resize(self):
+        width, height = self.main.window.size
+        glViewport(0, 0, width, height)
+
     def load_image(self, data):
         return GLImage(self, data)
 
@@ -62,9 +66,6 @@ class GLRenderer(Renderer):
     def create_framebuffer(self, width, height, attachments):
         return GLFramebuffer(width, height, attachments)
 
-    def resize(self, size: tuple[int, int]):
-        glViewport(0, 0, size[0], size[1])
-
     def clear(self, color: 'Color'):
         glClearColor(*color.float_normalized_a)
 
@@ -78,10 +79,11 @@ class GLRenderer(Renderer):
 
     def draw_mesh(self, mesh, material: 'GLMaterial', transform, camera):
         material.use(transform, camera)
-        
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
         glUseProgram(material.shader._shader)
         glBindVertexArray(mesh.vao)
-        glDrawElements(GL_TRIANGLE_FAN, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
+        glDrawElements(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
 
         glBindVertexArray(0)
 

@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, overload, Union
-from FreeBodyEngine import warning
+from FreeBodyEngine import log, warning
 from FreeBodyEngine.graphics.image import Image 
 from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
 from FreeBodyEngine.graphics.image import Image 
@@ -61,15 +61,15 @@ class GraphicsManager:
         :pararm camera: The camera that the scene will be drawn from.
         :type camera: Camera
         """
-        self.main_framebuffer.bind()
+        # self.main_framebuffer.bind()
         self.renderer.clear(camera.background_color)
-
+        
         sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
         for sprite in sprites:
             self._draw_sprite(sprite._sprite, sprite.world_transform, camera)
 
-        self.main_framebuffer.unbind()
-        self.main_framebuffer.draw('albedo')
+        # self.main_framebuffer.unbind()
+        # self.main_framebuffer.draw('albedo')
 
 
     def draw(self, camera):

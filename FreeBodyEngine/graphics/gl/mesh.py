@@ -27,11 +27,11 @@ class GLMesh(Mesh):
         glEnableVertexAttribArray(1)
         glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, None)
 
-        # normals
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo_normals)
-        glBufferData(GL_ARRAY_BUFFER, self.normals.nbytes, self.normals, GL_STATIC_DRAW)
-        glEnableVertexAttribArray(2)
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, None)
+        # # normals
+        # glBindBuffer(GL_ARRAY_BUFFER, self.vbo_normals)
+        # glBufferData(GL_ARRAY_BUFFER, self.normals.nbytes, self.normals, GL_STATIC_DRAW)
+        # glEnableVertexAttribArray(2)
+        # glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 0, None)
  
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ebo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, self.indices.nbytes, self.indices, GL_STATIC_DRAW)

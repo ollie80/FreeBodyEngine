@@ -1,0 +1,11 @@
+@input
+vertex: vec3
+@input
+uvs: vec2
+@output
+uv: vec2
+
+def main():
+    uv = vec2(1.0, 1.0)
+    gl_Position = vec4(vertex.x, uvs.y, 0.0, 1.0)
+    

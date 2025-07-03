@@ -21,7 +21,7 @@ class Camera2D(Node2D):
     :type background_color: Color
     """
 
-    def __init__(self, position: 'Vector' = Vector(), zoom: float = 1, rotation: float = 0, background_color: Color = Color("#324848")):
+    def __init__(self, position: 'Vector' = Vector(), zoom: float = 250, rotation: float = 0, background_color: Color = Color("#324848")):
         super().__init__(position, rotation)
         
         self.zoom = zoom
