@@ -5,6 +5,7 @@ from FreeBodyEngine.graphics.fbusl import throw_error
 from FreeBodyEngine.graphics.fbusl.semantic import FuncCall
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
 from FreeBodyEngine import get_main
+from FreeBodyEngine.graphics.image import Image
 
 from FreeBodyEngine.math import Transform, Vector3, Vector
 import sys
@@ -14,12 +15,12 @@ if TYPE_CHECKING:
 
 class Material:
     def __init__(self, data: dict):
-        self.albedo = Color(data.get('albedo', '#FFFFFFFF'))
-        self.normal = Color(data.get('normal', '#8080FFFF'))
-        self.emmision = Color(data.get('emmision', '#00000000'))
-        self.roughness = data.get('roughness', 1.0)
-        self.metallic = data.get('metallic', 0.0)
-        self.opactiy = data.get('opacity', 1.0)
+        self.albedo: Color | Image = Color(data.get('albedo', '#FFFFFFFF'))
+        self.normal: Color | Image  = Color(data.get('normal', '#8080FFFF'))
+        self.emmision: Color | Image  = Color(data.get('emmision', '#00000000'))
+        self.roughness: float | Image  = data.get('roughness', 1.0)
+        self.metallic: float | Image = data.get('metallic', 0.0)
+        self.opactiy: float | Image = data.get('opacity', 1.0)
 
         self._render_mode = data.get('render_mode', 'lit') # cannot be change
         shader = data.get('shader', {})
@@ -47,31 +48,31 @@ class Material:
             self.set_uniform("Albedo_useTexture", True)
         
         if isinstance(self.normal, Color):
-            self.set_uniform("Normal_Color", self.albedo.float_normalized_a)
+            self.set_uniform("Normal_Color", self.normal.float_normalized_a)
             self.set_uniform("Normal_useTexture", False)
         else:
-            self.set_uniform("Normal_Texture", self.albedo)
+            self.set_uniform("Normal_Texture", self.normal)
             self.set_uniform("Normal_useTexture", True)
         
         if isinstance(self.emmision, Color):
-            self.set_uniform("Emmision_Color", self.albedo.float_normalized_a)
+            self.set_uniform("Emmision_Color", self.emmision.float_normalized_a)
             self.set_uniform("Emmision_useTexture", False)
         else:
-            self.set_uniform("Emmision_Texture", self.albedo)
+            self.set_uniform("Emmision_Texture", self.emmision)
             self.set_uniform("Emmision_useTexture", True)
         
         if isinstance(self.roughness, float):
-            self.set_uniform("Roughness_Color", self.albedo)
+            self.set_uniform("Roughness_Color", self.roughness)
             self.set_uniform("Roughness_useTexture", False)
         else:
-            self.set_uniform("Roughness_Texture", self.albedo)
+            self.set_uniform("Roughness_Texture", self.roughness)
             self.set_uniform("Roughness_useTexture", True)
         
         if isinstance(self.metallic, float):
-            self.set_uniform("Metallic_Color", self.albedo)
+            self.set_uniform("Metallic_Color", self.metallic)
             self.set_uniform("Metallic_useTexture", False)
         else:
-            self.set_uniform("Metallic_Texture", self.albedo)
+            self.set_uniform("Metallic_Texture", self.metallic)
             self.set_uniform("Metallic_useTexture", True)
         
         #vert

@@ -15,6 +15,7 @@ class Sprite:
 
         self.image = image
         self.material = material
+        self.material.albedo = self.image
         self.quad = self.renderer.mesh_class.generate_quad()
         self.visisble = visisble
 

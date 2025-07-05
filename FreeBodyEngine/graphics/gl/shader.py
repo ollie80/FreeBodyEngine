@@ -4,8 +4,11 @@ from FreeBodyEngine.graphics.fbusl.semantic import SemanticAnalyser
 from FreeBodyEngine.graphics.shader import Shader
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
-from FreeBodyEngine.graphics.gl.image import GLImage
+from FreeBodyEngine.graphics.gl.image import Image
 from OpenGL.GL import *
+import numpy as np
+from FreeBodyEngine.graphics.color import Color
+
 from dataclasses import dataclass
 import numpy
 from typing import Union
@@ -68,7 +71,12 @@ class GLShader(Shader):
         
         self.uniforms: dict[str, GLUniform] = {}
         self.setup_uniforms()
-        print(self.uniforms)
+
+        self.uniform_cache: dict[str, any] = {}
+        
+        for name in self.uniforms:
+            self.uniform_cache[name] = None
+                
 
     def setup_uniforms(self):
         count = glGetProgramiv(self._shader, GL_ACTIVE_UNIFORMS)
@@ -82,11 +90,19 @@ class GLShader(Shader):
             self.uniforms[name] = GLUniform(location, size, type)
 
     def check_val_type(self, val: any, gl_type: int, name: str) -> bool:
-        import numpy as np
-        from FreeBodyEngine.math import Vector, Vector3
 
         def is_vec_of_length(obj, length, types=(int, float)):
-            return isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj)
+            if isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj):
+                return True
+            
+            elif isinstance(Color) and length >= 3:
+                return True
+
+            elif isinstance(Vector) and length == 2:
+                return True
+
+            elif isinstance(Vector3) and length == 3:
+                return True
 
         if gl_type == GL_INT:
             if isinstance(val, int):
@@ -101,12 +117,14 @@ class GLShader(Shader):
                 return True
 
         elif gl_type == GL_INT_VEC4:
-            if is_vec_of_length(val, 4, types=(int,)):
-                return True
+            return is_vec_of_length(val, 4, types=(int,))                
+            
+        elif gl_type == GL_BOOL:
+            return isinstance(val, bool)
+                
 
         elif gl_type == GL_FLOAT:
-            if isinstance(val, (float, int)):
-                return True
+            return isinstance(val, (float, int))
 
         elif gl_type == GL_FLOAT_VEC2:
             if is_vec_of_length(val, 2):
@@ -133,7 +151,7 @@ class GLShader(Shader):
                 return True
 
         elif gl_type == GL_SAMPLER_2D:
-            if isinstance(val, int):
+            if isinstance(val, (int, Image)):
                 return True
 
         fb_error(f'Cannot set uniform "{name}" of type "{GL_TYPE_NAMES.get(gl_type, "Unknown")}" to value of type "{type(val).__name__}"')
@@ -144,12 +162,22 @@ class GLShader(Shader):
         if name not in self.uniforms:
             fb_error(f"Uniform '{name}' not found in shader")
             return
+        
+        cached_val = self.uniform_cache[name] 
+        if (not isinstance(val, np.ndarray)) and (not isinstance(cached_val, np.ndarray)):
+            if cached_val == val:
+                return
+        else:
+            if np.array_equal(val, cached_val):
+                return
+
+
+        self.uniform_cache[name] = val
 
         uniform = self.get_uniform(name)
         gl_type = uniform.type
         loc = uniform.location
 
-        # Activate shader before setting uniform
         glUseProgram(self._shader)
 
         if not self.check_val_type(val, gl_type, name):
@@ -177,10 +205,33 @@ class GLShader(Shader):
             glUniform2f(loc, val[0], val[1])
 
         elif gl_type == GL_FLOAT_VEC3:
-            glUniform3f(loc, val[0], val[1], val[2])
+            if isinstance(val, Color):
+                fn = val.float_normalized
+                v0 = fn[0]
+                v1 = fn[1]
+                v2 = fn[2]
+            else:
+                v0 = val[0]
+                v1 = val[1]
+                v2 = val[2]
+            
+            glUniform3f(loc, v0, v1, v2)
 
         elif gl_type == GL_FLOAT_VEC4:
-            glUniform4f(loc, val[0], val[1], val[2], val[3])
+            
+            if isinstance(val, Color):
+                fn = val.float_normalized_a
+                v0 = fn[0]
+                v1 = fn[1]
+                v2 = fn[2]
+                v3 = fn[3]    
+            else:
+                v0 = val[0]
+                v1 = val[1]
+                v2 = val[2]
+                v3 = val[3]
+            
+            glUniform4f(loc, v0, v1, v2, v3)
 
         elif gl_type == GL_FLOAT_MAT2:
             glUniformMatrix2fv(loc, 1, GL_FALSE, val)
@@ -192,12 +243,21 @@ class GLShader(Shader):
             glUniformMatrix4fv(loc, 1, GL_FALSE, val)
 
         elif gl_type == GL_SAMPLER_2D:
-            # val is texture unit (int)
-            glUniform1i(loc, val)
+            if not isinstance(val, Image):
+                glUniform1i(loc, val)
 
     def get_uniform(self, name: str):
         return self.uniforms[name]
 
+    def use(self):
+        for name in self.uniforms: # reload texture slots
+            if self.uniforms[name].type == GL_SAMPLER_2D:
+                img = self.uniform_cache[name]
+                if img != None and isinstance(img, Image):
+                    glUniform1i(self.uniforms[name].location, img.texture.use())
+
+        glUseProgram(self._shader)
+        
 
 class GLGenerator(Generator):
     """

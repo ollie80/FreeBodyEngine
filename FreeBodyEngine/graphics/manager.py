@@ -41,10 +41,14 @@ class GraphicsManager:
             'normal': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
             'emmision': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
             'roughness': (AttachmentType.COLOR, AttachmentFormat.R8),
-            'metallic': (AttachmentType.COLOR, AttachmentFormat.R8)
+            'metallic': (AttachmentType.COLOR, AttachmentFormat.R8),
+            'depth': (AttachmentType.DEPTH, AttachmentFormat.DEPTH24)
             }
         )
-        
+    
+    def resize(self):
+        self.main_framebuffer.resize(self.window.size)
+
     def _draw_sprite(self, sprite: Sprite, transform: Transform, camera: 'Camera2D'):
         self.renderer.draw_mesh(sprite.quad, sprite.material, transform, camera)
 
@@ -61,15 +65,15 @@ class GraphicsManager:
         :pararm camera: The camera that the scene will be drawn from.
         :type camera: Camera
         """
-        # self.main_framebuffer.bind()
+        self.main_framebuffer.bind()
         self.renderer.clear(camera.background_color)
         
         sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
         for sprite in sprites:
             self._draw_sprite(sprite._sprite, sprite.world_transform, camera)
 
-        # self.main_framebuffer.unbind()
-        # self.main_framebuffer.draw('albedo')
+        self.main_framebuffer.unbind()
+        self.main_framebuffer.draw('albedo')
 
 
     def draw(self, camera):

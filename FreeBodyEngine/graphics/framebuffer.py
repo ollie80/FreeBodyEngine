@@ -29,7 +29,7 @@ class Framebuffer:
         self.attachments = attachments
 
     @abstractmethod
-    def resize(self):
+    def resize(self, size: tuple[int, int]):
         """Changes the size of the framebuffer."""
         pass
 

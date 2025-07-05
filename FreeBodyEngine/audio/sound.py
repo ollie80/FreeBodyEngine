@@ -1,5 +1,5 @@
 
-class SoundEmmiter(Entity):
+class SoundEmmiter2D(Node2D):
     def __init__(self, position, sound, scene, radius, max_volume=1, loop=False, tag=""):
         super().__init__(position, scene)
         self.sound = sound

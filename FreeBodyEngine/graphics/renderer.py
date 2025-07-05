@@ -5,6 +5,7 @@ from FreeBodyEngine.graphics.fbusl.injector import Injector
 from FreeBodyEngine.graphics.image import Image
 from FreeBodyEngine.graphics.mesh import Mesh
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType, Framebuffer
+from FreeBodyEngine.graphics.texture import TextureManager
 
 
 if TYPE_CHECKING:
@@ -24,7 +25,8 @@ class Renderer:
     def __init__(self, main: 'Main'):
         self.main = main
         self.mesh_class = Mesh
-        self.image_class = Image        
+        self.image_class = Image
+        self.texture_manager = TextureManager()
 
     @abstractmethod
     def load_image(self, data):

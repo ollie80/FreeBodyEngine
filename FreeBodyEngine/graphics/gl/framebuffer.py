@@ -37,6 +37,7 @@ class GLFramebuffer(Framebuffer):
         super().__init__(width, height, attachments)
         self.fbo = glGenFramebuffers(1)
         self.textures = {}
+        self._attachments = attachments.copy()
 
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
 
@@ -124,6 +125,65 @@ class GLFramebuffer(Framebuffer):
             return self.textures[attachment_name]
         else:
             error(f'No attachment "{attachment_name}" on framebuffer: {self}')
+
+    def resize(self, size: tuple[int, int]):
+        self.width, self.height = size
+
+        glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
+
+        draw_buffers = []
+        color_attachment_index = 0
+
+        for name in self._attachments:
+            att_type, att_format = self._attachments[name]
+            
+            if att_type == AttachmentType.COLOR:
+
+                glDeleteTextures(1, [self.textures[name]])
+
+                tex = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, tex)
+                internal_format = GL_ATTACHMENT_FORMAT[att_format]
+                fmt, typ = GL_ATTACHMENT_TYPE[att_format]
+                glTexImage2D(GL_TEXTURE_2D, 0, internal_format, self.width, self.height, 0, fmt, typ, None)
+
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+
+                attachment_enum = GL_COLOR_ATTACHMENT0 + color_attachment_index
+                glFramebufferTexture2D(GL_FRAMEBUFFER, attachment_enum, GL_TEXTURE_2D, tex, 0)
+
+                self.textures[name] = tex
+                self.attachments[name] = attachment_enum
+
+                draw_buffers.append(attachment_enum)
+                color_attachment_index += 1
+
+            elif att_type in (AttachmentType.DEPTH, AttachmentType.STENCIL, AttachmentType.DEPTH_STENCIL):
+                glDeleteRenderbuffers(1, [self.depth_renderbuffer])
+                self.depth_renderbuffer = glGenRenderbuffers(1)
+                glBindRenderbuffer(GL_RENDERBUFFER, self.depth_renderbuffer)
+                internal_format = GL_ATTACHMENT_FORMAT[att_format]
+                glRenderbufferStorage(GL_RENDERBUFFER, internal_format, self.width, self.height)
+
+                if att_type == AttachmentType.DEPTH:
+                    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
+                elif att_type == AttachmentType.STENCIL:
+                    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
+                elif att_type == AttachmentType.DEPTH_STENCIL:
+                    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
+
+        if draw_buffers:
+            glDrawBuffers(len(draw_buffers), draw_buffers)
+        else:
+            glDrawBuffer(GL_NONE)
+            glReadBuffer(GL_NONE)
+
+        status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        if status != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError(f"Framebuffer incomplete after resize: status {status}")
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     def bind(self):
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)

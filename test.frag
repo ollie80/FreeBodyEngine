@@ -44,10 +44,8 @@ uniform bool Metallic_useTexture;
 
 in vec3 normals;
 
-out vec4 fragColor;
-
 void main() {
-    fragColor = vec4(uv, 0.0, 1.0);
+    albedo = Albedo_useTexture ? texture(Albedo_Texture, uv).rgba : Albedo_Color;
     albedo = Albedo_useTexture ? texture(Albedo_Texture, uv).rgba : Albedo_Color;
     normal = Normal_useTexture ? texture(Normal_Texture, uv).rgba : Normal_Color;
     emmision = Emmision_useTexture ? texture(Emmision_Texture, uv).rgba : Emmision_Color;

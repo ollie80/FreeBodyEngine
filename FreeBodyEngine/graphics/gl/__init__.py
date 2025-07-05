@@ -1,3 +1,5 @@
+"""The OpenGL 3.3 implementation of the FB graphics system."""
+
 from FreeBodyEngine.graphics.gl.image import GLImage
 from FreeBodyEngine.graphics.gl.mesh import GLMesh
 from FreeBodyEngine.graphics.gl.framebuffer import GLFramebuffer
