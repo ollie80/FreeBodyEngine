@@ -239,6 +239,21 @@ code = "./code"
     print(f"Project '{project_name}' created successfully and initialized at {os.path.abspath(project_dir)}")
 
     
+def get_project(args):
+    if len(args) > 0:
+        project = args[0]
+    else:
+        current = get_current_project()
+        if current != None:
+            project = current
+        else:
+            print("No project ID specified.")
+
+    if not project_registry.project_exisits(project):
+        print(f"Project with ID {project} does not exist.")
+
+    else:
+        print(f'ID: "{project}", Name: "{project_registry.get_project_name(project)}", Path: "{project_registry.get_project_path(project)}"')
 
 def help_handler(args):
     print("FreeBodyEngine CLI")
@@ -254,7 +269,8 @@ root_commands = [
     Command(["run", "r"], run_handler, help_text="Run a project."),
     Command(['project', "p"], subcommands=[
         Command(['list', "l"], list_projects, help_text="List all projects in the registry."),
-        Command(['delete', "d"], delete_project, help_text="Deletes a project.")
+        Command(['delete', "d"], delete_project, help_text="Deletes a project."),
+        Command(['get', "g"], get_project, help_text="Gets the information of a project.")
     ], help_text="Commands to work with the FB Project system."),
     Command(["create", "c"], subcommands=[
         Command(["sprite", "s"], create_sprite, help_text="Create a new sprite."),

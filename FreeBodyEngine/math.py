@@ -257,6 +257,182 @@ class Transform:
         rotation = math.degrees(rot_rad)
 
         return cls((px, py), rotation, (sx, sy))
+    
+
+class Transform3:
+    def __init__(self, position: 'Vector3', rotation: 'Vector3', scale: 'Vector3'):
+        self.position = Vector3(position)
+        self.rotation = Vector3(rotation)
+        self.scale = Vector3(scale)
+
+    def copy(self):
+        return Transform(self.position.copy(), self.rotation, self.scale.copy())
+
+    def neg(self):
+        return Transform(-self.position, -self.rotation, -self.scale)
+    
+    @property
+    def model(self) -> numpy.ndarray:
+        px = self.position.x
+        py = self.position.y
+        pz = self.position.z
+
+        sx = self.scale.x
+        sy = self.scale.y
+        sz = self.scale.x
+
+        rx = self.rotation
+        ry = self.rotation
+        rz = self.rotation
+
+        rz_rad = math.radians(rz)
+
+        cos_r = math.cos(rz_rad)
+        sin_r = math.sin(rz_rad)
+
+        scale = numpy.array([
+            [sx, 0,  0,  0],
+            [0,  sy, 0,  0],
+            [0,  0,  sz, 0],
+            [0,  0,  0,  1]
+        ], dtype=float)
+
+        rotation = numpy.array([
+            [cos_r, -sin_r, 0, 0],
+            [sin_r,  cos_r, 0, 0],
+            [0,      0,     1, 0],
+            [0,      0,     0, 1]
+        ], dtype=float)
+
+        translation = numpy.array([
+            [1, 0, 0, px],
+            [0, 1, 0, py],
+            [0, 0, 1, pz],
+            [0, 0, 0, 1]
+        ], dtype=float)
+
+        return translation @ rotation @ scale
+    
+    def __eq__(self, other):
+        if isinstance(other, Transform):
+            return (self.position == other.position and
+                    self.rotation == other.rotation and
+                    self.scale == other.scale)
+    
+    def __add__(self, other):
+        if isinstance(other, Transform):
+            return Transform(self.position + other.position, self.rotation + other.rotation, self.scale + other.scale)
+
+    def __iadd__(self, other):
+        if isinstance(other, Transform):
+            self.position += other.position
+            self.rotation += other.rotation
+            self.scale += other.scale
+            return self
+    
+    def __sub__(self, other):
+        if isinstance(other, Transform):
+            return Transform(self.position - other.position, self.rotation - other.rotation, self.scale - other.scale)
+
+    def __isub__(self, other):
+        if isinstance(other, Transform):
+            self.position -= other.position
+            self.rotation -= other.rotation
+            self.scale -= other.scale
+            return self
+
+    def __mul__(self, other):
+        if isinstance(other, (int, float)):
+            return Transform(self.position * other,
+                            self.rotation * other,
+                            self.scale * other)
+        elif isinstance(other, Transform):
+            return Transform(self.position * other.position,
+                            self.rotation + other.rotation,
+                            self.scale * other.scale)
+        raise TypeError("Transform can only be multiplied by a scalar or another Transform")
+
+    def __imul__(self, other):
+        if isinstance(other, (int, float)):
+            self.position *= other
+            self.rotation *= other
+            self.scale *= other
+            return self
+        elif isinstance(other, Transform):
+            self.position *= other.position
+            self.rotation += other.rotation
+            self.scale *= other.scale
+            return self
+        raise TypeError("Transform can only be multiplied by a scalar or another Transform")
+
+    def __truediv__(self, other):
+        if isinstance(other, (int, float)):
+            return Transform(self.position / other,
+                            self.rotation / other,
+                            self.scale / other)
+        elif isinstance(other, Transform):
+            return Transform(self.position / other.position,
+                            self.rotation - other.rotation,
+                            self.scale / other.scale)
+        raise TypeError("Transform can only be divided by a scalar or another Transform")
+
+    def __itruediv__(self, other):
+        if isinstance(other, (int, float)):
+            self.position /= other
+            self.rotation /= other
+            self.scale /= other
+            return self
+        elif isinstance(other, Transform):
+            self.position /= other.position
+            self.rotation -= other.rotation
+            self.scale /= other.scale
+            return self
+        raise TypeError("Transform can only be divided by a scalar or another Transform")
+
+    def to_matrix(self):
+        # Construct 2D affine transform matrix: T * R * S
+        cos_r = math.cos(math.radians(self.rotation))
+        sin_r = math.sin(math.radians(self.rotation))
+
+        sx, sy = self.scale.x, self.scale.y
+        px, py = self.position.x, self.position.y
+
+        return numpy.array(
+            [[cos_r * sx, -sin_r * sy, px],
+            [sin_r * sx,  cos_r * sy, py],
+            [0,           0,          1]])
+        
+    def compose_with(self, parent_transform: 'Transform') -> 'Transform':
+        # Apply parent transform to self (full matrix multiplication)
+        parent_mat = parent_transform.to_matrix()
+        local_mat = self.to_matrix()
+        result_mat = parent_mat @ local_mat # type: ignore
+        return Transform.from_matrix(result_mat)
+
+    @classmethod
+    def from_matrix(cls, mat: numpy.ndarray) -> 'Transform':
+        assert mat.shape == (3, 3), "Matrix must be 3x3 for 2D transforms"
+
+        # Extract translation (position)
+        px = mat[0, 2]
+        py = mat[1, 2]
+
+        # Extract scale from matrix columns
+        sx = math.hypot(mat[0, 0], mat[1, 0])
+        sy = math.hypot(mat[0, 1], mat[1, 1])
+
+        # Prevent division by zero
+        if sx == 0 or sy == 0:
+            raise ValueError("Cannot extract rotation from zero scale")
+
+        # Extract rotation (in radians)
+        rot_rad = math.atan2(mat[1, 0] / sx, mat[0, 0] / sx)
+        rotation = math.degrees(rot_rad)
+
+        return cls((px, py), rotation, (sx, sy))
+    
+
+
 class Vector(GenericVector):
     @overload
     def __init__(self) -> None: ...

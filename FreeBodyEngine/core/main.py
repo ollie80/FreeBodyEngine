@@ -83,6 +83,7 @@ class Main:
 
         self.fps = fps
         self.dev = dev
+
         # caption
         dev_mode = ""
         if dev:
@@ -119,13 +120,11 @@ class Main:
 
     def _set_scene(self, name: str):
         self.active_scene = self.scenes[name]
-        
-
 
     def quit(self):
         log("Quiting game.")
         self.on_quit()
-        exit(0)    
+        exit(0)
 
     def on_quit(self):
         pass

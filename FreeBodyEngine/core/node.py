@@ -1,5 +1,5 @@
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine.math import Transform, Vector
+from FreeBodyEngine.math import Transform, Vector, Vector3
 from FreeBodyEngine import warning, log
 
 
@@ -19,7 +19,7 @@ class GenericNode:
         self.scene: 'Scene'
         self.is_initialized = False
         self.children: dict[uuid.UUID, Node] = {}
-        self.id = 1
+        self.id = 0
 
     def remove(self, *ids):
         for id in ids:
@@ -123,7 +123,7 @@ class Node(GenericNode):
 
         self.id: uuid.UUID = uuid.uuid4()
 
-        # Requirements are children that the node needs to function, not having a required child will log a warning.
+        # requirements are children that the node needs to function, not having a required child will raise a warning.
         self.requirements: list[str] = []
         self.parental_requirement: str = "Node"
         

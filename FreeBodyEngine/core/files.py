@@ -146,9 +146,9 @@ class FileManager:
     def load_image(self, path: str):
         if self.file_exsists(path):
             if self.dev:
-                self.main.graphics.load_image(open(self.get_file_path(path), 'rb').read())
+                return self.main.graphics.load_image(open(self.get_file_path(path), 'rb').read())
             else:
-                self.main.graphics.load_image(self.images[path])
+                return self.main.graphics.load_image(self.images[path])
         else:
             raise FileExistsError(f"No image at path '{path}'.")
 
@@ -159,7 +159,6 @@ class FileManager:
         """
         data = self.load_toml(path)
         type = data.get('type', "static")
-        
         if type == "static":
             img_path = data.get('image')
             if not img_path:

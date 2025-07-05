@@ -15,26 +15,22 @@ def rgba_to_bitmap_and_mask(img: Image.Image):
     width, height = img.size
     pixels = img.load()
 
-    # BMP rows are aligned to 4 bytes (each row padded)
-    row_size = ((width + 31) // 32) * 4  # AND mask row size in bytes (each bit = 1 pixel)
+    row_size = ((width + 31) // 32) * 4
     and_mask = bytearray(row_size * height)
 
-    # Build AND mask (1 bit per pixel): 1 means transparent, 0 opaque
     for y in range(height):
         for x in range(width):
-            r, g, b, a = pixels[x, height - 1 - y]  # BMP rows are bottom-up
+            r, g, b, a = pixels[x, height - 1 - y]
             if a == 0:
                 byte_index = y * row_size + (x // 8)
                 bit_index = 7 - (x % 8)
                 and_mask[byte_index] |= (1 << bit_index)
 
-    # Convert image pixels to BMP BGRX format (32 bits per pixel)
-    # BMP pixels bottom-up order, no compression
     bmp_bits = bytearray()
     for y in reversed(range(height)):
         for x in range(width):
             r, g, b, a = pixels[x, y]
-            bmp_bits.extend([b, g, r, 0])  # 0 for reserved byte (no alpha in BMP)
+            bmp_bits.extend([b, g, r, 0])
 
     return bmp_bits, and_mask
 

@@ -14,7 +14,8 @@ class Time:
     def update(self, fps_cap): 
         current_time = time.time()
         raw_delta = current_time - self._last_time
-
+        if fps_cap == 0:
+            return raw_delta
         min_frame_time = 1.0 / fps_cap
         if raw_delta < min_frame_time:
             time.sleep(min_frame_time - raw_delta)

@@ -29,6 +29,7 @@ class Window:
 
     def _resize(self):
         self.main.renderer.resize()        
+        self.main.graphics.resize()
 
     @abstractmethod
     def is_ready(self) -> bool:

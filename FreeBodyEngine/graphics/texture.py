@@ -5,22 +5,21 @@ class Texture:
         self.id = id
         self.uv_rect = uv_rect
 
-
     def get_image_data(self):
         return self.manager._get_raw_data(self.id, self.uv_rect)
 
     def use(self):
-        self.manager._use_texture(self.id)
+        return self.manager._use_texture(self.id)
 
 class TextureManager:
     def __init__(self):
         self.dev_mode = True # dev mode enables hot reloading, release mode uses atlases
         self.standalone_textures = []
         self.atlas_textures = []
+        self.current_texture = None
 
-        self.current_texture = None # the texture that is currently bound   
 
-    def _create_texture(self, image_data, width, height) -> Texture:
+    def _create_texture(self, internal_image) -> Texture:
         pass
 
     def _create_standalone_texture(self, image_data, width, height):
@@ -31,7 +30,7 @@ class TextureManager:
         pass
 
     def _use_texture(self, id):
-        """Binds the texture."""
+        """Binds the texture and returns the texture slot."""
         pass
 
     def _create_atlas_texture(self):

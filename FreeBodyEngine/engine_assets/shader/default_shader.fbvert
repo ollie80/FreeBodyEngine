@@ -16,5 +16,5 @@ void main() {
     uv = uvs;
     normals = normal;
     
-    gl_Position = proj * view * model * vec4(vertex.xy, 0.0, 1.0);
+    gl_Position = proj * view * model * vec4(vertex.x, vertex.y, vertex.z, 1.0);
 }

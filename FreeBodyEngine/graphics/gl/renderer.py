@@ -47,14 +47,20 @@ class GLRenderer(Renderer):
         glDebugMessageCallback(debug_callback, None)
         width, height = self.main.window.size
         glViewport(0, 0, width, height)
+        glEnable(GL_BLEND)
+        glEnable(GL_DEPTH_TEST)
+
+
+        # Set blend function
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     def resize(self):
         width, height = self.main.window.size
         glViewport(0, 0, width, height)
 
     def load_image(self, data):
-        return GLImage(self, data)
-
+        return GLImage(data, self)
+         
     def load_material(self, data):
         return Material(data)
 
@@ -68,6 +74,7 @@ class GLRenderer(Renderer):
 
     def clear(self, color: 'Color'):
         glClearColor(*color.float_normalized_a)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         glClear(GL_COLOR_BUFFER_BIT)
 
@@ -78,10 +85,10 @@ class GLRenderer(Renderer):
         return GLMaterial(data)
 
     def draw_mesh(self, mesh, material: 'GLMaterial', transform, camera):
+        # glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
         material.use(transform, camera)
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        material.shader.use()
 
-        glUseProgram(material.shader._shader)
         glBindVertexArray(mesh.vao)
         glDrawElements(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
 
