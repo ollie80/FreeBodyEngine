@@ -10,7 +10,8 @@ from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
-    from FreeBodyEngine.core.camera import Camera2D
+    from FreeBodyEngine.core.scene import Scene
+    from FreeBodyEngine.core.camera import Camera
     from FreeBodyEngine.core.window import Window
     from FreeBodyEngine.graphics.renderer import Renderer
 
@@ -65,6 +66,7 @@ class GraphicsManager:
         :pararm camera: The camera that the scene will be drawn from.
         :type camera: Camera
         """
+        
         self.main_framebuffer.bind()
         self.renderer.clear(camera.background_color)
         
@@ -80,3 +82,11 @@ class GraphicsManager:
         """Draws a scene from the perspective of a camera."""
         
         self._draw_2D(camera)
+
+
+class GraphicsPipeline:
+    def __init__(self):
+        pass
+
+    def draw_scene(self, scene: 'Scene', camera: 'Camera'):
+        pass

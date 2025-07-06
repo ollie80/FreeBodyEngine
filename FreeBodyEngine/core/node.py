@@ -1,5 +1,5 @@
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine.math import Transform, Vector, Vector3
+from FreeBodyEngine.math import Transform, Transform3, Vector, Vector3
 from FreeBodyEngine import warning, log
 
 
@@ -187,6 +187,20 @@ class Node2D(Node):
     @property
     def world_transform(self):
         if self.parent.inherits_from('Node2D'):
+            return self.transform.compose_with(self.parent.world_transform)
+        else:
+            return self.transform
+
+class Node3D(Node):
+    def __init__(self, position: Vector3 = Vector3(), rotation: Vector3 = Vector3(), scale: Vector3 = Vector3(1, 1, 1)):
+        super().__init__()
+        self.parental_requirement = "Node3D"
+
+        self.transform = Transform3(position, rotation, scale)
+
+    @property
+    def world_transform(self):
+        if self.parent.inherits_from('Node3D'):
             return self.transform.compose_with(self.parent.world_transform)
         else:
             return self.transform

@@ -8,6 +8,35 @@ import platform
 from importlib.resources import files
 import shutil
 
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+
+class Environment:
+    def __init__(self, project_id=None):
+        self.project_id = project_id
+        self.project_path = project_registry.get_project_path(project_id)
+        self.observer = None
+        self.handlers = []
+
+    def start(self):
+        print(f"Starting environment for {self.project_path}")
+        self.observer = Observer()
+        handler = FileChangeHandler(self)
+        self.observer.schedule(handler, self.project_path, recursive=True)
+        self.observer.start()
+
+    def stop(self):
+        if self.observer:
+            self.observer.stop()
+            self.observer.join()
+
+    def on_file_change(self, path):
+        print(f"[env] File changed: {path}")
+        # Check if it's a font, shader, script, etc.
+        # Rebuild/reload as needed (e.g., generate_atlas if .ttf changed)
+
+
+
 class Command:
     def __init__(self, names, handler=None, subcommands=None, help_text=""):
         self.names = names  # list of aliases
@@ -267,6 +296,16 @@ def get_project_lines(id: str):
                 lines += len(open(os.path.join(root, filename)).readlines())
     return lines
 
+def enter_handler(args):
+    print('Welcome to the FreeBodyEngine enviroment.')
+    global enviroment
+    enviroment = 
+    global running
+    running = True
+    while running:
+        input("FreeBodyEngine@{}")
+        dispatch(, root_commands)
+
 def lines_project(args):
     if len(args) > 0:
         project = args[0]
@@ -297,6 +336,8 @@ root_commands = [
     Command(["build", "b"], build_handler, help_text="Build the project"),
     Command(["init", 'i'], init_handler, help_text="Initializes the project in the current directory, must be run before any other commands."),
     Command(["run", "r"], run_handler, help_text="Run a project."),
+    Command(['enter', 'e'], enter_handler, help_text="Enter the FreeBodyEngine environment."),
+    Command(['exit'], enter_handler, help_text="Enter the FreeBodyEngine environment."),
     Command(['project', "p"], subcommands=[
         Command(['list', "l"], list_projects, help_text="List all projects in the registry."),
         Command(['delete', "d"], delete_project, help_text="Deletes a project."),
@@ -338,8 +379,6 @@ def dispatch(args, commands, path=[]):
 
     print(f"Unknown command: {cmd_name}")
     sys.exit(1)
-
-
 
 def main():
     global project_registry

@@ -1,6 +1,6 @@
 from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine.core.node import Node2D
-from FreeBodyEngine.math import Vector
+from FreeBodyEngine.core.node import Node2D, Node3D
+from FreeBodyEngine.math import Vector, Vector3
 import numpy as np
 import math
 import time
@@ -10,7 +10,16 @@ class CAMERA_PROJECTION(Enum):
     PERSPECTIVE = auto()
     ORTHOGRAPHIC = auto()
 
-class Camera2D(Node2D):
+
+class Camera:
+    def __init__(self, projection: CAMERA_PROJECTION, background_color: Color, zoom: float):
+        self.zoom = zoom
+        self.background_color = background_color
+        self.projection = projection
+        self.view_matrix: np.ndarray
+        self.proj_matrix: np.ndarray
+
+class Camera2D(Node2D, Camera):
     """
     A generic camera object. The camera doesn't draw anything, its only purpose is to provide matricies to the renderer.
     
@@ -28,21 +37,10 @@ class Camera2D(Node2D):
     """
 
     def __init__(self, position: 'Vector' = Vector(), zoom: float = 250, rotation: float = 0, projection=CAMERA_PROJECTION.ORTHOGRAPHIC, background_color: Color = Color("#324848")):
-        super().__init__(position, rotation)
-        
-        self.zoom = zoom
-        self.background_color = background_color
-        self.projection = projection
-
-    def _update_rect(self):
-        center_x, center_y = self.transform.position.x, self.transform.position.y
-        width, height = (
-            self.scene.main.window.size[0] / self.zoom,
-            self.scene.main.window.size[1] / self.zoom,
-        )
+        Node2D.__init__(self, position=position, rotation=rotation)
+        Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
 
     def _update_projection_matrix(self):
-        self._update_rect()
         width = self.scene.main.window.size[0]
         height = self.scene.main.window.size[1]
         aspect = width / height if height != 0 else 1.0
@@ -110,10 +108,81 @@ class Camera2D(Node2D):
             dtype=np.float32,
         )
 
-
-
-        # Combine translation and rotation
         self.view_matrix = np.dot(translation_matrix, rotation_matrix)
+
+    def update(self):
+        super().update()
+        self._update_projection_matrix()
+        self._update_view_matrix()
+
+
+class Camera3D(Node3D, Camera):
+    def __init__(self, position: 'Vector' = Vector3(), rotation: 'Vector' = Vector3(), zoom: float = 1.0, projection=CAMERA_PROJECTION.ORTHOGRAPHIC, background_color: Color = Color("#324848")):
+        Node3D.__init__(self, position=position, rotation=rotation)
+        Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
+
+    def _update_projection_matrix(self):
+        width = self.scene.main.window.size[0]
+        height = self.scene.main.window.size[1]
+        aspect = width / height if height != 0 else 1.0
+        near = 0.1
+        far = 1000.0  # larger far plane
+
+        if self.projection == CAMERA_PROJECTION.PERSPECTIVE:
+            fov_deg = 60.0
+            fov_rad = math.radians(fov_deg)
+            f = 1.0 / math.tan(fov_rad / 2.0)
+            
+            self.proj_matrix = np.array([
+                [f / aspect, 0.0,  0.0,                              0.0],
+                [0.0,        f,    0.0,                              0.0],
+                [0.0,        0.0, (far + near) / (near - far), (2 * far * near) / (near - far)],
+                [0.0,        0.0, -1.0,                              0.0],
+            ], dtype=np.float32)
+
+
+        elif self.projection == CAMERA_PROJECTION.ORTHOGRAPHIC:
+            scale = self.zoom
+            left = -width / 2 * scale
+            right = width / 2 * scale
+            bottom = -height / 2 * scale
+            top = height / 2 * scale
+
+            self.proj_matrix = np.array([
+                [2.0 / (right - left), 0.0, 0.0, -(right + left) / (right - left)],
+                [0.0, 2.0 / (top - bottom), 0.0, -(top + bottom) / (top - bottom)],
+                [0.0, 0.0, -2.0 / (far - near), -(far + near) / (far - near)],
+                [0.0, 0.0, 0.0, 1.0],
+            ], dtype=np.float32)
+
+    def _update_view_matrix(self):
+        pos = self.transform.position
+        rot = self.transform.rotation  # assumed to be Vector(pitch, yaw, roll) in degrees
+
+        # Convert rotation to radians
+        pitch = math.radians(rot.x)
+        yaw = math.radians(rot.y)
+        roll = math.radians(rot.z)
+
+        # Calculate rotation matrix (Yaw-Pitch-Roll)
+        cx, sx = math.cos(pitch), math.sin(pitch)
+        cy, sy = math.cos(yaw), math.sin(yaw)
+        cz, sz = math.cos(roll), math.sin(roll)
+
+        # Combined rotation matrix (Rz * Rx * Ry)
+        rotation_matrix = np.array([
+            [cy * cz + sx * sy * sz, cz * sx * sy - cy * sz, cx * sy, 0.0],
+            [cx * sz, cx * cz, -sx, 0.0],
+            [cy * sx * sz - cz * sy, cy * cz * sx + sy * sz, cx * cy, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ], dtype=np.float32)
+
+        # Translation matrix
+        translation_matrix = np.identity(4, dtype=np.float32)
+        translation_matrix[:3, 3] = -np.array([pos.x, pos.y, pos.z], dtype=np.float32)
+
+        # View matrix = R⁻¹ * T⁻¹ == Rᵗ * -T (if R is orthonormal)
+        self.view_matrix = rotation_matrix.T @ translation_matrix
 
     def update(self):
         super().update()
