@@ -3,7 +3,6 @@ import numpy as np
 import FreeBodyEngine as engine
 import pygame
 import random
-import moderngl
 
 from pygame.math import Vector2 as vector
 

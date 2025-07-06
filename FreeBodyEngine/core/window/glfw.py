@@ -2,6 +2,7 @@ import glfw
 from FreeBodyEngine.core.window import Window, Cursor
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING
+from FreeBodyEngine import error
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -30,7 +31,7 @@ class GLFWWindow(Window):
         self._window = glfw.create_window(size[0], size[1], title, None, None)
         if not self._window:
             glfw.terminate()
-            raise RuntimeError("Failed to create GLFW window")
+            error("Failed to create GLFW window")
 
         glfw.make_context_current(self._window)
         glfw.set_window_size_callback(self._window, self.resize)
