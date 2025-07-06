@@ -1,5 +1,6 @@
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING, Union, Literal
+from FreeBodyEngine.core.input import Key
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -55,6 +56,15 @@ class Window:
         pass
 
     @abstractmethod
+    def _get_key_down(self, key: Key) -> float:
+        pass
+
+
+    @abstractmethod
+    def _get_gamepad_state(self, id: int):
+        pass
+
+    @abstractmethod
     def close(self):
         pass
 
@@ -65,4 +75,5 @@ class Window:
     @abstractmethod
     def update(self):
         pass
+
 

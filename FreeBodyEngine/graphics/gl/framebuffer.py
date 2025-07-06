@@ -100,11 +100,13 @@ class GLFramebuffer(Framebuffer):
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
-    def draw(self, attachment):
+    def draw(self, attachment, size: tuple[int,int] = None):
         """Draw a named attachment to the screen."""
         if attachment not in self.attachments:
             raise ValueError(f"No attachment named '{attachment}'")
         
+        size = (self.width, self.height) if size == None else size
+
         attachment_enum = self.attachments[attachment]
 
         glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbo)
@@ -113,7 +115,7 @@ class GLFramebuffer(Framebuffer):
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
         glBlitFramebuffer(
             0, 0, self.width, self.height,
-            0, 0, self.width, self.height,
+            0, 0, size[0], size[1],
             GL_COLOR_BUFFER_BIT, GL_NEAREST
         )
 

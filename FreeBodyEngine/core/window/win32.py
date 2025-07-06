@@ -16,12 +16,10 @@ import win32api
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
-# Constants
 LR_DEFAULTSIZE = 0x00000040
 LR_LOADFROMFILE = 0x00000010
 LR_CREATEDIBSECTION = 0x00002000
 IMAGE_CURSOR = 2
-
 
 class Win32Cursor(Cursor):
     """

@@ -1,152 +1,384 @@
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Union
+from FreeBodyEngine import warning
+
+from enum import Enum, auto
+from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
+    from FreeBodyEngine.core.window.generic import Window
 
+import re
+from FreeBodyEngine.math import Vector
+import operator
+
+class Key(Enum):
+    A = auto()
+    B = auto()
+    C = auto()
+    D = auto()
+    E = auto()
+    F = auto()
+    G = auto()
+    H = auto()
+    I = auto()
+    J = auto()
+    K = auto()
+    L = auto()
+    M = auto()
+    N = auto()
+    O = auto()
+    P = auto()
+    Q = auto()
+    R = auto()
+    S = auto()
+    T = auto()
+    U = auto()
+    V = auto()
+    W = auto()
+    X = auto()
+    Y = auto()
+    Z = auto()
+
+    ONE = auto()
+    TWO = auto()
+    THREE = auto()
+    FOUR = auto()
+    FIVE = auto()
+    SIX = auto()
+    SEVEN = auto()
+    EIGHT = auto()
+    NINE = auto()
+    ZERO = auto()
+
+    MINUS = auto()
+    EQUAL = auto()
+    LEFT_BRACKET = auto()
+    RIGHT_BRACKET = auto()
+    BACKSLASH = auto()
+    SEMICOLON = auto()
+    APOSTROPHE = auto()
+    TILDE = auto()
+    COMMA = auto()
+    PERIOD = auto()
+    SLASH = auto()
+
+    SPACE = auto()
+    RETURN = auto()
+    ENTER = RETURN
+    BACKSPACE = auto()
+    TAB = auto()
+    ESCAPE = auto()
+    CAPS_LOCK = auto()
+
+    L_CTRL = auto()
+    R_CTRL = auto()
+    L_SHIFT = auto()
+    R_SHIFT = auto()
+    L_ALT = auto()
+    R_ALT = auto()
+    L_SUPER = auto()
+    R_SUPER = auto()
+
+    INSERT = auto()
+    DELETE = auto()
+    HOME = auto()
+    END = auto()
+    PG_UP = auto()
+    PG_DOWN = auto()
+    UP = auto()
+    DOWN = auto()
+    LEFT = auto()
+    RIGHT = auto()
+
+    F1 = auto()
+    F2 = auto()
+    F3 = auto()
+    F4 = auto()
+    F5 = auto()
+    F6 = auto()
+    F7 = auto()
+    F8 = auto()
+    F9 = auto()
+    F10 = auto()
+    F11 = auto()
+    F12 = auto()
+    F13 = auto()
+    F14 = auto()
+    F15 = auto()
+    F16 = auto()
+    F17 = auto()
+    F18 = auto()
+    F19 = auto()
+    F20 = auto()
+    F21 = auto()
+    F22 = auto()
+    F23 = auto()
+    F24 = auto()
+
+    NUMPAD_0 = auto()
+    NUMPAD_1 = auto()
+    NUMPAD_2 = auto()
+    NUMPAD_3 = auto()
+    NUMPAD_4 = auto()
+    NUMPAD_5 = auto()
+    NUMPAD_6 = auto()
+    NUMPAD_7 = auto()
+    NUMPAD_8 = auto()
+    NUMPAD_9 = auto()
+    NUMPAD_DECIMAL = auto()
+    NUMPAD_DIVIDE = auto()
+    NUMPAD_MULTIPLY = auto()
+    NUMPAD_SUBTRACT = auto()
+    NUMPAD_ADD = auto()
+    NUMPAD_ENTER = auto()
+
+class GamepadButton(Enum):
+    A = auto()
+    B = auto()
+    X = auto()
+    Y = auto()
+
+    LB = auto()
+    RB = auto()
+
+    LS_DOWN = auto() 
+    RS_DOWN = auto() 
+
+    DPAD_UP = auto()
+    DPAD_RIGHT = auto()
+    DPAD_DOWN = auto()
+    DPAD_LEFT = auto()
+
+    GUIDE = auto()
+
+class GamepadAxis(Enum):
+    LEFT_X = auto()
+    LEFT_Y = auto()
+    RIGHT_X = auto()
+    RIGHT_Y = auto()
+
+    LEFT_TRIGGER = auto()
+    RIGHT_TRIGGER = auto()
+
+CHARACTERSTRINGMAP = {
+    "A": Key.A, "B": Key.B, "C": Key.C, "D": Key.D, "E": Key.E, "F": Key.F,
+    "G": Key.G, "H": Key.H, "I": Key.I, "J": Key.J, "K": Key.K, "L": Key.L,
+    "M": Key.M, "N": Key.N, "O": Key.O, "P": Key.P, "Q": Key.Q, "R": Key.R,
+    "S": Key.S, "T": Key.T, "U": Key.U, "V": Key.V, "W": Key.W, "X": Key.X,
+    "Y": Key.Y, "Z": Key.Z,
+
+    "1": Key.ONE, "2": Key.TWO, "3": Key.THREE, "4": Key.FOUR, "5": Key.FIVE,
+    "6": Key.SIX, "7": Key.SEVEN, "8": Key.EIGHT, "9": Key.NINE, "0": Key.ZERO,
+
+    "MINUS": Key.MINUS,
+    "EQUAL": Key.EQUAL,
+    "LEFT_BRACKET": Key.LEFT_BRACKET,
+    "RIGHT_BRACKET": Key.RIGHT_BRACKET,
+    "BACKSLASH": Key.BACKSLASH,
+    "SEMICOLON": Key.SEMICOLON,
+    "APOSTROPHE": Key.APOSTROPHE,
+    "TILDE": Key.TILDE,
+    "COMMA": Key.COMMA,
+    "PERIOD": Key.PERIOD,
+    "SLASH": Key.SLASH,
+
+    "SPACE": Key.SPACE,
+    "RETURN": Key.RETURN,
+    "ENTER": Key.RETURN,
+    "BACKSPACE": Key.BACKSPACE,
+    "TAB": Key.TAB,
+    "ESCAPE": Key.ESCAPE,
+    "CAPS_LOCK": Key.CAPS_LOCK,
+
+    "L_CTRL": Key.L_CTRL,
+    "R_CTRL": Key.R_CTRL,
+    "L_SHIFT": Key.L_SHIFT,
+    "R_SHIFT": Key.R_SHIFT,
+    "L_ALT": Key.L_ALT,
+    "R_ALT": Key.R_ALT,
+    "L_SUPER": Key.L_SUPER,
+    "R_SUPER": Key.R_SUPER,
+
+    "INSERT": Key.INSERT,
+    "DELETE": Key.DELETE,
+    "HOME": Key.HOME,
+    "END": Key.END,
+    "PG_UP": Key.PG_UP,
+    "PG_DOWN": Key.PG_DOWN,
+    "UP": Key.UP,
+    "DOWN": Key.DOWN,
+    "LEFT": Key.LEFT,
+    "RIGHT": Key.RIGHT,
+
+    "F1": Key.F1, "F2": Key.F2, "F3": Key.F3, "F4": Key.F4, "F5": Key.F5,
+    "F6": Key.F6, "F7": Key.F7, "F8": Key.F8, "F9": Key.F9, "F10": Key.F10,
+    "F11": Key.F11, "F12": Key.F12, "F13": Key.F13, "F14": Key.F14,
+    "F15": Key.F15, "F16": Key.F16, "F17": Key.F17, "F18": Key.F18,
+    "F19": Key.F19, "F20": Key.F20, "F21": Key.F21, "F22": Key.F22,
+    "F23": Key.F23, "F24": Key.F24,
+
+    "NUMPAD_0": Key.NUMPAD_0,
+    "NUMPAD_1": Key.NUMPAD_1,
+    "NUMPAD_2": Key.NUMPAD_2,
+    "NUMPAD_3": Key.NUMPAD_3,
+    "NUMPAD_4": Key.NUMPAD_4,
+    "NUMPAD_5": Key.NUMPAD_5,
+    "NUMPAD_6": Key.NUMPAD_6,
+    "NUMPAD_7": Key.NUMPAD_7,
+    "NUMPAD_8": Key.NUMPAD_8,
+    "NUMPAD_9": Key.NUMPAD_9,
+    "NUMPAD_DECIMAL": Key.NUMPAD_DECIMAL,
+    "NUMPAD_DIVIDE": Key.NUMPAD_DIVIDE,
+    "NUMPAD_MULTIPLY": Key.NUMPAD_MULTIPLY,
+    "NUMPAD_SUBTRACT": Key.NUMPAD_SUBTRACT,
+    "NUMPAD_ADD": Key.NUMPAD_ADD,
+    "NUMPAD_ENTER": Key.NUMPAD_ENTER,
+
+    "GAMEPAD_A": GamepadButton.A,
+    "GAMEPAD_B": GamepadButton.B,
+    "GAMEPAD_X": GamepadButton.X,
+    "GAMEPAD_Y": GamepadButton.Y,
+    "GAMEPAD_LB": GamepadButton.LB,
+    "GAMEPAD_RB": GamepadButton.RB,
+    "GAMEPAD_LS": GamepadButton.LS_DOWN,
+    "GAMEPAD_RS": GamepadButton.RS_DOWN,
+    "DPAD_UP": GamepadButton.DPAD_UP,
+    "DPAD_RIGHT": GamepadButton.DPAD_RIGHT,
+    "DPAD_DOWN": GamepadButton.DPAD_DOWN,
+    "GUIDE": GamepadButton.GUIDE,
+
+    "AXIS_LEFT_X": GamepadAxis.LEFT_X,
+    "AXIS_LEFT_Y": GamepadAxis.LEFT_Y,
+    "AXIS_RIGHT_X": GamepadAxis.RIGHT_X,
+    "AXIS_RIGHT_Y": GamepadAxis.RIGHT_Y,
+    "AXIS_LEFT_TRIGGER": GamepadAxis.LEFT_TRIGGER,
+    "AXIS_RIGHT_TRIGGER": GamepadAxis.RIGHT_TRIGGER,
+}
+
+class Gamepad:
+    def __init__(self, id: int, window: 'Window'):
+        self.id = id
+        self.window = window
+
+    def get_state(self):
+        return self.window.get_gamepad_state(self.id)
+
+
+comparison_ops = {
+    '>': operator.gt,
+    '<': operator.lt,
+    '>=': operator.ge,
+    '<=': operator.le,
+    '==': operator.eq,
+    '!=': operator.ne,
+}
+
+@dataclass
+class ActionCheck:
+    check_type: str 
+    val: str
+
+class Action:
+    def __init__(self, input: Union[Key, GamepadAxis, GamepadButton], check: ActionCheck = None):
+        self.input = input
+        self.check = check
+
+    def check_val(self, val: float) -> bool:
+        if self.check == None:
+            if val > 0.0:
+                return True
+            else:
+                return False
+        else:
+            comparison_ops[self.check.check_type](val, self.check.val)
+        
 class InputManager:
-    def __init__(self, main: 'Main', actions_data:dict[str, list[str]]=None):
+    def __init__(self, main: 'Main', actions: dict[str, list[Action]], window: 'Window'):
+        self.actions = actions
+        self.pressed = {}
+        self.pressed_set = set(self.pressed.keys())
+        self.released = set()
+        self.window = window
+
+        self.gamepads = {}
+
+    def bind_action(self, name: str, inputs: list[Key]):
         pass
 
+    def reset(self):
+        self.pressed = {}
+        self.released = set()
 
-# class InputManager: # im very sorry for what you're about to read
-#     def __init__(self, scene: Scene):
-#         self.scene = scene
-#         self.actions: dict[str, list[str]]
-#         self.active = {}
-#         self.controllers = [pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())]
+    def action_exists(self, name) -> bool:
+        return name in self.actions.keys()
 
-#         self.change_controller()
-#         self.input_mappings = {"K_Down": pygame.K_DOWN, "K_Up": pygame.K_UP, "K_Left": pygame.K_LEFT, "K_Right": pygame.K_RIGHT, "K_A": pygame.K_a, "K_D": pygame.K_d, "K_W": pygame.K_w, "K_S": pygame.K_s, "K_T": pygame.K_t, "K_M": pygame.K_m, "K_L": pygame.K_l, "K_X": pygame.K_x, "K_C": pygame.K_c, "K_G": pygame.K_g, "K_F": pygame.K_f, "K_PGUP": pygame.K_PAGEUP, "K_ESCAPE": pygame.K_ESCAPE, "K_PGDOWN": pygame.K_PAGEDOWN, "K_F3": pygame.K_F3, "K_F4": pygame.K_F4}
-#         self.mouse_mappings = {"M_SCRL_UP": -1, "M_SCRL_DOWN": 1}
-#         self.controller_input =  {"C_DDown": False, "C_DUp": False, "C_DLeft": False, "C_DRight": False, "C_BY": False, "C_BB": False, "C_BA": False, "C_BX": False, "C_T1": False, "C_T2": False, "C_B1": False, "C_B2": False, "C_LStick_Up": False, "C_LStick_Down": False, "C_LStick_Left": False, "C_LStick_Right": False, "C_RStick_Up": False, "C_RStick_Down": False, "C_RStick_Left": False, "C_RStick_Right": False}
+    def get_action_pressed(self, name) -> bool:
+        if self.action_exists(name):
+            return name in self.pressed_set
+        else:
+            warning(f'Action with name "{name}" does not exist.')
 
-#         self.scroll_input = {"M_SCRL_UP": False, "M_SCRL_DOWN": False}
+    def get_action_strength(self, name):
+        if self.action_exists(name):
+            return self.pressed[name]
+        else:
+            warning(f'Action with name "{name}" does not exist.')
 
-#         self.joy_stick_generosity = 0.2
-#         self.get_controller_input()
-#         self.curr_input_type = "key"
+    def get_action_released(self, name) -> bool:
+        if self.action_exists(name):
+            return name in self.released
+        else:
+            warning(f'Action with name "{name}" does not exist.')
 
-#         self.actions = self.scene.files.load_json('controlls/actions.json')
-#         for action in self.actions:
-#             self.active[action] = False
+    def get_vector(self, neg_x: str, pos_x: str, neg_y: str, pos_y: str):
+        """Get a vector from the strengths of 4 actions."""
+        x = self.get_action_strength(pos_x) - self.get_action_strength(neg_x)
+        y = self.get_action_strength(pos_y) - self.get_action_strength(neg_y)
 
-#     def get_mouse_pressed(self, type='game') -> tuple[bool, bool, bool]:
-#         return pygame.mouse.get_pressed()
+        return Vector(x, y)
 
-#     def get_controllers(self):
-#         self.controllers = [pygame.joystick.Joystick(x) for x in range(pygame.joystick.get_count())]
+    def _pressed_callback(self, name):
+        pass
 
-#     def change_controller(self):
-#         self.get_controllers()
-#         if len(self.controllers) > 0:
-#             self.controller = self.controllers[0]
-#         else:
-#             self.controller = None
-            
-#     def get_controller_input(self): # shitty controller standards kinda make this mess necessary
-#         if len(self.controllers) > 0:
-#             for input in self.controller_input:
-#                 self.controller_input[input] = False
-            
-#             controller_name = self.controller.get_name()
-#             if controller_name == "Xbox One Controller":
-#                 dpad = self.controller.get_hat(0)
-#                 if dpad[0] == -1:
-#                     self.controller_input["C_DLeft"] = True
-#                 if dpad[0] == 1:
-#                     self.controller_input["C_DRight"] = True
-#                 if dpad[1] == -1:
-#                     self.controller_input["C_DDown"] = True
-#                 if dpad[1] == 1:
-#                     self.controller_input["C_DUp"] = True
+    def _released_callback(self, name):
+        pass
+
+    def update(self):
+        input_vals = {}
+        for name in self.actions:
+            highest = 0.0
+            pressed = False
+            for action in self.actions[name]:
+                if action.input not in input_vals:
+                    input_vals[action.input] = self.window._get_key_down(action.input)
+                if input_vals[action.input] > highest:
+                    highest = input_vals[action.input]
+                if pressed == False:
+                    pressed = action.check_val(input_vals[action.input])
+            self.pressed[name] = highest
+            if pressed:
+                self.pressed_set.add(name)
+
+    @classmethod
+    def parse_actions(self, source: dict[str, list[str]]):
+        actions = {}
+        for action in source:
+            inputs = []
+            for input in source[action]:
+                match = re.match(r"^([A-Z0-9_]+)\s*([<>=!]+)?\s*([-\d\.]+)?$", input.strip())
+                if not match:
+                    raise ValueError(f"Invalid input string format: {input}")
                 
-#                 # left stick
-#                 lStickHor = self.controller.get_axis(0)
-#                 lStickVert = self.controller.get_axis(1)
-#                 if lStickVert > 1 - self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Down"] = True
-#                 elif lStickVert < -1 + self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Up"] = True
-#                 if lStickHor > 1 - self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Right"] = True
-#                 elif lStickHor < -1 + self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Left"] = True
-#                 if lStickHor > 0.65 - self.joy_stick_generosity and lStickVert > 0.65 - self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Down"] = True
-#                     self.controller_input["C_LStick_Right"] = True
-#                 if lStickHor > 0.65 - self.joy_stick_generosity and lStickVert < -0.65 + self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Up"] = True
-#                     self.controller_input["C_LStick_Right"] = True
-#                 if lStickHor < -0.65 + self.joy_stick_generosity and lStickVert > 0.65 - self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Down"] = True
-#                     self.controller_input["C_LStick_Left"] = True
-#                 if lStickHor < -0.65 + self.joy_stick_generosity and lStickVert < -0.65 + self.joy_stick_generosity:
-#                     self.controller_input["C_LStick_Up"] = True
-#                     self.controller_input["C_LStick_Left"] = True
+                input_name = match.group(1)
+                check_type = match.group(2) or ""
+                val = match.group(3) or ""
+                if check_type == "" or val == "":
+                    check = None
+                else:
+                    check = ActionCheck(check_type, val)
 
-#                 # left stick
-#                 rStickHor = self.controller.get_axis(2)
-#                 rStickVert = self.controller.get_axis(3)
-#                 if rStickVert > 1 - self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Down"] = True
-#                 elif rStickVert < -1 + self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Up"] = True
-#                 if rStickHor > 1 - self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Right"] = True
-#                 elif rStickHor < -1 + self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Left"] = True
-
-#                 if rStickHor > 0.65 - self.joy_stick_generosity and rStickVert > 0.65 - self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Down"] = True
-#                     self.controller_input["C_RStick_Right"] = True
-#                 if rStickHor > 0.65 - self.joy_stick_generosity and rStickVert < -0.65 + self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Up"] = True
-#                     self.controller_input["C_RStick_Right"] = True
-#                 if rStickHor < -0.65 + self.joy_stick_generosity and rStickVert > 0.65 - self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Down"] = True
-#                     self.controller_input["C_RStick_Left"] = True
-#                 if rStickHor < -0.65 + self.joy_stick_generosity and rStickVert < -0.65 + self.joy_stick_generosity:
-#                     self.controller_input["C_RStick_Up"] = True
-#                     self.controller_input["C_RStick_Left"] = True
-
-#     def reset_actions(self):
-#         for action in self.active:
-#             self.active[action] = False
-
-#     def check_action(self, action) -> bool: 
-#         return self.active[action]
-
-#     def event_loop(self, event):
-#         if event.type == pygame.JOYDEVICEADDED:
-#             self.change_controller()
-#         if event.type == pygame.JOYDEVICEREMOVED:
-#             self.change_controller()
-#         if event.type == pygame.MOUSEWHEEL:
-#             if event.y == self.mouse_mappings["M_SCRL_UP"]:
-#                 self.scroll_input["M_SCRL_UP"] = True
-#             if event.y == self.mouse_mappings["M_SCRL_DOWN"]:
-#                 self.scroll_input["M_SCRL_DOWN"] = True
-
-#     def handle_input(self):
-#         pygame.event.get()
-#         keys = pygame.key.get_pressed()
-
-#         self.reset_actions()
-
-#         for action in self.actions:
-#             for input in self.actions[action]:
-#                 if input.startswith("K") and keys[self.input_mappings[input]]:
-#                     self.active[action] = True
-#                 if self.controller != None:
-#                     if input.startswith("C") and self.controller_input[input]:
-#                         self.active[action] = True
-#                 if input.startswith("M"):
-#                     if input.startswith("M_SCRL") and self.scroll_input[input] == True:
-#                         self.active[action] = True
-                        
-#         self.scroll_input["M_SCRL_UP"] = False
-#         self.scroll_input["M_SCRL_DOWN"] = False
-        
-                    
-#         self.get_controller_input()
-
+                inputs.append(Action(CHARACTERSTRINGMAP[input_name], check))
+            
+            actions[action] = inputs
+            

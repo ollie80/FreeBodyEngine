@@ -56,13 +56,9 @@ def build_cursor_from_pil(img: Image.Image, hotspot=(0, 0)):
 
     bmp_bits, and_mask = rgba_to_bitmap_and_mask(img)
 
-    # Reserved (2 bytes), must be 0
-    # Type (2 bytes), 2 for cursor
-    # Count (2 bytes), number of images (1)
     icondir = struct.pack("<HHH", 0, 2, 1)
     
 
-    # Step 4: ICONDIRENTRY (16 bytes)
     bWidth = width if width < 256 else 0
     bHeight = height if height < 256 else 0
     bColorCount = 0
