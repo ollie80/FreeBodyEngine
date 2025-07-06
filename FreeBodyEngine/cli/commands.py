@@ -255,6 +255,36 @@ def get_project(args):
     else:
         print(f'ID: "{project}", Name: "{project_registry.get_project_name(project)}", Path: "{project_registry.get_project_path(project)}"')
 
+def get_project_lines(id: str):
+    config = project_registry.get_project_config(id)
+    lines = 0 
+    path = project_registry.get_project_path(id)
+    lines += len(open(os.path.join(path, config.get('main_file'))).readlines())
+    
+    for root, dirs, files in os.walk(os.path.join(path, config.get('code'))):
+        for filename in files:
+            if filename.endswith('.py'):
+                lines += len(open(os.path.join(root, filename)).readlines())
+    return lines
+
+def lines_project(args):
+    if len(args) > 0:
+        project = args[0]
+    
+    else:
+        current = get_current_project()
+        if current != None:
+            project = current
+        else:
+            print("No project specified.")
+    
+    if project_registry.project_exisits(project):
+        print(f'Total Lines: {get_project_lines(project)}')
+
+    else:
+        print(f'Project with ID "{project}" does not exsist.')
+    
+
 def help_handler(args):
     print("FreeBodyEngine CLI")
     print("Usage: fb <command> [subcommand] [args]")
@@ -270,7 +300,8 @@ root_commands = [
     Command(['project', "p"], subcommands=[
         Command(['list', "l"], list_projects, help_text="List all projects in the registry."),
         Command(['delete', "d"], delete_project, help_text="Deletes a project."),
-        Command(['get', "g"], get_project, help_text="Gets the information of a project.")
+        Command(['get', "g"], get_project, help_text="Gets the project information."),
+        Command(['lines'], lines_project, help_text="Gets the lines of a project.")
     ], help_text="Commands to work with the FB Project system."),
     Command(["create", "c"], subcommands=[
         Command(["sprite", "s"], create_sprite, help_text="Create a new sprite."),

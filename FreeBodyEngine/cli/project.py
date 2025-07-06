@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import tomllib
 
 REGISTRY_DIR = os.path.join(os.path.expanduser("~"), "FreeBodyEngine")
 REGISTRY_PATH = os.path.join(REGISTRY_DIR, "projects.json")
@@ -39,6 +40,11 @@ class ProjectRegistry:
                 return True
         return False
 
+    def get_project_config(self, id: str):
+        path = self.get_project_path(id) 
+        config_path = os.path.join(path, 'fbproject.toml')
+        txt = open(config_path).read()
+        return tomllib.loads(txt)
 
     def add_project(self, path: str, name: str):
         path = os.path.abspath(path)

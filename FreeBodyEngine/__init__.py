@@ -37,6 +37,7 @@ def error(msg):
     """Throws an error."""
     get_main().logger.error(msg)
 
+
 def _handle_signal(signal, frame):
     get_main().quit()
     sys.exit(0)
