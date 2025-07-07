@@ -2,11 +2,13 @@ import sys
 import subprocess
 import os
 from FreeBodyEngine.cli.project import ProjectRegistry
+from FreeBodyEngine.cli.fulcrum import fulcrum_handler
 from FreeBodyEngine.dev.run import main as run_project
 import tomllib
 import platform
 from importlib.resources import files
 import shutil
+
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -19,7 +21,6 @@ class Environment:
         self.observer = None
         self.running = False
         self.path = None
-        
 
         self.project_registry = ProjectRegistry()
 
@@ -71,6 +72,9 @@ class Environment:
 
     def on_file_change(self, path):
         print(f"[env] File changed: {path}")
+    
+    def reload_registry(self):
+        self.project_registry = ProjectRegistry()
 
 class FileChangeHandler(FileSystemEventHandler):
     def __init__(self, env):
@@ -157,6 +161,8 @@ def init_handler(env, args):
             env.project_registry.add_project(cwd, project_name)
         else:
             print(f'A project with the name "{project_name}" already exists.')
+    
+    env.reload_registry()
 
 def get_log_file(env):
     name = None
@@ -325,7 +331,6 @@ code = "./code"
         f.write(main_py_content)
 
     os.chdir(project_dir)
-    env = Environment(path=project_dir)
     init_handler(env, [])
 
     print(f"Project '{project_name}' created successfully and initialized at {os.path.abspath(project_dir)}")
@@ -408,7 +413,63 @@ def enter_handler(env, args):
     env.stop()
 
 def mkdir_handler(env, args):
+    if not args:
+        print("Usage: mkdir <path>")
+        return
     
+    dir_path = os.path.abspath(os.path.join(env.path, args[0]))
+    if os.path.exists(dir_path):
+        print(f'Path "{dir_path}" already exists.')
+        return
+    os.makedirs(dir_path)
+    
+def rm_handler(env, args):
+    flags, positional = parse_options(args, {'r', 'f'})
+    recusive = 'r' in flags
+    force = 'f' in flags
+
+    if len(positional) == 0:
+        print("Usage: rm <path>")
+        return
+
+    path = os.path.join(env.path, positional[0])
+    if os.path.exists(path):
+        if os.path.isdir(path):
+            if recusive:
+                if force:
+                    shutil.rmtree(path)        
+                else:
+                    if confirm():
+                        shutil.rmtree(path)
+                    else:
+                        print('Aborting.')
+            else:
+                print(f'ERROR: "{path}" is directory, use -r to delete recursively.')
+        else:
+            os.remove(path)
+    else:
+        print(f'Path "{path}" does not exist.')
+    env.reload_registry()
+
+        
+def parse_options(args, allowed_flags=None):
+    """
+    Separates flags (e.g. '-rf') from positional arguments.
+    Returns: (set of flags, list of arguments)
+    """
+    flags = set()
+    positional = []
+
+    for arg in args:
+        if arg.startswith('-') and not os.path.isdir(arg) and not os.path.isfile(arg):
+            for ch in arg[1:]:
+                if allowed_flags is None or ch in allowed_flags:
+                    flags.add(ch)
+        else:
+            positional.append(arg)
+
+    return flags, positional
+
 
 def cd_handler(env, args):
     if not args:
@@ -491,7 +552,10 @@ root_commands = [
     Command(['clear'], clear_handler, help_text="Clear the command line."),
     Command(['cd'], cd_handler, help_text="Change to a directory."),
     Command(['ls'], ls_handler, help_text="List files and sub-directories."),
-    Command(['cat'], cat_handler, help_text="Print the contents of a file.")
+    Command(['cat'], cat_handler, help_text="Print the contents of a file."),
+    Command(["mkdir"], mkdir_handler, help_text="Create a directory."),
+    Command(["rm"], rm_handler, help_text="Remove a file or directory."),
+    Command(["fulcrum"], fulcrum_handler, help_text='A small text editor.')
 ]
 
 def dispatch(args, commands, env=None, path=[]):

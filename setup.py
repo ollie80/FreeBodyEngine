@@ -17,11 +17,11 @@ setup(
     install_requires=["PyOpenGL >= 3.1.9",
                 "numpy >= 2.3.1",
                 "glfw >= 2.9.0",
-                "glfw",
                 "watchdog",
                 "freetype",
 
                 #windows
                 "pywin32; sys_platform == 'win32'"
+                "windows-curses; sys_platform == 'win32'"
                 ]
 )
