@@ -1,10 +1,10 @@
 from FreeBodyEngine.core.scene import Scene
 from FreeBodyEngine.graphics.manager import GraphicsManager
-from FreeBodyEngine.core.window import Win32Window, GLFWWindow
 from FreeBodyEngine.graphics.renderer import Renderer
 from FreeBodyEngine.graphics.gl import GLRenderer
 from FreeBodyEngine.core.window import Window
 from FreeBodyEngine.core.files import FileManager
+from FreeBodyEngine.core.input import Input
 from FreeBodyEngine.core.logger import Logger
 from FreeBodyEngine.core import Time
 from FreeBodyEngine.graphics.color import Color
@@ -14,13 +14,18 @@ from typing import Union, Literal
 from sys import exit
 import os
 import tomllib
-
+import sys
 
 def create_window(main: 'Main', window, size, title, display) -> Window:
     if window == "win32":
+        from FreeBodyEngine.core.window.win32 import Win32Window
         return Win32Window(main, size, window, display)
     if window == 'glfw':
+        from FreeBodyEngine.core.window.glfw import GLFWWindow
         return GLFWWindow(main, size, window, title, display)
+    if window == "headless":
+        from FreeBodyEngine.core.window.headless import HeadlessWindow
+        return HeadlessWindow(main, size, window, title, display)
     else:
         raise NotImplementedError(f"No window implemented with name {window}.")
 
@@ -30,6 +35,17 @@ def create_renderer(main, graphics_api) -> Renderer:
         return GLRenderer(main)
     else:
         error(f"{graphics_api.capitalize()} renderer is not implemented.")
+
+def get_window_type(main: 'Main'):
+    if main.headless_mode:
+        return "headless"
+    plat = sys.platform
+    if plat == "win32":
+        return "glfw"
+    elif plat == "darwin":
+        return "glfw"
+    elif plat == "linux":
+        return "glfw"
 
 class Main:
     """
@@ -53,7 +69,7 @@ class Main:
     :param pygame_flags: Flags that will be passed onto pygame during window creation.
     :type pygame_flags: int
     """
-    def __init__(self, path="./", window_size: tuple = [800, 800], fps: int = 69, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl", headless: bool = False):
+    def __init__(self, path="./", window_size: tuple = [800, 800], fps: int = 69, actions={}, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl", headless: bool = False):
         from FreeBodyEngine import _set_main
         _set_main(self)
         
@@ -91,12 +107,14 @@ class Main:
             dev_mode = " (DEV)"
 
         # create window and graphics
+        self.window = create_window(self, get_window_type(self), window_size, self.name + dev_mode, display)
+        while self.window.is_ready() == False:
+            pass
         if not self.headless_mode:
-            self.window = create_window(self, 'glfw', window_size, self.name + dev_mode, display)
-            while self.window.is_ready() == False:
-                log('not ready')
             self.renderer = create_renderer(self, graphics_api)
             self.graphics = GraphicsManager(self, self.renderer, self.window)
+
+        self.input = Input(self, actions, self.window)
 
     def add(self, scene: Scene):
         """
@@ -133,10 +151,9 @@ class Main:
 
     def run(self):
         while self.running:
-            
             self.time.update(self.fps)
-            if not self.headless_mode:
-                self.window.update()
+            self.window.update()
+            self.input.update()
 
             if self.active_scene != None:
                 self.active_scene._update()

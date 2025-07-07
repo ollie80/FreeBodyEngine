@@ -18,10 +18,12 @@ setup(
                 "numpy >= 2.3.1",
                 "glfw >= 2.9.0",
                 "watchdog",
-                "freetype",
+                "freetype-py",
+                "PySDL2",
+                "pysdl2-dll",
 
                 #windows
-                "pywin32; sys_platform == 'win32'"
+                "pywin32; sys_platform == 'win32'",
                 "windows-curses; sys_platform == 'win32'"
                 ]
 )

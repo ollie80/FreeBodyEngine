@@ -1,3 +1,2 @@
 """Visual debuging nodes."""
 
-class 

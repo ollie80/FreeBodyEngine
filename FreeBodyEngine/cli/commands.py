@@ -346,7 +346,7 @@ def get_project(env, args):
             print("No project ID specified.")
             return
 
-    if not env.project_registry.project_exisits(project):
+    if not env.project_registry.project_exists(project):
         print(f"Project with ID {project} does not exist.")
     else:
         print(f'ID: "{project}", Name: "{env.project_registry.get_project_name(project)}", Path: "{env.project_registry.get_project_path(project)}"')
@@ -585,6 +585,5 @@ def dispatch(args, commands, env=None, path=[]):
     print(f"Unknown command: {cmd_name}")
 
 def main():
-    project_registry = ProjectRegistry()
     env = Environment()
     dispatch(sys.argv[1:], root_commands, env)

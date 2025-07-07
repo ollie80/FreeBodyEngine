@@ -1,8 +1,10 @@
 from typing import TYPE_CHECKING, Union
-from FreeBodyEngine import warning
+from FreeBodyEngine import warning, get_main
 
 from enum import Enum, auto
 from dataclasses import dataclass
+
+
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -11,6 +13,7 @@ if TYPE_CHECKING:
 import re
 from FreeBodyEngine.math import Vector
 import operator
+
 
 class Key(Enum):
     A = auto()
@@ -293,7 +296,7 @@ class Action:
         else:
             comparison_ops[self.check.check_type](val, self.check.val)
         
-class InputManager:
+class Input:
     def __init__(self, main: 'Main', actions: dict[str, list[Action]], window: 'Window'):
         self.actions = actions
         self.pressed = {}
@@ -302,6 +305,11 @@ class InputManager:
         self.window = window
 
         self.gamepads = {}
+
+    def set_actions(self, actions: dict[str, list[Action]]):
+        self.actions = actions
+        print(actions)
+
 
     def bind_action(self, name: str, inputs: list[Key]):
         pass
@@ -381,4 +389,17 @@ class InputManager:
                 inputs.append(Action(CHARACTERSTRINGMAP[input_name], check))
             
             actions[action] = inputs
-            
+        return actions
+    
+def get_action_pressed(name: str) -> bool:
+    return get_main().input.get_action_pressed(name)
+
+def get_action_strength(name: str) -> float:
+    return get_main().input.get_action_strength(name)
+
+def get_action_released(name: str) -> bool:
+    return get_main().input.get_action_released(name)
+
+def get_vector(neg_x: str, pos_x: str, neg_y: str, pos_y: str) -> Vector:
+    """Get a vector from the strengths of four actions."""
+    return get_main().input.get_vector(neg_x, pos_x, neg_y, pos_y)
