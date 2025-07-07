@@ -102,16 +102,12 @@ class Transform:
     def model(self) -> numpy.ndarray:
         px = self.position.x
         py = self.position.y
-        pz = getattr(self.position, 'z', 0.0)
 
         sx = self.scale.x
         sy = self.scale.y
-        sz = getattr(self.scale, 'z', 1.0)
 
-        # Rotation in degrees; interpret as rotation about Z for 2D
         rz = self.rotation  # assume scalar float for now, rotation around Z
 
-        # Convert to radians
         rz_rad = math.radians(rz)
 
         cos_r = math.cos(rz_rad)
@@ -120,7 +116,7 @@ class Transform:
         scale = numpy.array([
             [sx, 0,  0,  0],
             [0,  sy, 0,  0],
-            [0,  0,  sz, 0],
+            [0,  0,  1, 0],
             [0,  0,  0,  1]
         ], dtype=float)
 
@@ -132,13 +128,13 @@ class Transform:
         ], dtype=float)
 
         translation = numpy.array([
-            [1, 0, 0, px],
-            [0, 1, 0, py],
-            [0, 0, 1, pz],
-            [0, 0, 0, 1]
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [px, -py, 0, 1]
         ], dtype=float)
 
-        return translation @ rotation @ scale
+        return scale @ rotation @ translation
     
     def __eq__(self, other):
         if isinstance(other, Transform):
@@ -217,7 +213,6 @@ class Transform:
         raise TypeError("Transform can only be divided by a scalar or another Transform")
 
     def to_matrix(self):
-        # Construct 2D affine transform matrix: T * R * S
         cos_r = math.cos(math.radians(self.rotation))
         sin_r = math.sin(math.radians(self.rotation))
 
@@ -230,10 +225,9 @@ class Transform:
             [0,           0,          1]])
         
     def compose_with(self, parent_transform: 'Transform') -> 'Transform':
-        # Apply parent transform to self (full matrix multiplication)
         parent_mat = parent_transform.to_matrix()
         local_mat = self.to_matrix()
-        result_mat = parent_mat @ local_mat # type: ignore
+        result_mat = parent_mat @ local_mat
         return Transform.from_matrix(result_mat)
 
     @classmethod

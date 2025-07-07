@@ -12,6 +12,7 @@ from FreeBodyEngine.graphics.sprite import Sprite
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
 
+import FreeBodyEngine.engine_assets
 from FreeBodyEngine.graphics.image import Image
 import os
 import io
@@ -43,7 +44,10 @@ def load_shader(path: str):
         warning("Cannot load a shader while in headless mode as it requires a renderer.")
 
 def load_sprite(path: str):
-    return get_main().files.load_sprite(path)
+    if not get_main().headless_mode:
+        return get_main().files.load_sprite(path)
+    else:
+        warning("Cannot load a shader while in healess mode as it requires a renderer.")
 
 def read_assets(path):
     assets = {}
@@ -79,7 +83,7 @@ class FileManager:
         n_path = path
         if path.startswith('engine'):
             n_path = n_path.removeprefix('engine/')
-            n_path = files('FreeBodyEngine.engine_assets').joinpath(n_path)            
+            n_path = files(FreeBodyEngine.engine_assets).joinpath(n_path)            
         else:
             n_path = (self.path) + '/' + path
         return os.path.abspath(n_path)
