@@ -83,6 +83,7 @@ class Main:
 
         self.fps = fps
         self.dev = dev
+        self.running = True
 
         # caption
         dev_mode = ""
@@ -124,13 +125,14 @@ class Main:
     def quit(self):
         log("Quiting game.")
         self.on_quit()
-        exit(0)
+
+        self.running = False
 
     def on_quit(self):
         pass
 
     def run(self):
-        while True:
+        while self.running:
             
             self.time.update(self.fps)
             if not self.headless_mode:

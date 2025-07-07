@@ -22,7 +22,7 @@ def main(path='./'):
         subprocess.run(["python", main_script, *run_flags, *flags])
 
     except KeyboardInterrupt:
-        sys.exit(0)
+        pass
 
 if __name__ == '__main__':
     main()
