@@ -34,7 +34,7 @@ class ProjectRegistry:
             new_id += 1
         return str(new_id)
     
-    def project_exisits(self, id: int):
+    def project_exists(self, id: int):
         for project in self.projects:
             if project.get('id') == id:
                 return True

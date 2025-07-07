@@ -40,7 +40,6 @@ def error(msg):
 
 def _handle_signal(signal, frame):
     get_main().quit()
-    sys.exit(0)
 
 def log(*msg):
     """Logs any number of messages to the console."""
