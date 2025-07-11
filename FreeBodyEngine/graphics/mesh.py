@@ -56,6 +56,38 @@ class Mesh:
         return cls(vertices, normals, uvs, indices)
         
     @classmethod
+    def generate_circle(cls, radius=1.0, segments=32):
+        vertices = [0.0, 0.0, 0.0]  # center
+        normals = [0.0, 0.0, 1.0]   # facing +Z
+        uvs = [0.5, 0.5]            # center UV
+        indices = []
+
+        for i in range(segments + 1):  # +1 to close the loop
+            angle = 2 * np.pi * i / segments
+            x = np.cos(angle) * radius
+            y = np.sin(angle) * radius
+
+            # Add vertex on the edge
+            vertices.extend([x, y, 0.0])
+            normals.extend([0.0, 0.0, 1.0])
+
+            # Map to UV space (0 to 1)
+            u = (x / (2 * radius)) + 0.5
+            v = (y / (2 * radius)) + 0.5
+            uvs.extend([u, v])
+
+            # Add triangle from center to edge segments
+            if i > 0:
+                indices.extend([0, i, i + 1])
+
+        return cls(
+            vertices=np.array(vertices, dtype=np.float32),
+            normals=np.array(normals, dtype=np.float32),
+            uvs=np.array(uvs, dtype=np.float32),
+            indices=np.array(indices, dtype=np.uint32)
+        )
+    
+    @classmethod
     def generate_cube():
         pass
     

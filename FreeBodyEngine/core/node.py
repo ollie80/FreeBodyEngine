@@ -151,10 +151,10 @@ class Node(GenericNode):
 
     def kill(self):
         """
-        Removes the entity from its scene.
+        Removes the node from its parent.
         """
-        if self in self.scene.entities:
-            self.scene.entities.remove(self)
+        if self.id in self.parent.children.keys():
+            self.parent.remove(self.id)
         self.on_kill()
 
     

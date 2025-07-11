@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from FreeBodyEngine.graphics.gl.renderer import GLRenderer
+    from FreeBodyEngine.graphics.gl33.renderer import GLRenderer
 
 
 class GLImage(Image):

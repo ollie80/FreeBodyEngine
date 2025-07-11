@@ -1,8 +1,9 @@
-import math
 import numpy
 import FreeBodyEngine as engine
 from typing import Iterable, overload, Union, Sequence
 from abc import ABC, abstractmethod
+
+import math
 
 class GenericVector:
     """
@@ -449,6 +450,12 @@ class Vector(GenericVector):
         else:
             self.x, self.y = x, 0
 
+    def copy(self) -> 'Vector':
+        return Vector(self.x, self.y)
+
+    def __neg__(self):
+        return Vector(-self.x, -self.y)
+
     def __iadd__(self, other):
         if isinstance(other, Vector):
             self.x += other.x
@@ -458,6 +465,15 @@ class Vector(GenericVector):
             self.x += other
             self.y += other
             return self
+
+    def cross(self, other: "Vector") -> float:
+        return self.x * other.y - self.y * other.x
+
+    def dot(self, other: "Vector") -> float:
+        return self.x * other.x + self.y * other.y
+
+    def perpendicular(self) -> "Vector":
+        return Vector(-self.y, self.x)
 
     def __add__(self, other):
         if isinstance(other, Vector):

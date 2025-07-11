@@ -6,8 +6,8 @@ from FreeBodyEngine.graphics import renderer
 from FreeBodyEngine.graphics import material
 from FreeBodyEngine.graphics import mesh
 from FreeBodyEngine.graphics import sprite
-from FreeBodyEngine.graphics import gl
+from FreeBodyEngine.graphics import gl33
 from FreeBodyEngine.graphics import fbusl
 
 
-__all__ = ["color", "mesh", "material", "renderer", "manager", "image", "gl", 'sprite', 'fbusl']
+__all__ = ["color", "mesh", "material", "renderer", "manager", "image", "gl33", 'sprite', 'fbusl']

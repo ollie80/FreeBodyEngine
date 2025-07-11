@@ -1,6 +1,7 @@
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING, Union, Literal
 from FreeBodyEngine.core.input import Key
+from FreeBodyEngine.core.mouse import Mouse
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -26,6 +27,10 @@ class Window:
     @size.setter
     @abstractmethod
     def size(self, new: tuple[int, int]):
+        pass
+
+    @abstractmethod
+    def create_mouse(self) -> Mouse:
         pass
 
     def _resize(self):
@@ -59,6 +64,9 @@ class Window:
     def _get_key_down(self, key: Key) -> float:
         pass
 
+    @abstractmethod
+    def set_title(self, new_title: str):
+        pass
 
     @abstractmethod
     def _get_gamepad_state(self, id: int):

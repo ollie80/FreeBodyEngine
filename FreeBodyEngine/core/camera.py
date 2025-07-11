@@ -16,8 +16,8 @@ class Camera:
         self.zoom = zoom
         self.background_color = background_color
         self.projection = projection
-        self.view_matrix: np.ndarray
-        self.proj_matrix: np.ndarray
+        self.view_matrix: np.ndarray = np.identity(4, np.float32)
+        self.proj_matrix: np.ndarray = np.identity(4, np.float32)
 
 class Camera2D(Node2D, Camera):
     """
@@ -39,6 +39,12 @@ class Camera2D(Node2D, Camera):
     def __init__(self, position: 'Vector' = Vector(), zoom: float = 250, rotation: float = 0, projection=CAMERA_PROJECTION.ORTHOGRAPHIC, background_color: Color = Color("#324848")):
         Node2D.__init__(self, position=position, rotation=rotation)
         Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
+
+    
+    def on_initialize(self):
+        self._update_projection_matrix()
+        self._update_view_matrix()
+
 
     def _update_projection_matrix(self):
         width = self.scene.main.window.size[0]
@@ -81,8 +87,38 @@ class Camera2D(Node2D, Camera):
 
         self.proj_matrix = np.dot(proj_matrix, scale_matrix)
 
+    def _get_view_mat(self):
+        tx, ty = -self.world_transform.position.x, self.world_transform.position.y
+        translation_matrix = np.array(
+            [
+                [1.0, 0.0, 0.0, tx],
+                [0.0, 1.0, 0.0, -ty],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        # rotation around z axis
+        angle = math.radians(self.world_transform.rotation)
+        cos_theta = math.cos(angle)
+        sin_theta = math.sin(angle)
+
+        rotation_matrix = np.array(
+            [
+                [cos_theta, -sin_theta, 0.0, 0.0],
+                [sin_theta, cos_theta, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+
+        return np.dot(translation_matrix, rotation_matrix)
+
+
     def _update_view_matrix(self):
-        tx, ty = -self.transform.position.x, self.transform.position.y
+        tx, ty = -self.world_transform.position.x, self.world_transform.position.y
         translation_matrix = np.array(
             [
                 [1.0, 0.0, 0.0, 0.0],
@@ -94,7 +130,7 @@ class Camera2D(Node2D, Camera):
         )
 
         # rotation around Z-Axis
-        angle = math.radians(self.transform.rotation)
+        angle = math.radians(self.world_transform.rotation)
         cos_theta = math.cos(angle)
         sin_theta = math.sin(angle)
 
@@ -120,6 +156,10 @@ class Camera3D(Node3D, Camera):
     def __init__(self, position: 'Vector' = Vector3(), rotation: 'Vector' = Vector3(), zoom: float = 1.0, projection=CAMERA_PROJECTION.ORTHOGRAPHIC, background_color: Color = Color("#324848")):
         Node3D.__init__(self, position=position, rotation=rotation)
         Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
+
+    def on_initialize(self):
+        self._update_projection_matrix()
+        self._update_view_matrix()
 
     def _update_projection_matrix(self):
         width = self.scene.main.window.size[0]
@@ -156,8 +196,8 @@ class Camera3D(Node3D, Camera):
             ], dtype=np.float32)
 
     def _update_view_matrix(self):
-        pos = self.transform.position
-        rot = self.transform.rotation  # assumed to be Vector(pitch, yaw, roll) in degrees
+        pos = self.world_transform.position
+        rot = self.world_transform.rotation  # assumed to be Vector(pitch, yaw, roll) in degrees
 
         # Convert rotation to radians
         pitch = math.radians(rot.x)

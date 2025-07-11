@@ -4,7 +4,7 @@ from FreeBodyEngine.graphics.fbusl.semantic import SemanticAnalyser
 from FreeBodyEngine.graphics.shader import Shader
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
-from FreeBodyEngine.graphics.gl.image import Image
+from FreeBodyEngine.graphics.gl33.image import Image
 from OpenGL.GL import *
 import numpy as np
 from FreeBodyEngine.graphics.color import Color

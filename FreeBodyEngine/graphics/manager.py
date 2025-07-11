@@ -5,6 +5,7 @@ from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
 from FreeBodyEngine.graphics.image import Image 
 from FreeBodyEngine.math import GenericVector, Transform
 from dataclasses import dataclass
+from FreeBodyEngine.graphics.debug import Debug2D
 
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
 
@@ -37,7 +38,7 @@ class GraphicsManager:
         self.window = window
         self.draw_calls: list[DrawCall] = []
 
-        self.main_framebuffer = self.renderer.create_framebuffer(self.window.size[0], self.window.size[1], {
+        self.main_framebuffer = self.renderer.create_framebuffer(int(self.window.size[0]), int(self.window.size[1]), {
             'albedo': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
             'normal': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
             'emmision': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
@@ -74,8 +75,13 @@ class GraphicsManager:
         for sprite in sprites:
             self._draw_sprite(sprite._sprite, sprite.world_transform, camera)
 
+        debugs: list[Debug2D] = camera.scene.root.find_nodes_with_type('Debug2D')
+        for debug in debugs:
+            self.renderer.draw_mesh(debug.mesh, debug.material, debug.world_transform, camera)
+
+
         self.main_framebuffer.unbind()
-        self.main_framebuffer.draw('albedo')
+        self.main_framebuffer.draw('albedo', self.window.size)
 
 
     def draw(self, camera):

@@ -1,0 +1,2 @@
+render_mode = "wireframe"
+albedo = "#FF0000FF"

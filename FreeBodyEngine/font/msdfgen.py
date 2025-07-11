@@ -41,7 +41,6 @@ def normalize_edges(edges, size, padding):
         new_edges.append((a_new, b_new))
     return new_edges
 
-# signed distance to a line segment
 def signed_distance(p, a, b):
     pa = p - a
     ba = b - a
@@ -52,7 +51,6 @@ def signed_distance(p, a, b):
     side = np.sign(cross)
     return dist * side
 
-# generate SDF
 def generate_sdf(edges, size, spread):
     sdf = np.zeros((size, size), dtype=np.float32)
     for y in range(size):
@@ -65,18 +63,47 @@ def generate_sdf(edges, size, spread):
                     min_d = d
             sdf[y, x] = min_d
 
-    # Normalize
     img = np.clip((sdf / spread) * 127 + 128, 0, 255).astype(np.uint8)
     return Image.fromarray(img, mode='L')
+
+def get_global_metadata(face: freetype.Face, size: int):
+    ascender = face.size.ascender / size
+    descender = face.size.descender / size
+    line_height = face.size.height / size
+
+    return ascender, descender, line_height
+
+def get_metadata(face: freetype.Face, char: str, size: int):
+    face.load_char(char)
+    glyph = face.glyph
+
+    bitmap = glyph.bitmap
+    width = bitmap.width
+    height = bitmap.rows
+    bitmap_left = glyph.bitmap_left
+    bitmap_top = glyph.bitmap_top
+
+    advance_x = glyph.advance.x / size
+    advance_y = glyph.advance.y / size
+
+    return {
+        "char": char,
+        "width": width,
+        "height": height,
+        "bearingX": bitmap_left,
+        "bearingY": bitmap_top,
+        "advanceX": advance_x,
+        "advanceY": advance_y
+    }
 
 
 def generate_char(char: str, face: freetype.Face, image_size: int) -> Image:
     spread = image_size / 8  # max distance to measure from edge
-
+    data = get_metadata(face, char, image_size)
     face.set_char_size(image_size * image_size)
 
     points, tags, contours = get_outline(face, char)
     edges = extract_edges(points, contours)
     norm_edges = normalize_edges(edges, image_size, spread)
-    return generate_sdf(norm_edges, image_size, spread).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    return generate_sdf(norm_edges, image_size, spread).transpose(Image.Transpose.FLIP_TOP_BOTTOM), data
 
