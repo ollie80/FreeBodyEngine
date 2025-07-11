@@ -60,13 +60,13 @@ from FreeBodyEngine import math
 # from FreeBodyEngine import ui
 from FreeBodyEngine.core.time import cooldown, physics_cooldown
 from FreeBodyEngine.core.input import get_action_pressed, get_action_released, get_action_strength, get_vector
-from FreeBodyEngine.utils import load_image, load_material, load_sprite, load_shader
+from FreeBodyEngine.utils import load_image, load_material, load_sprite, load_shader, load_sound
 from FreeBodyEngine import graphics
 from FreeBodyEngine import utils
 
 from FreeBodyEngine.core.window import create_cursor, set_cursor
 
-__all__ = ["utils", "load_material", "load_image", 'cooldown', 'physics_cooldown', "load_shader", "load_sprite", "core", "math", "graphics", "error", "warning", "log", "get_main", "create_cursor", "set_cursor", "delta", "init", "get_action_pressed", "get_action_released", "get_action_strength", "get_vector"]
+__all__ = ["utils", "load_material", "load_image", 'cooldown', 'physics_cooldown', "load_shader", "load_sound",  "load_sprite", "core", "math", "graphics", "error", "warning", "log", "get_main", "create_cursor", "set_cursor", "delta", "init", "get_action_pressed", "get_action_released", "get_action_strength", "get_vector"]
 
 
 

@@ -6,6 +6,7 @@ from FreeBodyEngine.core.window import Window
 from FreeBodyEngine.core.files import FileManager
 from FreeBodyEngine.core.input import Input
 from FreeBodyEngine.core.logger import Logger
+from FreeBodyEngine.audio.sound import AudioManager
 from FreeBodyEngine.core.time import Time, CooldownManager
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine import log, warning, error
@@ -81,7 +82,7 @@ class Main:
 
 
         # system managers
-        self.audio = None
+        self.audio = AudioManager()
         self.logger = Logger()
         self.time = Time()
 

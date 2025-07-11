@@ -94,19 +94,26 @@ class FileManager:
         return os.path.join(base, self.main.name)
 
 
-    def load_data(self, path: str):
+
+    def load_data(self, path: str, bytes: bool = False):
         if not self.dev:
-            if path in self.data.keys():
-                return io.BytesIO(self.data[path]).read().decode('UTF-8')
+            if path in self.data:
+                raw_bytes = self.data[path]
+                return raw_bytes if bytes else raw_bytes.decode("utf-8")
             else:
                 raise FileExistsError(f"No data file at path '{path}'.")
-
         else:
             sys_path = self.get_file_path(path)
             if os.path.exists(sys_path):
-                return open(sys_path).read()
+                mode = "rb" if bytes else "r"
+                with open(sys_path, mode) as f:
+                    return f.read()
             else:
                 raise FileExistsError(f"No data file at path '{sys_path}'.")
+
+    def load_sound(self, path: str):
+        data = self.load_data(path, bytes=True)
+        return self.main.audio.create_sound(io.BytesIO(data))
 
     def load_material(self, path: str):
         """
