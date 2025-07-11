@@ -21,6 +21,9 @@ setup(
                 "freetype-py",
                 "PySDL2",
                 "pysdl2-dll",
+                "sounddevice",
+                "soundfile",
+                "scipy",
 
                 #windows
                 "pywin32; sys_platform == 'win32'",

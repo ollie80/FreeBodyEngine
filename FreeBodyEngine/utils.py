@@ -24,6 +24,11 @@ def load_material(path: str):
     else:
         warning("Cannot load a material while in headless mode as it requires a renderer.")
 
+
+def load_sound(path: str):
+    return get_main().files.load_sound(path)
+
+
 def load_shader(path: str):
     if not get_main().headless_mode:
         return get_main().files.load_shader(path)
