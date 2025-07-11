@@ -1,13 +1,13 @@
 from typing import Optional, Union, Literal
 import numpy as np
-import FreeBodyEngine as engine
-import pygame
+from FreeBodyEngine.math import Curve, Linear, Vector
+
 import random
 
-from pygame.math import Vector2 as vector
+
 
 class UIAnimation:
-    def __init__(self, element: "UIElement", target_style: str, duration: int, end_val: any, curve: engine.math.Curve = engine.math.Linear(), start=None):
+    def __init__(self, element: "UIElement", target_style: str, duration: int, end_val: any, curve: Curve = Linear(), start=None):
         self.element: UIElement = element
         self.target_style = target_style
         
@@ -363,7 +363,7 @@ class UIButton(UIElement):
 
     def _check_click(self):
         if pygame.mouse.get_pressed()[0]:
-            if self.rect.collidepoint((self.manager.scene.mouse_screen_pos - vector(self.manager.scene.main.window_size[0]/2, self.manager.scene.main.window_size[1]/2))):
+            if self.rect.collidepoint((self.manager.scene.mouse_screen_pos - Vector(self.manager.scene.main.window_size[0]/2, self.manager.scene.main.window_size[1]/2))):
                 if self.manager.clicked_element == None or self.manager.clicked_element.z <= self.z:
                     self.manager.clicked_element = self
     

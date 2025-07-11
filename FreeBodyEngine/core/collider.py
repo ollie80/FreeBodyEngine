@@ -4,6 +4,9 @@ from FreeBodyEngine import get_main
 from typing import TYPE_CHECKING, Literal, Union
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.scene import Scene
+from FreeBodyEngine.graphics.debug import RectangleColliderDebug, CircleColliderDebug
+import numpy as np
+import math
 
 class CollisionShape:
     """
@@ -16,7 +19,6 @@ class CollisionShape:
     def __init__(self, position: Vector, rotation: float):
         pass
 
-    @abstractmethod
     def collide(self, other: Union['CollisionShape', Vector]) -> bool:
         """
         Checks collision with any collider object or point.
@@ -70,104 +72,193 @@ class CollisionShape:
         raise NotImplementedError(f"Rect collision not implemented on Collider: {str(self)}")
 
 class CircleCollisionShape(CollisionShape):
-    """
-    A circular collider object.
-    
-    :param radius: The Radius of the collider shape.
-    :type radius: int
-    :param position: The center of the collider.
-    :type position: Vector
-    """
-    def __init__(self, raduis: int, position: Vector, rotation: float):
+    def __init__(self, position: Vector, rotation: float, radius: int):
         self.position = position
-        self.radius = raduis
+        self.radius = radius
         self.rotation = rotation
 
     def collide_point(self, point: Vector):
-        dist = self.position.distance_to(point)
-        return dist <= self.radius
+        return self.position.distance(point) <= self.radius
 
     def collide_circle(self, other: "CircleCollisionShape"):
-        dist = self.position.distance_to(other.position)
-        return dist <= self.radius + other.radius
-    
-    def collide_rect(self, other: "RectangleCollisionShape"):
-        # Find the closest point on the rectangle to the circle center
-        x, y = other.position.x, other.position.y
-        w, h = other.size
-        closest_x = max(x, min(self.position.x, x + w))
-        closest_y = max(y, min(self.position.y, y + h))
-
-        # Compute the distance from the circle's center to this closest point
-        closest_point = Vector(closest_x, closest_y)
-        distance = other.position.distance_to(closest_point)
-        return distance <= self.radius
-
-class RectangleCollisionShape(CollisionShape):
-    """
-    A rectangular collider object for RAABB collision detection.
-    
-    :param position: The center of the collider.
-    :type position: Vector
-    :param size: The size of the collider shape (width, height).
-    :type size: tuple
-    """
-
-    def __init__(self, position: Vector, rotation: float,  size: Vector):
-        self.position = position  # Top-left corner
-        self.size = size          # (width, height)
-        self.rotation = rotation
-
-    @property
-    def bottomleft(self):
-        return 
-    
-
-    def collide_point(self, point: Vector):
-        x, y = self.position.x, self.position.y
-        w, h = self.size
-        return (x <= point.x <= x + w) and (y <= point.y <= y + h)
-    
-    def collide_circle(self, other: "CircleCollisionShape"):
-        # Find the closest point on the rectangle to the circle center
-        x, y = self.position.x, self.position.y
-        w, h = self.size
-        closest_x = max(x, min(other.position.x, x + w))
-        closest_y = max(y, min(other.position.y, y + h))
-
-        # Compute the distance from the circle's center to this closest point
-        closest_point = Vector(closest_x, closest_y)
-        distance = other.position.distance_to(closest_point)
-        return distance <= other.radius
+        return self.position.distance(other.position) <= self.radius + other.radius
 
     def collide_rectangle(self, other: "RectangleCollisionShape"):
-        x1, y1 = self.position.x, self.position.y
-        w1, h1 = self.size
-        x2, y2 = other.position.x, other.position.y
-        w2, h2 = other.size
+        return other.collide_circle(self)  
 
-        return not (
-            x1 + w1 < x2 or
-            x1 > x2 + w2 or
-            y1 + h1 < y2 or
-            y1 > y2 + h2
-        )
+class RectangleCollisionShape(CollisionShape):
+    def __init__(self, position: Vector, rotation: float, size: Vector):
+        self.position = position
+        self.size = size
+        self.rotation = rotation
 
+    def _closest_point_on_bounds(self, point: Vector) -> Vector:
+        corners = self._get_corners()
+        closest_point = None
+        min_dist_sq = float('inf')
+
+        for i in range(len(corners)):
+            start = corners[i]
+            end = corners[(i + 1) % len(corners)]  
+
+            edge = end - start
+            to_point = point - start
+            edge_len_sq = edge.dot(edge)
+            if edge_len_sq == 0:
+                projection = start
+            else:
+                t = max(0, min(1, to_point.dot(edge) / edge_len_sq))
+                projection = start + edge * t
+
+            dist_sq = (point - projection).dot(point - projection)
+            if dist_sq < min_dist_sq:
+                min_dist_sq = dist_sq
+                closest_point = projection
+
+        return closest_point
+
+    def _get_corners(self):
+        hw = self.size.x / 2
+        hh = self.size.y / 2
+
+        cos_r = math.cos(self.rotation)
+        sin_r = math.sin(self.rotation)
+
+        local_corners = [
+            Vector(-hw, -hh),
+            Vector(hw, -hh),
+            Vector(hw, hh),
+            Vector(-hw, hh),
+        ]
+
+        return [
+            Vector(
+                self.position.x + corner.x * cos_r - corner.y * sin_r,
+                self.position.y + corner.x * sin_r + corner.y * cos_r
+            )
+            for corner in local_corners
+        ]
+
+    def _get_axes(self, corners):
+        return [
+            (corners[1] - corners[0]).normalized.perpendicular(),
+            (corners[3] - corners[0]).normalized.perpendicular()
+        ]
+
+    def _project_onto_axis(self, corners, axis):
+        projections = [corner.dot(axis) for corner in corners]
+        return min(projections), max(projections)
+
+    def collide_rectangle(self, other: "RectangleCollisionShape"):
+        corners_a = self._get_corners()
+        corners_b = other._get_corners()
+
+        axes = self._get_axes(corners_a) + other._get_axes(corners_b)
+
+        for axis in axes:
+            min_a, max_a = self._project_onto_axis(corners_a, axis)
+            min_b, max_b = self._project_onto_axis(corners_b, axis)
+
+            if max_a < min_b or max_b < min_a:
+                return False
+
+        return True
+
+    def collide_point(self, point: Vector):
+        corners = self._get_corners()
+        axis1 = (corners[1] - corners[0]).normalized().perpendicular()
+        axis2 = (corners[3] - corners[0]).normalized().perpendicular()
+
+        def project_point(p, axis):
+            return p.dot(axis)
+
+        min_a, max_a = self._project_onto_axis(corners, axis1)
+        min_b, max_b = self._project_onto_axis([point], axis1)
+        if max_b < min_a or max_a < min_b:
+            return False
+
+        min_a, max_a = self._project_onto_axis(corners, axis2)
+        min_b, max_b = self._project_onto_axis([point], axis2)
+        return not (max_b < min_a or max_a < min_b)
+
+    def collide_circle(self, other: "CircleCollisionShape"):
+        corners = self._get_corners()
+
+        closest = other.position
+        for axis in self._get_axes(corners):
+            min_proj, max_proj = self._project_onto_axis(corners, axis)
+            center_proj = other.position.dot(axis)
+
+            if center_proj < min_proj:
+                closest = closest - axis * (min_proj - center_proj)
+            elif center_proj > max_proj:
+                closest = closest + axis * (center_proj - max_proj)
+
+        return closest.distance(other.position) <= other.radius
 
 class Collider2D(Node2D):
-    def __init__(self, collision_shape: type[CollisionShape], position = Vector(), rotation = 0, scale = Vector(1, 1)):
-        super().__init__(position, rotation, scale)        
-        self.collision_shape = collision_shape(position, rotation, scale)
+    def __init__(self, collision_shape_cls: type[CollisionShape], position=Vector(), rotation=0, scale=Vector(1, 1)):
+        super().__init__(position, rotation, scale)
+        self.collision_shape = collision_shape_cls(position, rotation, scale)
+        self._last_matrix = None
+
+    def on_update(self):
+        current = self.world_transform.to_matrix()
+        if not np.array_equal(current, self._last_matrix):
+            self.apply_transform()
+            self._last_matrix = current.copy()
     
+    def collide(self, other: 'Collider2D'):
+        return self.collision_shape.collide(other.collision_shape)
+
+
+    @abstractmethod
+    def toggle_debug_visuals(self):
+        pass
+
+    @abstractmethod
+    def apply_transform(self):
+        pass
 
 class RectangleCollider2D(Collider2D):
     def __init__(self, position = Vector(), rotation = 0, scale = Vector(1, 1)):
-        super().__init__(RectangleCollisionShape(), position, rotation, scale)
-        # make world transformations set the transforms of the collider shape
+        super().__init__(RectangleCollisionShape, position, rotation, scale)
+        self.collision_shape: RectangleCollisionShape
 
-    
+    def toggle_debug_visuals(self):
+        if self.is_initialized:
+            debug = self.find_nodes_with_type('RectangleColliderDebug')
+            if len(debug) > 0:
+                for d in debug:
+                    d.kill()
+            else:
+                self.add(RectangleColliderDebug(self.scene.main.renderer))
+        
+    def apply_transform(self):
+        self.collision_shape.position = self.world_transform.position
+        self.collision_shape.rotation = self.world_transform.rotation
+        self.collision_shape.size = self.world_transform.scale
 
-    
+class CircleCollider2D(Collider2D):
+    def __init__(self, position = Vector(), rotation = 0, scale = Vector(1, 1)):
+        super().__init__(CircleCollisionShape, position, rotation, scale)
+        self.collision_shape: CircleCollisionShape  
+        self.collision_shape.radius = scale.x / 2
+
+    def toggle_debug_visuals(self):
+        if self.is_initialized:
+            debug = self.find_nodes_with_type('RectangleColliderDebug')
+            if len(debug) > 0:
+                for d in debug:
+                    d.kill()
+            else:
+                self.add(CircleColliderDebug(self.scene.main.renderer))
+        
+    def apply_transform(self):
+        self.collision_shape.position = self.world_transform.position
+        self.collision_shape.rotation = self.world_transform.rotation
+        self.collision_shape.radius = self.world_transform.scale.x / 2
+
 
 class Ray2D:
     """

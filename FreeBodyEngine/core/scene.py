@@ -7,7 +7,6 @@ from FreeBodyEngine.core.camera import Camera2D
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
-    
 
 class Scene:
     """
@@ -23,6 +22,7 @@ class Scene:
         self.main = main
         self.main.scenes[self.name] = self
         self.isinitialized = True
+        self.on_initialize()
 
     def on_initialize(self):
         pass
@@ -45,14 +45,34 @@ class Scene:
         """
         self.root.remove(ids)
 
-    def on_update(self, dt):
+    def on_update(self):
         """
         Called when the scene is updated.
         """
         pass
 
+    def toggle_debug_visuals(self):
+        nodes = []
+        nodes += self.root.find_nodes_with_type('Collider2D')
+        for node in nodes:
+            node.toggle_debug_visuals()
+
+
     def _update(self):
         self.root.update()
+        self.on_update()
+
+    def _physics_process(self):
+        physics_nodes = self.root.find_nodes_with_type('PhysicsBody')
+
+        for node in physics_nodes:
+            node.on_physics_process()
+
+        for node in physics_nodes:
+            node._integrate_forces()
+
+        for node in physics_nodes:
+            node._check_collisions()
 
     def on_draw(self):
         pass
@@ -61,97 +81,3 @@ class Scene:
         self.on_draw()
         
         self.main.graphics.draw(self.camera)
-
-# class SceneTransition:
-#     def __init__(self, main: "Main", vert, frag, duration, curve = engine.math.Linear()):
-#         self.elapsed = 0
-#         self.duration = duration 
-#         self.time: int = 0
-        
-#         self._reversed = False
-
-#         self.main = main
-#         self.curve = curve
-
-#         self.program = self.main.glCtx.program(vert, frag)
-        
-#         self.vao = engine.graphics.create_fullscreen_quad(self.main.glCtx, self.program)        
-
-#     def update(self, dt):
-#         if not self._reversed:
-#             self.elapsed = min(self.elapsed + dt, self.duration) 
-#             self.time = self.curve.get_value(self.elapsed/self.duration)
-
-#             if self.time >= 1:
-#                 self._reversed = True
-#                 self.main._set_scene(self.main.transition_manager.new_scene)
-#         else:
-#             self.elapsed = max(self.elapsed - dt, 0)
-#             if self.elapsed == 0:
-#                 self.time = 0
-#             else:
-#                 self.time = self.curve.get_value(self.elapsed/self.duration)            
-            
-#             if self.time <= 0:
-#                 self.main.transition_manager.current_transition = None        
-        
-
-#     def draw(self):
-#         self.program['time'] = self.time
-#         if "inverse" in self.program:
-#             self.program['inverse'] = not self._reversed 
-#         self.main.glCtx.screen.use()
-#         self.vao.render(moderngl.TRIANGLE_STRIP)
-
-# class FadeTransition(SceneTransition):
-#     def __init__(self, main: "Main", duration: int):
-#         super().__init__(main, main.files.load_text('engine/shader/graphics/empty.vert'), main.files.load_text('engine/shader/scene_transitions/fade.glsl'), duration, engine.math.EaseInOut())
-
-# class StarWarsTransition(SceneTransition):
-#     def __init__(self, main: "Main", duration: int):
-#         super().__init__(main, main.files.load_text('engine/shader/graphics/uv.vert'), main.files.load_text('engine/shader/scene_transitions/starwars.glsl'), duration, engine.math.EaseInOut())
-
-# class SceneTransitionManager:
-#     def __init__(self, main: Main):
-#         self.main = main
-#         self.current_transition: SceneTransition = None
-#         self.new_scene: str = None
-
-#     def transition(self, transition: SceneTransition, new_scene: str):
-#         self.current_transition = transition
-#         self.new_scene = new_scene
-
-#     def update(self, dt):
-#         if self.current_transition:
-#             self.current_transition.update(dt)
-
-#     def draw(self):
-#         if self.current_transition:
-#             self.current_transition.draw()
-
-# class SplashScreenScene(Scene):
-#     def __init__(self, main: Main, duration: int, new_scene: str, texture: moderngl.Texture, color: str, transition=None):
-#         self.timer = Timer(duration)
-#         self.duration = duration
-#         self.timer.activate()
-#         self.transition = transition
-#         super().__init__(main)
-#         self.graphics.rendering_mode = "general"
-#         self.camera.background_color.hex = color
-
-#         self.new_scene = new_scene
-#         aspect = engine.graphics.get_texture_aspect_ratio(texture)
-#         self.ui.add(engine.ui.UIImage(self.ui, texture, {"anchor": "center", "height": "50%h", "aspect-ratio": aspect}))
-        
-#         self.started_transition = False
-
-#     def on_update(self, dt):
-#         self.timer.update(dt)
-        
-#         if self.timer.complete and not self.started_transition:
-#             self.started_transition = True
-#             if self.transition == None:
-#                 transition =  StarWarsTransition(self.main, self.duration)
-#             else:
-#                 transition = self.transition
-#             self.main.change_scene(self.new_scene, transition)

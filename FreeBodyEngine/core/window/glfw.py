@@ -1,9 +1,14 @@
 import glfw
 from FreeBodyEngine.core.window import Window, Cursor
+from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING
 from FreeBodyEngine import error
 from FreeBodyEngine.core.input import Key
+from FreeBodyEngine.math import Vector
+from FreeBodyEngine.core.camera import Camera
+import numpy
+
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -158,6 +163,8 @@ class GLFWWindow(Window):
         glfw.make_context_current(self._window)
         glfw.set_window_size_callback(self._window, self.resize)
 
+    def set_title(self, new_title):
+        glfw.set_window_title(self._window, new_title)
 
     @property
     def size(self) -> tuple[int, int]:
@@ -193,6 +200,9 @@ class GLFWWindow(Window):
     def _set_cursor(self, cursor: 'Cursor'):
         pass
 
+    def create_mouse(self):
+        return GLFWMouse(self)
+
     def close(self):
         glfw.set_window_should_close(self._window, True)
         glfw.destroy_window(self._window)
@@ -206,3 +216,86 @@ class GLFWWindow(Window):
         if glfw.window_should_close(self._window):
             
             self.main.quit()
+
+
+glfw_mouse_button_map = {
+    0: glfw.MOUSE_BUTTON_1,
+    1: glfw.MOUSE_BUTTON_2,
+    2: glfw.MOUSE_BUTTON_3,
+    3: glfw.MOUSE_BUTTON_4,
+    4: glfw.MOUSE_BUTTON_5,
+    5: glfw.MOUSE_BUTTON_6,
+    6: glfw.MOUSE_BUTTON_7,
+    7: glfw.MOUSE_BUTTON_8
+}
+
+class GLFWMouse(Mouse):
+    def __init__(self, window: GLFWWindow):
+        super().__init__()
+        self.window = window
+        self._pressed = [False] * 8
+        self._released = [False] * 8
+        self._down = [False] * 8
+        self._double_clicked = [False] * 8
+        self._dragging = [False] * 8
+        self.last_click_time = -500
+
+    def get_pressed(self, button: int):
+        return self._pressed[button]
+
+    def get_released(self, button: int):
+        return self._released[button]
+
+    def get_down(self, button: int):
+        return self._down[button]
+    
+    def get_double_click(self, button: int):
+        return self._double_clicked[button]
+
+    def update(self):
+        self.position = Vector(glfw.get_cursor_pos(self.window._window))
+        scene = self.window.main.active_scene
+        self.world_position = self.position
+        if scene != None:
+            cam: Camera = scene.camera
+            if cam != None:
+                ndc_x = (self.position.x / self.window.size[0]) * 2.0 - 1.0 #convert to clip space
+                ndc_y = (self.position.y / self.window.size[1]) * 2.0 - 1.0
+                clip_pos = (ndc_x, ndc_y, 0.0, 1.0)
+                
+                proj_view_inverse = numpy.linalg.inv(cam.proj_matrix @ cam._get_view_mat())
+                p =  proj_view_inverse @ clip_pos
+                p /= p[3]
+                self.world_position = Vector(p[0], p[1])
+        
+        self._pressed = [False] * 8
+        self._released = [False] * 8
+        self._double_clicked = [False] * 8
+        self._dragging = [False] * 8
+
+        for i in range(len(self._pressed)):
+            glfw_i = glfw_mouse_button_map[i]
+            button_state = glfw.get_mouse_button(self.window._window, glfw_i)
+            
+            pressed = button_state == glfw.PRESS
+            released = button_state == glfw.RELEASE
+
+            if self._down[i]:
+                pressed = False
+            
+            if pressed:
+                self._down[i] = True
+                time = self.window.main.time.get_time()
+                time_dif = time - self.last_click_time
+                if time_dif <= self.double_click_threshold:
+                    self._double_clicked[i] = True
+                self.last_click_time = time
+                
+
+            if released:
+                self._down[i] = False
+
+            self._pressed[i] = pressed
+            self._released[i] = released
+            
+        

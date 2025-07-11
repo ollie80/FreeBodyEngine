@@ -3,7 +3,7 @@ import json
 
 setup(
     name="FreeBodyEngine",
-    version='0.15',
+    version='0.06',
     packages=find_packages(),
     entry_points={
         'console_scripts': [

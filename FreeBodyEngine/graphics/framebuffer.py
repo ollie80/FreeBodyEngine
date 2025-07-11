@@ -34,7 +34,7 @@ class Framebuffer:
         pass
 
     @abstractmethod
-    def draw(self, attachment):
+    def draw(self, attachment, size: tuple[int,int] = None):
         """Draws the selected attachment to the currently bound framebuffer."""
         pass
 

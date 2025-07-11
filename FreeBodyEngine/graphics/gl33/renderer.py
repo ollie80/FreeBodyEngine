@@ -1,13 +1,13 @@
 from FreeBodyEngine.graphics.renderer import Renderer
-from FreeBodyEngine.graphics.gl import context
+from FreeBodyEngine.graphics.gl33 import context
 from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine.graphics.gl.texture import GLTextureManager
-from FreeBodyEngine.graphics.gl import GLImage
-from FreeBodyEngine.graphics.gl import GLMesh
-from FreeBodyEngine.graphics.gl import GLFramebuffer
+from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
+from FreeBodyEngine.graphics.gl33 import GLImage
+from FreeBodyEngine.graphics.gl33 import GLMesh
+from FreeBodyEngine.graphics.gl33 import GLFramebuffer
 from FreeBodyEngine.graphics.sprite import Sprite
-from FreeBodyEngine.graphics.gl.shader import GLShader
-from FreeBodyEngine.graphics.gl.material import GLMaterial
+from FreeBodyEngine.graphics.gl33.shader import GLShader
+from FreeBodyEngine.graphics.gl33.material import GLMaterial
 from FreeBodyEngine.graphics.fbusl.injector import Injector 
 
 from typing import TYPE_CHECKING
@@ -47,11 +47,8 @@ class GLRenderer(Renderer):
         glDebugMessageCallback(debug_callback, None)
         width, height = self.main.window.size
         glViewport(0, 0, width, height)
-        glEnable(GL_BLEND)
-        glEnable(GL_DEPTH_TEST)
-
-
-        # Set blend function
+        
+        # enable transparency
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
     def resize(self):
@@ -85,12 +82,17 @@ class GLRenderer(Renderer):
         return GLMaterial(data)
 
     def draw_mesh(self, mesh, material: 'GLMaterial', transform, camera):
-        # glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
         material.use(transform, camera)
         material.shader.use()
+        if material.render_mode == "wireframe":
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
 
         glBindVertexArray(mesh.vao)
         glDrawElements(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
+
+        if material.render_mode == "wireframe":
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+
 
         glBindVertexArray(0)
 

@@ -1,12 +1,12 @@
 from FreeBodyEngine.core.scene import Scene
 from FreeBodyEngine.graphics.manager import GraphicsManager
 from FreeBodyEngine.graphics.renderer import Renderer
-from FreeBodyEngine.graphics.gl import GLRenderer
+from FreeBodyEngine.graphics.gl33 import GLRenderer
 from FreeBodyEngine.core.window import Window
 from FreeBodyEngine.core.files import FileManager
 from FreeBodyEngine.core.input import Input
 from FreeBodyEngine.core.logger import Logger
-from FreeBodyEngine.core import Time
+from FreeBodyEngine.core.time import Time, CooldownManager
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine import log, warning, error
 from FreeBodyEngine.utils import abstractmethod
@@ -69,7 +69,7 @@ class Main:
     :param pygame_flags: Flags that will be passed onto pygame during window creation.
     :type pygame_flags: int
     """
-    def __init__(self, path="./", window_size: tuple = [800, 800], fps: int = 69, actions={}, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl", headless: bool = False):
+    def __init__(self, path="./", window_size: tuple = [800, 800], fps: int = 10, physics_tps=60, actions={}, display: int = 0, dev: bool = False, graphics_api: Union[Literal["opengl"] | Literal["vulkan"] | Literal["directx"] | Literal["metal"]] = "opengl", headless: bool = False):
         from FreeBodyEngine import _set_main
         _set_main(self)
         
@@ -98,8 +98,11 @@ class Main:
             self.files = FileManager(self, './dev/assets', dev)
 
         self.fps = fps
+        self.physics_tps = physics_tps
         self.dev = dev
         self.running = True
+        
+        self.cooldowns = CooldownManager()
 
         # caption
         dev_mode = ""
@@ -115,6 +118,7 @@ class Main:
             self.graphics = GraphicsManager(self, self.renderer, self.window)
 
         self.input = Input(self, actions, self.window)
+        self.mouse = self.window.create_mouse()
 
     def add(self, scene: Scene):
         """
@@ -149,20 +153,53 @@ class Main:
     def on_quit(self):
         pass
 
+
     def run(self):
+        physics_time_accumulator = 0
+        main_time_accumulator = 0
+        
         while self.running:
-            self.time.update(self.fps)
+            self.time.update()
+            self.cooldowns.update()
             self.window.update()
+            self.window.set_title(f"fps: {str(self.time.get_fps())}  tps: {str(self.time.get_tps())}")
+            
             self.input.update()
+            self.mouse.update()
 
-            if self.active_scene != None:
-                self.active_scene._update()
-                self.on_update()
+            physics_time_accumulator += self.time.delta_time
+            
+            physics_timestep = 1 / self.physics_tps
+            while physics_time_accumulator >= physics_timestep:
+                self.active_scene._physics_process()                
+                self.time.tick()
+                physics_time_accumulator -=  physics_timestep
+
+            main_update = False
+
+            main_time_accumulator += self.time.delta_time
+            
+            if self.fps != 0:
+                main_timestep = 1 / self.fps
+                if main_time_accumulator >= main_timestep:
+                    self.time.frame()
+                    main_update = True
+                    main_time_accumulator -= main_timestep
+            else:
+                main_update = True 
+                self.time.frame()
+
+
+            if main_update:
+                if self.active_scene != None:
+                    self.active_scene._update()
+                    self.on_update()
+
+                if not self.headless_mode:
+                    self.active_scene._draw()
+                    self.window.draw()
+            
             self.logger.update()
-
-            if not self.headless_mode:
-                self.active_scene._draw()
-                self.window.draw()
 
     def on_update(self):
         pass       

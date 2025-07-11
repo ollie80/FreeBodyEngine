@@ -308,7 +308,6 @@ class Input:
 
     def set_actions(self, actions: dict[str, list[Action]]):
         self.actions = actions
-        print(actions)
 
 
     def bind_action(self, name: str, inputs: list[Key]):

@@ -1,4 +1,4 @@
-from FreeBodyEngine.graphics.gl.shader import GLShader
+from FreeBodyEngine.graphics.gl33.shader import GLShader
 from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.graphics.fbusl import compile
 from OpenGL.GL import *

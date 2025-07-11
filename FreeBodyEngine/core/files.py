@@ -13,41 +13,11 @@ if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
 
 import FreeBodyEngine.engine_assets
-from FreeBodyEngine.graphics.image import Image
 import os
 import io
 
 import struct
 
-def load_sprite(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_sprite(path)
-    else:
-        warning("Cannot load a sprite while in headless mode as it requires a renderer.")
-
-def load_image(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_image(path)
-    else:
-        warning("Cannot load an image while in headless mode as it requires a renderer.")
-
-def load_material(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_material(path)
-    else:
-        warning("Cannot load a material while in headless mode as it requires a renderer.")
-
-def load_shader(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_shader(path)
-    else:
-        warning("Cannot load a shader while in headless mode as it requires a renderer.")
-
-def load_sprite(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_sprite(path)
-    else:
-        warning("Cannot load a shader while in healess mode as it requires a renderer.")
 
 def read_assets(path):
     assets = {}

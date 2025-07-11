@@ -52,7 +52,5 @@ class AtlasGen:
             atlas_filename = f"{atlas_name_prefix}_{atlas_index}.png"
             atlas_img.save(atlas_filename)
             atlas_images.append(atlas_filename)
-            print(f"Saved {atlas_filename}")
-
-        print("TIME: ", start - time.time())
+    
         return atlas_images, metadata

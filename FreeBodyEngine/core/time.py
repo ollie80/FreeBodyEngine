@@ -1,4 +1,6 @@
 import time
+from FreeBodyEngine import delta, physics_delta, get_main
+from functools import wraps
 
 class Time:
     def __init__(self):
@@ -9,19 +11,40 @@ class Time:
         self.time_scale = 1.0
         self.total_time = 0.0
         self.frame_count = 0
-        self.fps = 0.0
+        self._frame_times = []
+        self._tick_times = []
 
-    def update(self, fps_cap): 
+    def get_time(self):
+        return self.total_time
+
+
+    def get_fps(self):
+        return len(self._frame_times)
+
+    def get_tps(self):
+        return len(self._tick_times)
+    
+    def frame(self):
         current_time = time.time()
+        
+        self._frame_times.append(current_time)
+        one_second_ago = current_time - 1.0
+        while self._frame_times and self._frame_times[0] < one_second_ago:
+            self._frame_times.pop(0)
+
+    def tick(self):
+        current_time = time.time()
+        
+        self._tick_times.append(current_time)
+        one_second_ago = current_time - 1.0
+        while self._tick_times and self._tick_times[0] < one_second_ago:
+            self._tick_times.pop(0)
+
+
+    def update(self):
+        current_time = time.time()
+
         raw_delta = current_time - self._last_time
-        
-        if fps_cap != 0:
-            min_frame_time = 1.0 / fps_cap
-            if raw_delta < min_frame_time:
-                time.sleep(min_frame_time - raw_delta)
-                current_time = time.time()
-                raw_delta = current_time - self._last_time
-        
 
         self.unscaled_delta_time = raw_delta
         self.delta_time = raw_delta * self.time_scale
@@ -29,5 +52,56 @@ class Time:
         self._last_time = current_time
         self.frame_count += 1
 
-        if self.delta_time > 0:
-            self.fps = 1.0 / self.delta_time
+
+class CooldownManager:
+    def __init__(self):
+        self.cooldowns: dict[str, float] = {}
+        self.physics_cooldowns = {}
+
+    def update(self):
+        for cooldown in self.cooldowns:
+            self.cooldowns[cooldown] = self.cooldowns[cooldown] - delta()
+        
+        for cooldown in self.physics_cooldowns:
+            self.physics_cooldowns[cooldown] = self.physics_cooldowns[cooldown] - physics_delta()
+
+
+def cooldown(seconds: float):
+    """Decorator to add a cooldown to functions."""
+    def decorator(method):
+
+        def wrapper(self, *args, **kwargs):
+            if get_main():
+                id_ = id(self)
+                manager = get_main().cooldowns
+
+                if id_ in manager.cooldowns:
+                    if manager.cooldowns[id_] <= 0:
+                        manager.cooldowns[id_] = seconds
+                        return method(self, *args, **kwargs)
+                else:
+                    manager.cooldowns[id_] = seconds
+                    return method(self, *args, **kwargs)
+
+            return
+        return wrapper
+    return decorator
+
+def physics_cooldown(seconds: float):
+    """Decorator to add a cooldown to physics based functions. """
+    def decorator(method):
+        
+        @wraps(method)
+        def wrapper(self, *args, **kwargs):
+            id_ = id(self)
+
+            manager = get_main().cooldowns
+            if id_ in manager.physics_cooldowns:
+                if manager.physics_cooldowns[id_] <= 0:
+                    return method(self, *args, **kwargs)
+            else:
+                manager.physics_cooldowns[id_] = seconds
+
+            return
+        return wrapper
+    return decorator
