@@ -11,10 +11,19 @@ if TYPE_CHECKING:
 
 _main_object: 'Main' = None
 
+DLL_DIRECTORY = None
+
+
 def init():
     """Initialise FreeBodyEngine"""
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
+
+    from FreeBodyEngine.utils import load_dlls
+    global DLL_DIRECTORY
+
+    DLL_DIRECTORY = load_dlls()
+    
 
 def _set_main(main: 'Main'):
     global _main_object
