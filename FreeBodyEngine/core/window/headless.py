@@ -2,17 +2,21 @@
 
 import os
 import sys
+from pathlib import Path
 
 from FreeBodyEngine.core.window import Window, Cursor
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING
-from FreeBodyEngine import error
+from FreeBodyEngine import error, DLL_DIRECTORY
+from FreeBodyEngine.core.dummy.mouse import DummyMouse
 from FreeBodyEngine.core.input import Key
+
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
     from FreeBodyEngine.graphics.image import Image
 
+os.environ["PYSDL2_DLL_PATH"] = str(DLL_DIRECTORY)
 
 import sdl2
 import sdl2.ext
@@ -164,6 +168,12 @@ class HeadlessWindow(Window):
         if not self._window:
             sdl2.SDL_Quit()
             error("Failed to create SDL window")
+
+    def create_mouse(self):
+        return DummyMouse()
+
+    def set_title(self, new_title):
+        pass
 
     @property
     def size(self) -> tuple[int, int]:

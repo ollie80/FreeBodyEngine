@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 import sys
 
+import FreeBodyEngine.lib
 import sys
 import venv
 import struct
@@ -190,11 +191,15 @@ class Builder:
         spec_path = os.path.join(self.temp_path, "pyinstaller", 'game.spec')
         name = self.build_settings.get('name', 'FreeBodyGame')
 
-        lib_path = str(importlib.resources.files('FreeBodyEngine.lib'))
+        spec = importlib.util.find_spec("FreeBodyEngine.lib")
+
+        if spec is None or spec.origin is None:
+            raise RuntimeError("Could not locate FreeBodyEngine.lib on the filesystem")
+
+        lib_path = Path(spec.origin).parent
 
         subprocess.check_call([venv_executable, "-m", "PyInstaller", "--onefile", 
                             "--name", name,
-                            "--windowed",
                             self.main_file,
                             "--distpath", dist_path,
                             "--workpath", work_path,

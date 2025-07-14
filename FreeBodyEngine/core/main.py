@@ -1,6 +1,7 @@
 from FreeBodyEngine.core.scene import Scene
 from FreeBodyEngine.graphics.manager import GraphicsManager
 from FreeBodyEngine.graphics.renderer import Renderer
+from FreeBodyEngine.graphics.dummy.renderer import DummyRenderer
 from FreeBodyEngine.graphics.gl33 import GLRenderer
 from FreeBodyEngine.core.window import Window
 from FreeBodyEngine.core.files import FileManager
@@ -10,7 +11,7 @@ from FreeBodyEngine.audio.sound import AudioManager
 from FreeBodyEngine.core.time import Time, CooldownManager
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine import log, warning, error
-from FreeBodyEngine.utils import abstractmethod
+from FreeBodyEngine.utils import abstractmethod, load_dlls
 from typing import Union, Literal
 from sys import exit
 import os
@@ -31,9 +32,13 @@ def create_window(main: 'Main', window, size, title, display) -> Window:
         raise NotImplementedError(f"No window implemented with name {window}.")
 
 
-def create_renderer(main, graphics_api) -> Renderer:
-    if graphics_api == "opengl":
+def create_renderer(main: 'Main', graphics_api) -> Renderer:
+    if main.window.window_type == "headless":
+        return DummyRenderer(main)
+    
+    elif graphics_api == "opengl":
         return GLRenderer(main)
+    
     else:
         error(f"{graphics_api.capitalize()} renderer is not implemented.")
 
@@ -74,6 +79,7 @@ class Main:
         from FreeBodyEngine import _set_main
         _set_main(self)
         
+
         self.headless_mode = headless
         
         # scenes
@@ -114,9 +120,9 @@ class Main:
         self.window = create_window(self, get_window_type(self), window_size, self.name + dev_mode, display)
         while self.window.is_ready() == False:
             pass
-        if not self.headless_mode:
-            self.renderer = create_renderer(self, graphics_api)
-            self.graphics = GraphicsManager(self, self.renderer, self.window)
+
+        self.renderer = create_renderer(self, graphics_api)
+        self.graphics = GraphicsManager(self, self.renderer, self.window)
 
         self.input = Input(self, actions, self.window)
         self.mouse = self.window.create_mouse()

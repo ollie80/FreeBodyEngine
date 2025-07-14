@@ -6,44 +6,8 @@ from FreeBodyEngine import error
 from FreeBodyEngine.core.input import Key
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine.core.camera import Camera
+
 import numpy
-
-
-import sys
-import platform
-import importlib.resources
-import ctypes
-
-def load_glfw_binary():
-    
-    system = sys.platform
-    arch = platform.machine()
-    
-    if system == "win32":
-        arch_folder = "x64" if sys.maxsize > 2**32 else "x86"
-        package = f"FreeBodyEngine.lib.windows.{arch_folder}"
-        filename = "glfw3.dll"
-    elif system == "darwin":
-
-        arch_folder = "arm64" if arch == "arm64" else "x86_64"
-        package = f"FreeBodyEngine.lib.macos.{arch_folder}"
-        filename = "libglfw.3.dylib"
-    elif system.startswith("linux"):
-        arch_folder = "x64" if sys.maxsize > 2**32 else "x86"
-        package = f"FreeBodyEngine.lib.linux.{arch_folder}"
-        filename = "libglfw.so.3"
-    else:
-        raise RuntimeError(f"Unsupported OS: {system}")
-
-    resource_path = importlib.resources.files(package) / filename
-    with importlib.resources.as_file(resource_path) as real_path:
-        print(real_path)
-        _glfw_lib = ctypes.CDLL(str(real_path))
-
-    return _glfw_lib
-
-LIBGLFW = load_glfw_binary()
-
 
 import glfw
 
@@ -200,6 +164,7 @@ class GLFWWindow(Window):
             glfw.terminate()
             error("Failed to create GLFW window")
 
+        print(self._window)
         glfw.make_context_current(self._window)
         glfw.set_window_size_callback(self._window, self.resize)
 

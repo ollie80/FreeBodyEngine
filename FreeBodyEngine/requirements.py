@@ -5,7 +5,6 @@ GLOBAL = [
     "watchdog",
     "freetype-py",
     "PySDL2",
-    "pysdl2-dll",
     "sounddevice",
     "soundfile",
     "scipy",
