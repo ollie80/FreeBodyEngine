@@ -5,10 +5,12 @@ from FreeBodyEngine.cli.project import ProjectRegistry
 from FreeBodyEngine.cli.fulcrum import fulcrum_handler
 from FreeBodyEngine.dev.run import main as run_project
 import tomllib
+import json
 import platform
 from importlib.resources import files
 import shutil
-
+from FreeBodyEngine.build.builder import build
+from FreeBodyEngine.font.atlasgen import generate_atlas
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -111,7 +113,18 @@ class Command:
 
 
 def build_handler(env, args):
-    subprocess.run(["python", "FreeBodyEngine/build/builder.py", '--dev', *args], shell=True, cwd=env.path)
+    dev = False
+    if "--dev" in args:
+        dev = True
+    if len(args) == 0:
+        if env.project_path:
+            build(env.project_path, dev)
+        else:
+            print("No project specified or detected.")
+    
+    else:
+        build(env.project_registry.get_project_path(args[0]), dev)
+            
 
 def run_handler(env, args):
     if len(args) == 0:
@@ -374,7 +387,7 @@ def lines_project(env, args):
             print("No project specified.")
             return
 
-    if env.project_registry.project_exisits(project):
+    if env.project_registry.project_exists(project):
         print(f'Total Lines: {get_project_lines(env, project)}')
     else:
         print(f'Project with ID "{project}" does not exist.')
@@ -528,6 +541,51 @@ def clear_handler(env, args):
     else:
         os.system("clear")
 
+def create_font(env, args):
+    size = 16
+    if len(args) == 0:
+        project = env.project_id
+        if not project:
+            print('No project specified or detected.')
+            return
+    else:
+        project = args[0]
+        if len(args) < 2:
+            print('Usage: freebody create font <project> <relative_font_path> [char_size]')
+            return
+        relative_font_path = args[1]
+        
+        if len(args) > 2:
+            size = args[2]
+
+    if env.project_registry.project_exists(project):
+        conf = env.project_registry.get_project_config(project)
+
+        asset_path = os.path.abspath(os.path.join(env.project_registry.get_project_path(project), conf.get('assets')))
+        font_path = os.path.join(asset_path, relative_font_path)
+        if not os.path.exists(font_path):
+            print(f"Font file '{relative_font_path}' does not exsist in directory the asset directory.")
+            return
+        
+        font_registry = os.path.join(asset_path, '.font')
+        if not os.path.exists(font_registry):
+            os.mkdir(font_registry)
+
+        font_name = os.path.basename(font_path)
+        if not font_name.endswith('.ttf'):
+            print("Font must be a .ttf file.")
+            return
+
+        image, data = generate_atlas(font_path, size)
+        image.save(os.path.join(font_registry, font_name.removesuffix('.ttf') + ".png"))
+        with open(os.path.join(font_registry, font_name.removesuffix('.ttf') + ".json"), 'w') as f:
+            json.dump(data, f)
+
+        print(f"Successfully created font with name '{font_name.removesuffix('.ttf')}'.")
+
+    else:
+        print(f"Project with ID {project} does not exist.")
+
 
 root_commands = [
     Command(["build", "b"], build_handler, help_text="Build the project"),
@@ -542,7 +600,8 @@ root_commands = [
     ], help_text="Commands to work with the FB Project system."),
     Command(["create", "c"], subcommands=[
         Command(["sprite", "s"], create_sprite, help_text="Create a new sprite."),
-        Command(["project", "p"], create_project, help_text="Create a new project.")
+        Command(["project", "p"], create_project, help_text="Create a new project."),
+        Command(["font", "f"], create_font, help_text="Create a font.")
     ], help_text="Create a new resource"),
     Command(['log', 'l'], subcommands=[
         Command(['wipe', 'w'], log_wipe_handler, help_text='Permanantly wipes a log file.'),

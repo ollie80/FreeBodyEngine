@@ -1,4 +1,3 @@
-import glfw
 from FreeBodyEngine.core.window import Window, Cursor
 from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.utils import abstractmethod
@@ -9,6 +8,44 @@ from FreeBodyEngine.math import Vector
 from FreeBodyEngine.core.camera import Camera
 import numpy
 
+
+import sys
+import platform
+import importlib.resources
+import ctypes
+
+def load_glfw_binary():
+    
+    system = sys.platform
+    arch = platform.machine()
+    
+    if system == "win32":
+        arch_folder = "x64" if sys.maxsize > 2**32 else "x86"
+        package = f"FreeBodyEngine.lib.windows.{arch_folder}"
+        filename = "glfw3.dll"
+    elif system == "darwin":
+
+        arch_folder = "arm64" if arch == "arm64" else "x86_64"
+        package = f"FreeBodyEngine.lib.macos.{arch_folder}"
+        filename = "libglfw.3.dylib"
+    elif system.startswith("linux"):
+        arch_folder = "x64" if sys.maxsize > 2**32 else "x86"
+        package = f"FreeBodyEngine.lib.linux.{arch_folder}"
+        filename = "libglfw.so.3"
+    else:
+        raise RuntimeError(f"Unsupported OS: {system}")
+
+    resource_path = importlib.resources.files(package) / filename
+    with importlib.resources.as_file(resource_path) as real_path:
+        print(real_path)
+        _glfw_lib = ctypes.CDLL(str(real_path))
+
+    return _glfw_lib
+
+LIBGLFW = load_glfw_binary()
+
+
+import glfw
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -135,9 +172,12 @@ GLFW_CHARACTER_MAP = {
     Key.NUMPAD_ENTER: glfw.KEY_KP_ENTER,
 }
 
+
+
 class GLFWWindow(Window):
     def __init__(self, main: 'Main', size: tuple[int, int], window_type: str, title="FreeBodyEngine", display=None):
         super().__init__(main, size, window_type, title, display)
+        
         self._size = size
         self._title = title
         self._should_close = False
@@ -216,7 +256,6 @@ class GLFWWindow(Window):
         if glfw.window_should_close(self._window):
             
             self.main.quit()
-
 
 glfw_mouse_button_map = {
     0: glfw.MOUSE_BUTTON_1,

@@ -1,56 +1,83 @@
-"""
-System to generate texture altases to remove the need for constant movement of textures in and out of texture slots.
-"""
-
 from PIL import Image
-from rectpack import newPacker
-import time
+import os
+
+# binary tree packing implementation with PIL images
+
+class Node:
+    def __init__(self, x, y, w, h):
+        self.x, self.y, self.w, self.h = x, y, w, h
+        self.used = False
+        self.right = None
+        self.down = None
+
+    def insert(self, img: Image.Image):
+        iw, ih = img.size
+
+        if self.used:
+            right_insert = self.right.insert(img) if self.right else None
+            down_insert = self.down.insert(img) if self.down else None
+            return right_insert or down_insert
+        
+        if iw > self.w or ih > self.h:
+            return None
+
+        if iw == self.w and ih == self.h:
+            self.used = True
+            return self
+
+        self.used = True
+        self.down = Node(self.x, self.y + ih, self.w, self.h - ih)
+        self.right = Node(self.x + iw, self.y, self.w - iw, ih)
+        return self
+
 
 class AtlasGen:
-    def __init__(self, max_size=(8192,8192)):
-        self.max_size = max_size
+    def __init__(self, paths: dict[str, str] = None, images: dict[str, Image.Image] = None, atlas_size=1024):
+        self.images: dict[str, Image.Image] = {}
+        if paths:
+            for path in paths:
+                self.images[paths[path]] = Image.open(os.path.abspath(path))
 
-    def generate(self, paths: list[str], atlas_name_prefix="atlas"):
-        start = time.time()
-        images = [(path, Image.open(path)) for path in paths]
-        rects = [(img.width, img.height) for _, img in images]
+        if images:
+            self.images.update(images)
 
-        packer = newPacker()
+        if not self.images:
+            raise ValueError('No images provided to atlas generator.')
 
-        for i, (w, h) in enumerate(rects):
-            packer.add_rect(w, h, i)
+        self.atlas_size = atlas_size
+        self.positions: dict[str, tuple[int, int, int, int]] = {}
 
-        packer.add_bin(self.max_size[0], self.max_size[1], float("inf"))
+    def prepare_images(self):
+        self.images = dict(sorted(self.images.items(), key=lambda item: max(item[1].width, item[1].height), reverse=True))
 
-        packer.pack()
+    def build_atlas(self) -> Image.Image:
+        self.prepare_images()
+        while True:
+            atlas = Image.new("RGBA", (self.atlas_size, self.atlas_size))
+            root = Node(0, 0, self.atlas_size, self.atlas_size)
+            self.positions.clear()
 
-        atlas_images = []
-        metadata = {}
+            success = True
+            for name, img in self.images.items():
+                node = root.insert(img)
+                if node is None:
+                    success = False
+                    break
+                atlas.paste(img, (node.x, node.y))
+                self.positions[name] = (node.x, node.y, img.width, img.height)
 
-        for atlas_index, abin in enumerate(packer):
-            atlas_img = Image.new('RGBA', (self.max_size[0], self.max_size[1]), (0, 0, 0, 0))
+            if success:
+                return atlas
+            else:
+                self.atlas_size *= 2
 
-            for rect in abin:
-                x, y = rect.x, rect.y
-                w, h = rect.width, rect.height
-                idx = rect.rid
-                path, img = images[idx]
+    def save(self, path: str, metadata_path: str = None):
+        atlas = self.build_atlas()
+        atlas.save(path)
 
-                # Paste image into atlas
-                atlas_img.paste(img, (x, y))
+        if metadata_path:
+            import json
+            with open(metadata_path, "w") as f:
+                json.dump(self.positions, f, indent=4)
 
-                # Store metadata
-                metadata[path] = {
-                    "atlas": atlas_index,
-                    "x": x,
-                    "y": y,
-                    "width": w,
-                    "height": h,
-                    "uv": [x / self.max_size[0], y / self.max_size[1], (x + w) / self.max_size[0], (y + h) / self.max_size[1]]
-                }
 
-            atlas_filename = f"{atlas_name_prefix}_{atlas_index}.png"
-            atlas_img.save(atlas_filename)
-            atlas_images.append(atlas_filename)
-    
-        return atlas_images, metadata

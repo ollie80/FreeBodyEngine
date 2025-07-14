@@ -1,3 +1,4 @@
+import importlib.resources
 import os
 import json
 import tomllib
@@ -6,12 +7,14 @@ import shutil
 from pathlib import Path
 import sys
 
-from FreeBodyEngine.build.atlas_gen import AtlasGen
 import sys
 import venv
 import struct
 import venv
-
+import importlib
+from FreeBodyEngine.font.atlasgen import generate_atlas
+from FreeBodyEngine.build.atlas_gen import AtlasGen
+from FreeBodyEngine import requirements as fb_requirements
 
 SUPPORTED_PLATFORMS = ["windows", "darwin", "linux"]
 
@@ -19,12 +22,7 @@ FONT_FILE_TYPES = ["ttf"]
 DATA_FILE_TYPES = ["txt", "json", "fbusl", "fbmat", "fbspr", 'mp3', 'wav', 'toml']
 IMAGE_FILE_TYPES = ["png", "jpg", "jpeg"]
 MESH_FILE_TYPES = ["fbx"]
-
-GLOBAL_DEPENDENCIES = ["numpy"]
-WINDOWS_DEPENDENCIES = ["pywin32", "PyOpenGL", "vulkan"]
-DARWIN_DEPENDENCIES = ["cocoa", "PyOpenGL"]
-LINUX_DEPENDENCIES = ["xlib", "PyOpenGL", "vulkan"]
-WEB_DEPENDENCIES = ["pyodide"]
+FONT_SIZE = 16
 
 class Builder:
     def __init__(self, path, dev):
@@ -33,19 +31,23 @@ class Builder:
         args = sys.argv.copy()
         del args[0]
 
-        self.atlas_generator = AtlasGen()
 
         self.platform = self.get_build_platform(args)
 
-        self.dependencies = self.get_user_setting('dependencies') + self.get_platform_dependencies(self.platform) + GLOBAL_DEPENDENCIES
-        
-        self.asset_path = os.path.abspath(self.get_user_setting('assets'))
-        self.code_path = os.path.abspath(self.get_user_setting('code'))
+        self.dependencies: list[str] = self.get_user_setting('dependencies') + self.get_platform_dependencies(self.platform)
+        self.dependencies.append("pyinstaller")
+
+        self.asset_path = os.path.abspath(os.path.join(path, self.get_user_setting('assets')))
+        self.code_path = os.path.abspath(os.path.join(path, self.get_user_setting('code')))
         self.build_path = os.path.abspath(f'{path}/build/')
         self.temp_path = os.path.abspath(f'{path}/build/temp/')
+        self.cache_path = os.path.join(self.build_path, "cache.json")
         
         self.output_path = os.path.abspath(f'{path}/dist/')
-        self.main_file = self.get_user_setting('main_file')
+        self.asset_out_path = os.path.join(self.output_path, 'assets')
+        self.main_file = os.path.abspath(os.path.join(path, self.get_user_setting('main_file')))
+        
+        self.build_cache = self.get_build_cache()
 
         if self.platform == "web" and not dev:
             self.build_for_web()
@@ -73,11 +75,24 @@ class Builder:
         Converts a system path into an output path.
         """
         return os.path.abspath(path).removeprefix(root_dir + "\\")
-    
+
+
     def get_platform_dependencies(self, platform: str):
+
+        requirements = [] 
+        requirements += fb_requirements.GLOBAL
+
         if platform == "windows":
-            return WINDOWS_DEPENDENCIES
-        return []
+            requirements += fb_requirements.WINDOWS
+        
+        elif platform == "darwin":
+            requirements += fb_requirements.DARWIN
+
+        elif platform == "linux":
+            requirements += fb_requirements.LINUX
+
+        return requirements
+
 
     def get_build_platform(self, args: list[str]):
         sys_plat = sys.platform
@@ -86,53 +101,71 @@ class Builder:
 
         elif sys_plat in SUPPORTED_PLATFORMS:                
             return sys_plat
+        
         elif sys_plat == "win32":
             return 'windows'
+        
+        elif sys_plat == "darwin":
+            return sys_plat
+        
+        elif sys_plat == "linux":
+            return sys_plat
             
         else:
             print("Current platform is not supported, aborting build.")
 
     def locate_assets(self): 
-        images = []
-        data = []
-        meshes = []
-        fonts = []
+        images = {}
+        data = {}
+        meshes = {}
+        fonts = {}
         for dir_path, _, file_names in os.walk(self.asset_path):
             for file_name in file_names:
                 file_type = file_name.split('.')[1]
                 file_path = dir_path + "/" + file_name
                 if file_type in IMAGE_FILE_TYPES:
-                    images.append(file_path)
+                    images[file_path] = get_relative_path(file_path, self.asset_path)
                 elif file_type in MESH_FILE_TYPES:
-                    meshes.append(file_path)
+                    meshes[file_path] = get_relative_path(file_path, self.asset_path)
                 elif file_type in DATA_FILE_TYPES:
-                    data.append(file_path)
+                    data[file_path] = get_relative_path(file_path, self.asset_path)
                 elif file_type in FONT_FILE_TYPES:
-                    fonts.append(file_path)
-        
-        return images, data, meshes, fonts
+                    fonts[file_path] = get_relative_path(file_path, self.asset_path)
+        return images, data, meshes
 
-    def bundle_assets(self, paths: list[str], name: str, root_dir: str):
-        with open(f"{self.output_path}/{name}.pak", 'wb') as file:
+    def bundle_assets(self, paths: dict[str, str], name: str):
+        with open(os.path.join(self.asset_out_path, f"{name}.pak"), 'wb') as file:
             for path in paths:
-                data = open(f"{path}", "rb").read()
-                out_path = self.get_out_path(path, root_dir)
+                data = open(path, "rb").read()
+                out_path = paths[path]
                 file.write(struct.pack("<H", len(out_path)))
                 file.write(out_path.encode("utf-8"))
                 file.write(struct.pack("<I", len(data)))
                 file.write(data)
 
-    def convert_fonts(self, paths: list[str]) -> tuple[list[str], list[str]]:
-        return [], []
-
     def reset_dirs(self):
         """Resets the build, temp, and dist directories."""
-        shutil.rmtree(self.build_path)
-        os.mkdir(self.build_path)
+        if not os.path.exists(self.build_path):
+            os.mkdir(self.build_path)
+        shutil.rmtree(self.temp_path)
         os.mkdir(self.temp_path)
 
         shutil.rmtree(self.output_path)
         os.mkdir(self.output_path)
+        os.mkdir(self.asset_out_path)
+
+    def get_build_cache(self):
+        if os.path.exists(self.cache_path):
+            return json.loads(open(self.cache_path, 'r').read())
+        else:
+            return {}
+        
+    def create_build_cache(self):
+        cache = {}
+        cache['dependencies'] = self.dependencies
+
+        open(self.cache_path, 'w').write(cache)
+
 
     def setup_venv(self):
         venv_path = os.path.abspath(self.build_path+"/venv/")
@@ -140,50 +173,70 @@ class Builder:
         executable = os.path.abspath(venv_path + "/Scripts/python.exe")
 
         self.install_dependencies(executable)
+        self.install_freebody(executable)
         self.run_pyinstaller(executable)
+
+    def install_freebody(self, venv_executable):
+        package_path = os.path.abspath(os.path.join(__file__, "..", "..", ".."))
+        subprocess.check_call([venv_executable, "-m", "pip", "install", package_path])
+
 
     def install_dependencies(self, venv_executable):
         subprocess.check_call([venv_executable, "-m", "pip", "install", *self.dependencies])
 
     def run_pyinstaller(self, venv_executable):
-        subprocess.check_call([venv_executable, "-m", "PyInstaller", "--onefile", "--name", "MyGame", "--windowed", self.main_file]) 
+        dist_path = os.path.join(self.temp_path, "pyinstaller", 'dist')
+        work_path = os.path.join(self.temp_path, "pyinstaller", 'work')
+        spec_path = os.path.join(self.temp_path, "pyinstaller", 'game.spec')
+        name = self.build_settings.get('name', 'FreeBodyGame')
+
+        lib_path = str(importlib.resources.files('FreeBodyEngine.lib'))
+
+        subprocess.check_call([venv_executable, "-m", "PyInstaller", "--onefile", 
+                            "--name", name,
+                            "--windowed",
+                            self.main_file,
+                            "--distpath", dist_path,
+                            "--workpath", work_path,
+                            "--specpath", spec_path,
+                            "--add-data", f"{lib_path};FreeBodyEngine/lib"
+
+        ]) 
+        
+        executable = name + '.exe'
+        shutil.move(os.path.join(dist_path, executable), os.path.join(self.output_path, executable))
 
     def build_code(self):
         """
         Builds code into an execuatable usign pyinstaller.
         """
         self.setup_venv()
-        self.install_dependencies()
-        self.run_pyinstaller()
+
 
     def build_for_web(self, args):
-        bundle = '--bundle' == args
-        raise NotImplemented("Web builds not supported.")
+        raise NotImplementedError("Web builds not yet implemented.")
 
     def build_for_release(self):
-        images, data, meshes, fonts = self.locate_assets()
-        self.atlas_generator.generate(images)
+        images, data, meshes = self.locate_assets()
+        self.reset_dirs()
+
+        atlas_path = os.path.join(self.temp_path, '_ENGINE_atlas.png')
+        atlas_data_path = os.path.join(self.temp_path, '_ENGINE_atlas_data.json')
+
+        self.atlas_generator = AtlasGen(images)
+        self.atlas_generator.save(atlas_path, atlas_data_path)
         #then write atlas metadata, and bundle
 
-        self.bundle_assets(data, 'data', self.asset_path)
-        
-        self.bundle_assets(images, 'images', self.asset_path)
-        self.bundle_assets(meshes, 'mesh', self.asset_path)
-        
-        font_paths = self.convert_font(fonts)
-        self.bundle_assets(font_paths[0], 'data', self.temp_path)
-        self.bundle_assets(font_paths[1], 'images', self.temp_path)
+        self.bundle_assets(data, 'data')
+        self.bundle_assets({atlas_path: '_ENGINE_atlas.png'}, 'images')
+        self.bundle_assets(meshes, 'mesh')
 
         self.build_code()
         print(f"Successfully built game for release, platform: {self.platform}.")
-
-
-    def build_for_dev(self):        
-        # font_paths = self.convert_fonts(fonts)
-        # self.bundle_assets(font_paths[0], 'data', self.temp_path)
-        # self.bundle_assets(font_paths[1], 'images', self.temp_path)
-
+        
+    def build_for_dev(self):
         print("Successfully built game for development.")
+
 
 def get_relative_path(path: str, folder: str) -> str:
     full = Path(path)
@@ -206,4 +259,3 @@ def load_toml(path: str):
 
 def build(path='./', dev=False):
     Builder(path, dev)
-    
