@@ -450,6 +450,10 @@ class Vector(GenericVector):
         else:
             self.x, self.y = x, 0
 
+    @classmethod
+    def from_angle(self, angle: float) -> 'Vector':
+        return Vector(math.cos(angle), math.sin(angle))
+
     def copy(self) -> 'Vector':
         return Vector(self.x, self.y)
 

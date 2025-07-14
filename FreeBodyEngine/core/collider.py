@@ -259,7 +259,6 @@ class CircleCollider2D(Collider2D):
         self.collision_shape.rotation = self.world_transform.rotation
         self.collision_shape.radius = self.world_transform.scale.x / 2
 
-
 class Ray2D:
     """
     A 2D ray object.
@@ -340,7 +339,6 @@ class Ray2D:
         hit_point = self.origin + self.direction * tmin
         return hit_point
 
-    
     def intersect(self, collider: Union[Collider2D, CollisionShape]):
             
         if isinstance(collider, Collider2D):
@@ -377,11 +375,21 @@ class Ray2D:
         else:
             return None
 
-class Raycaster2D:
+class Raycaster2D(Node2D):
     def __init__(self):
-        pass
+        super().__init__()
 
-def cast_ray(position: Vector, direction: Vector, scene: 'Scene' = None):
+    def on_initialize(self):
+        self.ray = Ray2D(self.world_transform.position, Vector.from_angle(self.world_transform.rotation), self.scene)    
+
+    def update(self):
+        self.ray.direction = Vector.from_angle(self.world_transform.rotation)
+        self.ray.origin = self.world_transform.position
+        self.ray.cast()
+        super().update()
+
+
+def cast_ray(position: Vector, direction: Vector, max_distance: float, scene: 'Scene' = None):
     """
     Casts a ray.
 
@@ -402,4 +410,3 @@ def cast_ray(position: Vector, direction: Vector, scene: 'Scene' = None):
         
         ray = Ray2D(position, direction, scene)
         return ray.cast()
-    

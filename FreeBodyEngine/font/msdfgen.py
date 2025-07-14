@@ -44,11 +44,20 @@ def normalize_edges(edges, size, padding):
 def signed_distance(p, a, b):
     pa = p - a
     ba = b - a
-    h = np.clip(np.dot(pa, ba) / np.dot(ba, ba), 0.0, 1.0)
+    ba_dot = np.dot(ba, ba)
+
+    if ba_dot == 0.0:
+        dist = np.linalg.norm(pa)
+        cross = 0
+        side = 1
+        return dist * side
+
+    h = np.clip(np.dot(pa, ba) / ba_dot, 0.0, 1.0)
     proj = a + h * ba
     dist = np.linalg.norm(p - proj)
+
     cross = (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
-    side = np.sign(cross)
+    side = np.sign(cross) if cross != 0 else 1
     return dist * side
 
 def generate_sdf(edges, size, spread):

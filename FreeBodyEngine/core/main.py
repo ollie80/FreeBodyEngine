@@ -95,8 +95,8 @@ class Main:
             
             self.files = FileManager(self, asset_path, dev)
         else:
-            pass
-            self.files = FileManager(self, './dev/assets', dev)
+            self.name = 'test'
+            self.files = FileManager(self, './assets', False)
 
         self.fps = fps
         self.physics_tps = physics_tps

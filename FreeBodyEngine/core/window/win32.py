@@ -21,8 +21,6 @@ LR_LOADFROMFILE = 0x00000010
 LR_CREATEDIBSECTION = 0x00002000
 IMAGE_CURSOR = 2
 
-
-
 class Win32Cursor(Cursor):
     """
     The Win32 implementation of the cursor class. Converts image into .cur file format and sets up for use with Win32.
