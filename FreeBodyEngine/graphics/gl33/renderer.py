@@ -1,12 +1,9 @@
 from FreeBodyEngine.graphics.renderer import Renderer
-from FreeBodyEngine.graphics.gl33 import context
 from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
-from FreeBodyEngine.graphics.gl33 import GLImage
-from FreeBodyEngine.graphics.gl33 import GLMesh
-from FreeBodyEngine.graphics.gl33 import GLFramebuffer
+from FreeBodyEngine.graphics.gl33 import GLImage, GLMesh, GLFramebuffer, context
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.gl33.shader import GLShader
+from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
 from FreeBodyEngine.graphics.gl33.material import GLMaterial
 from FreeBodyEngine.graphics.fbusl.injector import Injector 
 
@@ -55,8 +52,8 @@ class GLRenderer(Renderer):
         width, height = self.main.window.size
         glViewport(0, 0, width, height)
 
-    def load_image(self, data):
-        return GLImage(data, self)
+    def load_image(self, texture: "Texture"):
+        return GLImage(texture)
          
     def load_material(self, data):
         return Material(data)

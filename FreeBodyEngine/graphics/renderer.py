@@ -5,7 +5,7 @@ from FreeBodyEngine.graphics.fbusl.injector import Injector
 from FreeBodyEngine.graphics.image import Image
 from FreeBodyEngine.graphics.mesh import Mesh
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType, Framebuffer
-from FreeBodyEngine.graphics.texture import TextureManager
+from FreeBodyEngine.graphics.texture import TextureManager, Texture
 
 
 if TYPE_CHECKING:
@@ -29,7 +29,11 @@ class Renderer:
         self.texture_manager = TextureManager()
 
     @abstractmethod
-    def load_image(self, data):
+    def load_image(self, texture: 'Texture'):
+        pass
+
+    @abstractmethod
+    def load_image_from_atlas(self, data):
         pass
 
     @abstractmethod

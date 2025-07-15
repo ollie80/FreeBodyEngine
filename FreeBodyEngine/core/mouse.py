@@ -12,7 +12,7 @@ class Mouse:
         
         self._cursor_hidden = False
         self._interal_cursor_hidden = False
-        self.double_click_threshold = 0.4 # seconds
+        self.double_click_threshold = 0.4 #seconds
     
     @abstractmethod
     def get_pressed(self, button: int) -> bool:

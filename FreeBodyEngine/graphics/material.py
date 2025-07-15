@@ -46,6 +46,8 @@ class Material:
         else:
             self.set_uniform("Albedo_Texture", self.albedo)
             self.set_uniform("Albedo_useTexture", True)
+            self.set_uniform("Albedo_UVRect", self.albedo.texture.uv_rect)
+
         
         if isinstance(self.normal, Color):
             self.set_uniform("Normal_Color", self.normal.float_normalized_a)
@@ -74,6 +76,7 @@ class Material:
         else:
             self.set_uniform("Metallic_Texture", self.metallic)
             self.set_uniform("Metallic_useTexture", True)
+            self.set_uniform("Metallic_UVRect", self.metallic.uv_rect)
         
         #vert
         self.set_uniform('model', transform.model)

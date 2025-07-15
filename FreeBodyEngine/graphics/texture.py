@@ -14,15 +14,14 @@ class Texture:
 class TextureManager:
     def __init__(self):
         self.dev_mode = True # dev mode enables hot reloading, release mode uses atlases
-        self.standalone_textures = []
-        self.atlas_textures = []
+        self.standalone_textures = {}
+        self.atlas_textures: dict[str, list[str, str]]= {} # {id, [graphicsID, fileID]}
         self.current_texture = None
-
 
     def _create_texture(self, internal_image) -> Texture:
         pass
 
-    def _create_standalone_texture(self, image_data, width, height):
+    def _create_standalone_texture(self, image_data):
         """Gets a standalone texture."""
         pass
 
@@ -35,7 +34,7 @@ class TextureManager:
 
     def _create_atlas_texture(self):
         """Gets a texture from an atlas."""
-        pass
+        
 
     def _delete_texture(self):
         pass

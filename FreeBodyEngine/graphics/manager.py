@@ -1,8 +1,8 @@
 from typing import TYPE_CHECKING, overload, Union
 from FreeBodyEngine import log, warning
-from FreeBodyEngine.graphics.image import Image 
 from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
-from FreeBodyEngine.graphics.image import Image 
+from FreeBodyEngine.graphics.image import Image
+from FreeBodyEngine.graphics.texture import Texture
 from FreeBodyEngine.math import GenericVector, Transform
 from dataclasses import dataclass
 from FreeBodyEngine.graphics.debug import Debug2D
@@ -35,6 +35,7 @@ class GraphicsManager:
         self.main = main
         self.rendering_mode = "full"
         self.renderer = renderer
+        
         self.window = window
         self.draw_calls: list[DrawCall] = []
 
@@ -57,8 +58,11 @@ class GraphicsManager:
     def load_material(self, data):
         return self.renderer.load_material(data)
 
-    def load_image(self, data):
-        return self.renderer.load_image(data)
+    def load_image_from_atlas(self, data):
+        return self.renderer.load_image_from_atlas(data)
+
+    def load_image(self, texture: Texture):
+        return self.renderer.load_image(texture)
 
     def _draw_2D(self, camera: 'Camera2D'):
         """
@@ -78,7 +82,7 @@ class GraphicsManager:
         debugs: list[Debug2D] = camera.scene.root.find_nodes_with_type('Debug2D')
         for debug in debugs:
             self.renderer.draw_mesh(debug.mesh, debug.material, debug.world_transform, camera)
-
+        
 
         self.main_framebuffer.unbind()
         self.main_framebuffer.draw('albedo', self.window.size)
