@@ -20,7 +20,7 @@ from FreeBodyEngine import requirements as fb_requirements
 SUPPORTED_PLATFORMS = ["windows", "darwin", "linux"]
 
 FONT_FILE_TYPES = ["ttf"]
-DATA_FILE_TYPES = ["txt", "json", "fbusl", "fbmat", "fbspr", 'mp3', 'wav', 'toml']
+DATA_FILE_TYPES = ["txt", "json", "fbusl", "fbvert", "fbfrag", "fbmat", "fbspr", 'mp3', 'wav', 'toml']
 IMAGE_FILE_TYPES = ["png", "jpg", "jpeg"]
 MESH_FILE_TYPES = ["fbx"]
 FONT_SIZE = 16
@@ -217,23 +217,51 @@ class Builder:
         """
         self.setup_venv()
 
+    def get_engine_assets(self):
+        images = {}
+        data = {}
+        meshes = {}
+        fonts = {}
+        resource = importlib.resources.files(FreeBodyEngine).joinpath("engine_assets")
+
+        with importlib.resources.as_file(resource) as asset_path:
+            engine_assets_dir = str(asset_path)
+
+        for dir_path, _, file_names in os.walk(engine_assets_dir):
+            for file_name in file_names:
+                file_type = file_name.split('.')[1]
+                file_path = dir_path + "/" + file_name
+                if file_type in IMAGE_FILE_TYPES:
+                    images[file_path] = 'engine/' + get_relative_path(file_path, engine_assets_dir)
+                elif file_type in MESH_FILE_TYPES:
+                    meshes[file_path] = 'engine/' + get_relative_path(file_path, engine_assets_dir)
+                elif file_type in DATA_FILE_TYPES:
+                    data[file_path] = 'engine/' + get_relative_path(file_path, engine_assets_dir)
+                elif file_type in FONT_FILE_TYPES:
+                    fonts[file_path] = 'engine/' + get_relative_path(file_path, engine_assets_dir)
+        return images, data, meshes
+
 
     def build_for_web(self, args):
         raise NotImplementedError("Web builds not yet implemented.")
 
     def build_for_release(self):
         images, data, meshes = self.locate_assets()
+        engine_images, engine_data, engine_meshes = self.get_engine_assets()
         self.reset_dirs()
 
         atlas_path = os.path.join(self.temp_path, '_ENGINE_atlas.png')
-        atlas_data_path = os.path.join(self.temp_path, '_ENGINE_atlas_data.json')
+        atlas_data_path = os.path.join(self.temp_path, '_ENGINE_atlas.json')
 
-        self.atlas_generator = AtlasGen(images)
+        self.atlas_generator = AtlasGen(images | engine_images)
         self.atlas_generator.save(atlas_path, atlas_data_path)
-        #then write atlas metadata, and bundle
-
+        
+        data[atlas_data_path] = "_ENGINE_atlas.json"
+        data |= engine_data
         self.bundle_assets(data, 'data')
+        
         self.bundle_assets({atlas_path: '_ENGINE_atlas.png'}, 'images')
+        
         self.bundle_assets(meshes, 'mesh')
 
         self.build_code()

@@ -10,16 +10,10 @@ if TYPE_CHECKING:
     from FreeBodyEngine.graphics.texture import Texture
 
 class Image:
-    def __init__(self, data: str, renderer: 'Renderer'):
-        self.renderer = renderer
-
-        self._image: PIL.Image.Image = PIL.Image.open(io.BytesIO(data)).transpose(PIL.Image.Transpose.FLIP_TOP_BOTTOM)
-        self.texture: Texture = self.renderer.texture_manager._create_texture(self._image)        
+    def __init__(self, texture: 'Texture'):        
+        self.texture = texture
+#        self._image: PIL.Image.Image = PIL.Image.open(io.BytesIO(texture.get_image_data())).transpose(PIL.Image.Transpose.FLIP_TOP_BOTTOM)
 
     @abstractmethod
-    def get_data(self):
-        pass          
-
-    @abstractmethod    
     def get_data(self):
         pass

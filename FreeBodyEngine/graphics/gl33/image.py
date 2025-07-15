@@ -8,8 +8,8 @@ if TYPE_CHECKING:
 
 
 class GLImage(Image):
-    def __init__(self, data: str, renderer: 'GLRenderer'):
-        super().__init__(data, renderer)
+    def __init__(self, data: str):
+        super().__init__(data)
         
     def get_size(self):
         return self.texture.uv_rect

@@ -42,12 +42,15 @@ class FileManager:
         self.path: str = path
         self.engine_path = 'FreeBodyEngine'
         self.dev = dev
+    
         if not self.dev:
-            self.data = read_assets(path + "/data.pak")
-            self.images = read_assets(path + "/images.pak")
+            self.data: dict[str, str] = read_assets(os.path.join(path, "data.pak"))
+            self.images: dict[str, str] = read_assets(os.path.join(path, "images.pak"))
         
+            print(self.data.keys())
+            self.atlas_map = self.create_atlas_map()
+
         self.main = main
-        # self.meshes = read_assets(path + "/meshes.pak")
 
     def get_file_path(self, path: str):
         n_path = path
@@ -64,8 +67,9 @@ class FileManager:
                 return True
         else:
 
-            if (path in self.images.keys()) or (path in self.data.keys()):
+            if (path in self.images.keys()) or (path in self.data.keys()) or (path in self.atlas_map.keys()):
                 return True
+
 
     def get_data_file(self, path, default = None):
         file = self.data.get(path, default)
@@ -92,8 +96,6 @@ class FileManager:
             base = os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
         
         return os.path.join(base, self.main.name)
-
-
 
     def load_data(self, path: str, bytes: bool = False):
         if not self.dev:
@@ -122,14 +124,35 @@ class FileManager:
         data = self.load_toml(path)
         
         mat = self.main.graphics.load_material(data)
-        return mat 
+        return mat        
+
+    def create_atlas_map(self):
+        atlas_map = {}
+        for image in self.images:
+            atlas_path = image.removesuffix('.png')
+            data: dict = self.load_json(atlas_path + '.json')
+            for path in data:
+                atlas_map[path] = atlas_path
+        return atlas_map
+            
+
+
+    def find_image_atlas(self, path):
+        atlas_path = self.atlas_map[path]
+        atlas_img = self.images[atlas_path + ".png"]
+        atlas_data = self.load_json(atlas_path + ".json")
+        return atlas_img, atlas_data, atlas_path
 
     def load_image(self, path: str):
         if self.file_exsists(path):
             if self.dev:
-                return self.main.graphics.load_image(open(self.get_file_path(path), 'rb').read())
+                tex = self.main.graphics.renderer.texture_manager._create_standalone_texture(open(self.get_file_path(path), 'rb').read())
+                return self.main.graphics.load_image(tex)
             else:
-                return self.main.graphics.load_image(self.images[path])
+                atlas_img, atlas_data, atlas_path = self.find_image_atlas(path)
+                
+                tex = self.main.graphics.renderer.texture_manager._create_atlas_texture(atlas_img, atlas_path, atlas_data, path)
+                return self.main.graphics.load_image(tex)
         else:
             raise FileExistsError(f"No image at path '{path}'.")
 
