@@ -64,7 +64,7 @@ class AtlasGen:
                     success = False
                     break
                 atlas.paste(img, (node.x, node.y))
-                self.positions[name] = (node.x, node.y, img.width, img.height)
+                self.positions[name] = (node.x / self.atlas_size, node.y / self.atlas_size, img.width / self.atlas_size, img.height / self.atlas_size)
 
             if success:
                 return atlas

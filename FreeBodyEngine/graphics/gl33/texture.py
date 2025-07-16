@@ -9,7 +9,7 @@ import io
 class GLTextureManager(TextureManager):
     def _create_standalone_texture(self, data) -> Texture:
         """Gets a standalone texture."""
-        img: Image.Image = Image.open(io.BytesIO(data))
+        img: Image.Image = Image.open(io.BytesIO(data)).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
         image_data = np.array(img.convert('RGBA'), dtype=np.uint8)
         width, height = img.size
 
@@ -34,7 +34,7 @@ class GLTextureManager(TextureManager):
     def _create_atlas_texture(self, atlas_img, file_path, atlas_data, name):
         """Gets a texture from an atlas."""
         if not self._atlas_exists(file_path):
-            img: Image.Image = Image.open(io.BytesIO(atlas_img))
+            img: Image.Image = Image.open(io.BytesIO(atlas_img)).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
             img_data = np.array(img.convert('RGBA'), dtype=np.uint8)
             width, height = img.size
             tex_id = glGenTextures(1)
