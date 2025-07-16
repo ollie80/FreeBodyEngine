@@ -61,7 +61,7 @@ uniform vec4 Metallic_UVRect;
 in vec3 normals;
 
 void main() {
-    albedo = Albedo_useTexture ? texture(Albedo_Texture, (Albedo_UVRect.zw * uv) + Albedo_UVRect.xy).rgba : Albedo_Color;
+    albedo = Albedo_useTexture ? texture(Albedo_Texture, (Albedo_UVRect.zw * uv) + vec2(Albedo_UVRect.x, (1.0 - Albedo_UVRect.y) - Albedo_UVRect.w)).rgba : Albedo_Color;
     normal = Normal_useTexture ? texture(Normal_Texture, uv).rgba : Normal_Color;
     emmision = Emmision_useTexture ? texture(Emmision_Texture, uv).rgba : Emmision_Color;
     roughness = Roughness_useTexture ? texture(Roughness_Texture, uv).r : Roughness_Color;

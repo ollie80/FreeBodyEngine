@@ -95,14 +95,15 @@ class GLShader(Shader):
             if isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj):
                 return True
             
-            elif isinstance(Color) and length >= 3:
+            elif isinstance(obj, Color) and length >= 3:
                 return True
 
-            elif isinstance(Vector) and length == 2:
+            elif isinstance(obj, Vector) and length == 2:
                 return True
 
-            elif isinstance(Vector3) and length == 3:
+            elif isinstance(obj, Vector3) and length == 3:
                 return True
+
 
         if gl_type == GL_INT:
             if isinstance(val, int):

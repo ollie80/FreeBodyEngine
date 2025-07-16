@@ -6,6 +6,7 @@ from FreeBodyEngine.graphics.fbusl.semantic import FuncCall
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
 from FreeBodyEngine import get_main
 from FreeBodyEngine.graphics.image import Image
+import numpy as np
 
 from FreeBodyEngine.math import Transform, Vector3, Vector
 import sys
