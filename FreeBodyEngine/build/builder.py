@@ -199,6 +199,7 @@ class Builder:
         lib_path = Path(spec.origin).parent
 
         subprocess.check_call([venv_executable, "-m", "PyInstaller", "--onefile", 
+                            "--windowed",
                             "--name", name,
                             self.main_file,
                             "--distpath", dist_path,

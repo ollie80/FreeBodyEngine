@@ -32,8 +32,10 @@ GL_ATTACHMENT_TYPE = {
     AttachmentFormat.DEPTH24_STENCIL8: (GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8),
 }
 
+
+
 class GLFramebuffer(Framebuffer):
-    def __init__(self, width, height, attachments):
+    def __init__(self, width, height, attachments, transparent=False):
         super().__init__(width, height, attachments)
         self.fbo = glGenFramebuffers(1)
         self.textures = {}
@@ -98,6 +100,12 @@ class GLFramebuffer(Framebuffer):
         if status != GL_FRAMEBUFFER_COMPLETE:
             raise RuntimeError(f"Framebuffer incomplete: status {status}")
 
+        if transparent:
+
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glEnable(GL_BLEND)
+            print('transparent')
+
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     def draw(self, attachment, size: tuple[int,int] = None):
@@ -136,16 +144,15 @@ class GLFramebuffer(Framebuffer):
         draw_buffers = []
         color_attachment_index = 0
 
-        for name in self._attachments:
-            att_type, att_format = self._attachments[name]
-            
-            if att_type == AttachmentType.COLOR:
+        for name, (att_type, att_format) in self._attachments.items():
+            internal_format = GL_ATTACHMENT_FORMAT[att_format]
 
+            if att_type == AttachmentType.COLOR:
                 glDeleteTextures(1, [self.textures[name]])
 
                 tex = glGenTextures(1)
                 glBindTexture(GL_TEXTURE_2D, tex)
-                internal_format = GL_ATTACHMENT_FORMAT[att_format]
+
                 fmt, typ = GL_ATTACHMENT_TYPE[att_format]
                 glTexImage2D(GL_TEXTURE_2D, 0, internal_format, self.width, self.height, 0, fmt, typ, None)
 
@@ -162,10 +169,11 @@ class GLFramebuffer(Framebuffer):
                 color_attachment_index += 1
 
             elif att_type in (AttachmentType.DEPTH, AttachmentType.STENCIL, AttachmentType.DEPTH_STENCIL):
-                glDeleteRenderbuffers(1, [self.depth_renderbuffer])
+                if hasattr(self, "depth_renderbuffer"):
+                    glDeleteRenderbuffers(1, [self.depth_renderbuffer])
+
                 self.depth_renderbuffer = glGenRenderbuffers(1)
                 glBindRenderbuffer(GL_RENDERBUFFER, self.depth_renderbuffer)
-                internal_format = GL_ATTACHMENT_FORMAT[att_format]
                 glRenderbufferStorage(GL_RENDERBUFFER, internal_format, self.width, self.height)
 
                 if att_type == AttachmentType.DEPTH:

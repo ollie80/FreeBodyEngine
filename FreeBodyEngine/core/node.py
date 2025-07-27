@@ -177,7 +177,6 @@ class Node(GenericNode):
         pass
 
 class Node2D(Node):
-
     def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1)):
         super().__init__()
         self.parental_requirement = "Node2D"

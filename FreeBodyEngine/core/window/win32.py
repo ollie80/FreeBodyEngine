@@ -35,6 +35,8 @@ class Win32Window(Window):
     """
     def __init__(self, main: 'Main', size: tuple[int, int], window_type, display=0):
         super().__init__(main, size, 'win32', display)
+        self.window_type = 'win32'
+
         # Register window class
         hInstance = win32api.GetModuleHandle()
         className = "Win32WindowClass"

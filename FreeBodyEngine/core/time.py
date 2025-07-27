@@ -1,6 +1,8 @@
 import time
-from FreeBodyEngine import delta, physics_delta, get_main
+from FreeBodyEngine import delta, physics_delta, get_main, register_service_update, unregister_service_update, get_service, service_exists
 from functools import wraps
+from FreeBodyEngine.core.service import Service
+
 
 class Time:
     def __init__(self):
@@ -16,7 +18,6 @@ class Time:
 
     def get_time(self):
         return self.total_time
-
 
     def get_fps(self):
         return len(self._frame_times)
@@ -40,7 +41,6 @@ class Time:
         while self._tick_times and self._tick_times[0] < one_second_ago:
             self._tick_times.pop(0)
 
-
     def update(self):
         current_time = time.time()
 
@@ -53,10 +53,14 @@ class Time:
         self.frame_count += 1
 
 
-class CooldownManager:
+class CooldownManager(Service):
     def __init__(self):
+        super().__init__('cooldown_manager')
         self.cooldowns: dict[str, float] = {}
         self.physics_cooldowns = {}
+
+    def on_initialize(self):
+        register_service_update('early', self.update)
 
     def update(self):
         for cooldown in self.cooldowns:
@@ -65,15 +69,17 @@ class CooldownManager:
         for cooldown in self.physics_cooldowns:
             self.physics_cooldowns[cooldown] = self.physics_cooldowns[cooldown] - physics_delta()
 
+    def on_destroy(self):
+        unregister_service_update('early', self.update)
 
 def cooldown(seconds: float):
     """Decorator to add a cooldown to functions."""
     def decorator(method):
 
         def wrapper(self, *args, **kwargs):
-            if get_main():
+            if service_exists('cooldown_manager'):
                 id_ = id(self)
-                manager = get_main().cooldowns
+                manager = get_service('cooldown_manager')
 
                 if id_ in manager.cooldowns:
                     if manager.cooldowns[id_] <= 0:
@@ -95,7 +101,7 @@ def physics_cooldown(seconds: float):
         def wrapper(self, *args, **kwargs):
             id_ = id(self)
 
-            manager = get_main().cooldowns
+            manager = get_service('cooldown_manager')
             if id_ in manager.physics_cooldowns:
                 if manager.physics_cooldowns[id_] <= 0:
                     return method(self, *args, **kwargs)

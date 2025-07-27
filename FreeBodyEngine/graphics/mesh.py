@@ -56,16 +56,17 @@ class Mesh:
         return cls(vertices, normals, uvs, indices)
         
     @classmethod
-    def generate_circle(cls, radius=1.0, segments=32):
+    def generate_circle(cls, radius=0.5, segments=32):
         vertices = [0.0, 0.0, 0.0]  # center
         normals = [0.0, 0.0, 1.0]   # facing +Z
         uvs = [0.5, 0.5]            # center UV
         indices = []
 
+
         for i in range(segments + 1):  # +1 to close the loop
             angle = 2 * np.pi * i / segments
             x = np.cos(angle) * radius
-            y = np.sin(angle) * radius
+            y = np.sin(angle) * radius 
 
             # Add vertex on the edge
             vertices.extend([x, y, 0.0])
@@ -88,9 +89,63 @@ class Mesh:
         )
     
     @classmethod
-    def generate_cube():
-        pass
-    
+    def generate_cube(cls, width: float = 1.0, height: float = 1.0, depth: float = 1.0):
+        hw = width / 2.0
+        hh = height / 2.0
+        hd = depth / 2.0
+
+        positions = [
+            [-hw, -hh, -hd],
+            [ hw, -hh, -hd],
+            [ hw,  hh, -hd],
+            [-hw,  hh, -hd],
+            [-hw, -hh,  hd],
+            [ hw, -hh,  hd],
+            [ hw,  hh,  hd],
+            [-hw,  hh,  hd],
+        ]
+
+        vertices = np.array([
+            # Front face
+            *positions[4], *positions[5], *positions[6],
+            *positions[4], *positions[6], *positions[7],
+            # Back face
+            *positions[1], *positions[0], *positions[3],
+            *positions[1], *positions[3], *positions[2],
+            # Left face
+            *positions[0], *positions[4], *positions[7],
+            *positions[0], *positions[7], *positions[3],
+            # Right face
+            *positions[5], *positions[1], *positions[2],
+            *positions[5], *positions[2], *positions[6],
+            # Top face
+            *positions[3], *positions[7], *positions[6],
+            *positions[3], *positions[6], *positions[2],
+            # Bottom face
+            *positions[0], *positions[1], *positions[5],
+            *positions[0], *positions[5], *positions[4],
+        ], dtype=np.float32)
+
+        uvs = np.array([
+            # Each face gets 6 UVs (2 triangles)
+            0.0, 0.0,  1.0, 0.0,  1.0, 1.0,
+            0.0, 0.0,  1.0, 1.0,  0.0, 1.0,
+        ] * 6, dtype=np.float32)
+
+        normals_per_face = [
+            [ 0.0,  0.0,  1.0],  # Front
+            [ 0.0,  0.0, -1.0],  # Back
+            [-1.0,  0.0,  0.0],  # Left
+            [ 1.0,  0.0,  0.0],  # Right
+            [ 0.0,  1.0,  0.0],  # Top
+            [ 0.0, -1.0,  0.0],  # Bottom
+        ]
+        normals = np.array(normals_per_face * 6, dtype=np.float32).repeat(6, axis=0).flatten()
+
+        indices = np.array([i for i in range(36)], dtype=np.uint32)
+
+        return cls(vertices, normals, uvs, indices)
+        
     @classmethod
     def generate_sphere(cls, radius=1.0, sectors=36, stacks=18):
         """Generates a UV sphere mesh."""

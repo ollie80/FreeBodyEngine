@@ -3,10 +3,12 @@ from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.graphics.fbusl.injector import Injector 
 
 from FreeBodyEngine.graphics.image import Image
+from FreeBodyEngine.graphics.buffer import Buffer
 from FreeBodyEngine.graphics.mesh import Mesh
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType, Framebuffer
 from FreeBodyEngine.graphics.texture import TextureManager, Texture
-
+import numpy as np
+from FreeBodyEngine.core.service import Service
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -16,18 +18,13 @@ if TYPE_CHECKING:
     from FreeBodyEngine.math import Vector, Transform
 
 
-class Renderer:
-    """
-    Renders graphics objects to the window's framebuffer. 
-    :param main: The main object.
-    :type main: Main
-    """
-    def __init__(self, main: 'Main'):
-        self.main = main
+class Renderer(Service):
+    def __init__(self):
+        super().__init__('renderer')
         self.mesh_class = Mesh
         self.image_class = Image
         self.texture_manager = TextureManager()
-
+    
     @abstractmethod
     def load_image(self, texture: 'Texture'):
         pass
@@ -45,7 +42,11 @@ class Renderer:
         pass
     
     @abstractmethod
-    def create_framebuffer(self, width: int, height: int, attachments: dict[str, tuple[AttachmentFormat, AttachmentType]]) -> Framebuffer:
+    def create_buffer(self, data: np.ndarray) -> Buffer:
+        pass
+
+    @abstractmethod
+    def create_framebuffer(self, width: int, height: int, attachments: dict[str, tuple[AttachmentFormat, AttachmentType]], **kwargs) -> Framebuffer:
         pass
 
     @abstractmethod
@@ -61,17 +62,21 @@ class Renderer:
         pass
 
     @abstractmethod
-    def draw_line(self, start: tuple[float, float], end: tuple[float, float], width: int, color: 'Color'):
+    def draw_line(self, start: tuple[float, float], end: tuple[float, float], width: float, color: 'Color'):
         """
         Draws a line between the first and second point.
         
-        :param start: The first point (NDC).
+        :param start: The starting point.
         :type start: tuple[float, float]
-        :param end: The second point (NDC).
+        :param end: The end point.
         :type end: tuple[float, float]
-        :param width: The thickness of the line (NDC).
-        :type width: int 
+        :param width: The thickness of the line.
+        :type width: float
         """
+        pass
+
+    @abstractmethod
+    def draw_mesh_instanced(self, mesh: 'Mesh', instances: int, material: 'Material', transform: 'Transform', camera: 'Camera2D'):
         pass
 
     @abstractmethod

@@ -1,4 +1,5 @@
 from FreeBodyEngine.utils import abstractmethod
+from FreeBodyEngine import register_service_update, unregister_service_update, get_service, service_exists
 from typing import TYPE_CHECKING, Union, Literal
 from FreeBodyEngine.core.input import Key
 from FreeBodyEngine.core.mouse import Mouse
@@ -7,18 +8,28 @@ if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
     from FreeBodyEngine.graphics.image import Image
 
+from FreeBodyEngine.core.service import Service
+
 class Cursor:
     """The generic cursor class. Abstracts cursor management to easily create cross-platform cursors."""
     pass
 
-class Window:
+class Window(Service):
     """
     The generic window class. Its purpose is to abstract window management.
     """
-    def __init__(self, main: 'Main', size: tuple[int, int], window_type: str, title="FreeBodyEngine", display=None):
-        self.main = main
-        self.window_type = window_type
-        
+    def __init__(self, size: tuple[int, int], title: str):
+        super().__init__('window')
+        self.window_type = None
+
+    def on_initialize(self):
+        register_service_update('early', self.update)
+        register_service_update('late', self.draw)
+
+    def on_destroy(self):
+        unregister_service_update('early', self.update)
+        unregister_service_update('late', self.draw)
+
     @property
     @abstractmethod
     def size(self) -> tuple[int, int]:
@@ -34,8 +45,11 @@ class Window:
         pass
 
     def _resize(self):
-        self.main.renderer.resize()        
-        self.main.graphics.resize()
+        if service_exists('renderer'):
+            get_service('renderer').resize()        
+
+        if service_exists('graphics'):
+            get_service('graphics').resize()
 
     @abstractmethod
     def is_ready(self) -> bool:

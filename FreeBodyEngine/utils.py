@@ -1,4 +1,4 @@
-from FreeBodyEngine import get_main, warning
+from FreeBodyEngine import get_main, warning, get_flag, get_service
 
 def abstractmethod(func):
     def wrapper(*args, **kwargs):
@@ -55,20 +55,27 @@ def load_dlls():
     return dll_dir
 
 def load_sprite(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_sprite(path)
+    if not get_flag('HEADLESS', False):
+        return get_service('files').load_sprite(path)
     else:
         warning("Cannot load a sprite while in headless mode as it requires a renderer.")
 
+def load_data(path: str):
+    return get_service('files').load_data(path)
+
+def load_toml(path: str):
+    return get_service('files').load_toml(path)
+
+
 def load_image(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_image(path)
+    if not get_flag('HEADLESS', False):
+        return get_service('files').load_image(path)
     else:
         warning("Cannot load an image while in headless mode as it requires a renderer.")
 
 def load_material(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_material(path)
+    if not get_flag('HEADLESS', False):
+        return get_service('files').load_material(path)
     else:
         warning("Cannot load a material while in headless mode as it requires a renderer.")
 
@@ -78,13 +85,13 @@ def load_sound(path: str):
 
 
 def load_shader(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_shader(path)
+    if not get_flag('HEADLESS', False):
+        return get_service('files').load_shader(path)
     else:
         warning("Cannot load a shader while in headless mode as it requires a renderer.")
 
 def load_sprite(path: str):
-    if not get_main().headless_mode:
-        return get_main().files.load_sprite(path)
+    if not get_flag('HEADLESS', False):
+        return get_service('files').load_sprite(path)
     else:
         warning("Cannot load a shader while in healess mode as it requires a renderer.")
