@@ -232,7 +232,7 @@ class RectangleCollider2D(Collider2D):
                 for d in debug:
                     d.kill()
             else:
-                self.add(RectangleColliderDebug(self.scene.main.renderer))
+                self.add(RectangleColliderDebug())
         
     def apply_transform(self):
         self.collision_shape.position = self.world_transform.position

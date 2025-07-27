@@ -1,5 +1,5 @@
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
-from FreeBodyEngine.graphics.fbusl import throw_error
+from FreeBodyEngine.graphics.fbusl import fbusl_error
 
 class GenericVar:
     def __init__(self, name: str, type: str, value=None):
@@ -72,7 +72,7 @@ class Scope:
             return self.symbols[name]
         if self.parent:
             return self.parent.lookup(name, pos)
-        throw_error(f"'{name}' not defined", pos, self.file_path)
+        fbusl_error(f"'{name}' not defined", pos, self.file_path)
 
     def __contains__(self, name: str):
         return name in self.symbols or (self.parent and name in self.parent)
@@ -152,7 +152,7 @@ class SemanticAnalyser:
             if isinstance(stmt, Return):
                 return_type = self.get_node_type(stmt)
                 if return_type != node.return_type:
-                    throw_error(
+                    fbusl_error(
                         f"Function '{node.name}' should return '{node.return_type}', not '{return_type}'",
                         node.pos, self.file_path
                     )
@@ -180,7 +180,7 @@ class SemanticAnalyser:
 
     def analyse_var(self, node: Node):
         if node.name in self.current_scope:
-            throw_error(f"Variable '{node.name}' already defined in scope", node.pos, self.file_path)
+            fbusl_error(f"Variable '{node.name}' already defined in scope", node.pos, self.file_path)
 
         if isinstance(node, Define):
             value_type = self.get_node_type(node.val)
@@ -203,31 +203,31 @@ class SemanticAnalyser:
                 struct_var = self.current_scope.lookup(node.ident.struct_name, node.pos)
                 struct_type_name = struct_var.type
                 if struct_type_name not in self.structs:
-                    throw_error(f"'{struct_type_name}' is not a struct type", node.pos, self.file_path)
+                    fbusl_error(f"'{struct_type_name}' is not a struct type", node.pos, self.file_path)
                 struct_def = self.structs[struct_type_name]
                 if node.ident.method_name not in struct_def.fields:
-                    throw_error(f"Struct '{struct_type_name}' has no field '{node.ident.method_name}'", node.pos, self.file_path)
+                    fbusl_error(f"Struct '{struct_type_name}' has no field '{node.ident.method_name}'", node.pos, self.file_path)
                 expected_type = struct_def.fields[node.ident.method_name]
                 value_type = self.get_node_type(node.value)
                 if value_type != expected_type:
-                    throw_error(f"Type mismatch: Cannot assign {value_type} to {expected_type}", node.pos, self.file_path)
+                    fbusl_error(f"Type mismatch: Cannot assign {value_type} to {expected_type}", node.pos, self.file_path)
             else:
                 var = self.current_scope.lookup(node.ident.name, node.pos)
                 if isinstance(var, (Output, Var)):
                     value_type = self.get_node_type(node.value)
                     if var.type != value_type:
-                        throw_error(f"Type mismatch: Cannot assign {value_type} to {var.type}", node.pos, self.file_path)
+                        fbusl_error(f"Type mismatch: Cannot assign {value_type} to {var.type}", node.pos, self.file_path)
                 else:
-                    throw_error(f"Cannot assign to {var.__repr__()}", node.pos, self.file_path)
+                    fbusl_error(f"Cannot assign to {var.__repr__()}", node.pos, self.file_path)
 
     def analyse_struct(self, node: StructDecl):
         if node.name in self.structs:
-            throw_error(f"Struct '{node.name}' already declared.", node.pos, self.file_path)
+            fbusl_error(f"Struct '{node.name}' already declared.", node.pos, self.file_path)
 
         field_map = {}
         for method in node.methods:
             if method.name in field_map:
-                throw_error(f'Struct "{node.name}" already has field "{method.name}".', method.pos, self.file_path)
+                fbusl_error(f'Struct "{node.name}" already has field "{method.name}".', method.pos, self.file_path)
             field_map[method.name] = method.type
 
         node.fields = field_map
@@ -238,7 +238,7 @@ class SemanticAnalyser:
             left = self.get_node_type(node.left)
             right = self.get_node_type(node.right)
             if left != right:
-                throw_error(f"Operator '{node.op}' not supported between types '{left}' and '{right}'", node.pos, self.file_path)
+                fbusl_error(f"Operator '{node.op}' not supported between types '{left}' and '{right}'", node.pos, self.file_path)
 
     def get_node_type(self, node: Node):
         if isinstance(node, Expression):
@@ -264,16 +264,16 @@ class SemanticAnalyser:
             if node.name in self.structs.keys():
                 return node.name
             else:
-                throw_error(f"'{node.name}' not defined", node.pos, self.file_path)
+                fbusl_error(f"'{node.name}' not defined", node.pos, self.file_path)
 
     def get_field_type(self, node):
         struct_var = self.current_scope.lookup(node.struct_name, node.pos)
         struct_type_name = struct_var.type
         if struct_type_name not in self.structs:
-            throw_error(f"'{struct_type_name}' is not a struct type", node.pos, self.file_path)
+            fbusl_error(f"'{struct_type_name}' is not a struct type", node.pos, self.file_path)
         struct_def = self.structs[struct_type_name]
         if node.method_name not in struct_def.fields:
-            throw_error(f"Struct '{struct_type_name}' has no field '{node.method_name}'", node.pos, self.file_path)
+            fbusl_error(f"Struct '{struct_type_name}' has no field '{node.method_name}'", node.pos, self.file_path)
         return struct_def.fields[node.method_name]
 
     def get_expression_type(self, node: Expression):
@@ -282,4 +282,4 @@ class SemanticAnalyser:
             right = self.get_node_type(node.right)
             if left == right:
                 return left
-            throw_error(f"Operator '{node.op}' used between mismatched types '{left}' and '{right}'", node.pos, self.file_path)
+            fbusl_error(f"Operator '{node.op}' used between mismatched types '{left}' and '{right}'", node.pos, self.file_path)

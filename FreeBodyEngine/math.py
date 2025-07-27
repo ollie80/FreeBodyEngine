@@ -398,34 +398,28 @@ class Transform3:
             [0,           0,          1]])
         
     def compose_with(self, parent_transform: 'Transform') -> 'Transform':
-        # Apply parent transform to self (full matrix multiplication)
         parent_mat = parent_transform.to_matrix()
         local_mat = self.to_matrix()
-        result_mat = parent_mat @ local_mat # type: ignore
+        result_mat = parent_mat @ local_mat
         return Transform.from_matrix(result_mat)
 
     @classmethod
     def from_matrix(cls, mat: numpy.ndarray) -> 'Transform':
         assert mat.shape == (3, 3), "Matrix must be 3x3 for 2D transforms"
 
-        # Extract translation (position)
         px = mat[0, 2]
         py = mat[1, 2]
 
-        # Extract scale from matrix columns
         sx = math.hypot(mat[0, 0], mat[1, 0])
         sy = math.hypot(mat[0, 1], mat[1, 1])
 
-        # Prevent division by zero
         if sx == 0 or sy == 0:
             raise ValueError("Cannot extract rotation from zero scale")
 
-        # Extract rotation (in radians)
         rot_rad = math.atan2(mat[1, 0] / sx, mat[0, 0] / sx)
         rotation = math.degrees(rot_rad)
 
         return cls((px, py), rotation, (sx, sy))
-    
 
 
 class Vector(GenericVector):
@@ -457,8 +451,12 @@ class Vector(GenericVector):
     def copy(self) -> 'Vector':
         return Vector(self.x, self.y)
 
+    def __hash__(self):
+        return hash((self.x, self.y))
+
     def __neg__(self):
         return Vector(-self.x, -self.y)
+
 
     def __iadd__(self, other):
         if isinstance(other, Vector):
@@ -494,6 +492,9 @@ class Vector(GenericVector):
             self.x -= other
             self.y -= other
             return self
+
+    def __eq__(self, other):
+        return isinstance(other, Vector) and self.x == other.x and self.y == other.y
 
     def __sub__(self, other):
         if isinstance(other, Vector):

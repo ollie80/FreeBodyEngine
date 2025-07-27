@@ -1,5 +1,5 @@
 from typing import TYPE_CHECKING, Union
-from FreeBodyEngine import warning, get_main
+from FreeBodyEngine import warning, get_main, get_service, register_service_update, unregister_service_update
 
 from enum import Enum, auto
 from dataclasses import dataclass
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 import re
 from FreeBodyEngine.math import Vector
 import operator
-
+from FreeBodyEngine.core.service import Service
 
 class Key(Enum):
     A = auto()
@@ -296,19 +296,27 @@ class Action:
         else:
             comparison_ops[self.check.check_type](val, self.check.val)
         
-class Input:
-    def __init__(self, main: 'Main', actions: dict[str, list[Action]], window: 'Window'):
+class Input(Service):
+    def __init__(self, actions: dict[str, list[Action]] = {}):
+        super().__init__('input')
+        self.dependencies.append('window')
+
         self.actions = actions
         self.pressed = {}
         self.pressed_set = set(self.pressed.keys())
         self.released = set()
-        self.window = window
-
+        
         self.gamepads = {}
+
+    def on_initialize(self):
+        register_service_update('early', self.update)
+        self.window = get_service('window')
+
+    def on_destroy(self):
+        unregister_service_update('early', self.update)
 
     def set_actions(self, actions: dict[str, list[Action]]):
         self.actions = actions
-
 
     def bind_action(self, name: str, inputs: list[Key]):
         pass
@@ -391,14 +399,14 @@ class Input:
         return actions
     
 def get_action_pressed(name: str) -> bool:
-    return get_main().input.get_action_pressed(name)
+    return get_service('input').get_action_pressed(name)
 
 def get_action_strength(name: str) -> float:
-    return get_main().input.get_action_strength(name)
+    return get_service('input').get_action_strength(name)
 
 def get_action_released(name: str) -> bool:
-    return get_main().input.get_action_released(name)
+    return get_service('input').get_action_released(name)
 
-def get_vector(neg_x: str, pos_x: str, neg_y: str, pos_y: str) -> Vector:
+def get_action_vector(neg_x: str, pos_x: str, neg_y: str, pos_y: str) -> Vector:
     """Get a vector from the strengths of four actions."""
-    return get_main().input.get_vector(neg_x, pos_x, neg_y, pos_y)
+    return get_service('input').get_vector(neg_x, pos_x, neg_y, pos_y)

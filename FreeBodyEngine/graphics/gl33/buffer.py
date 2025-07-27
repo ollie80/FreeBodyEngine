@@ -7,6 +7,7 @@ class UBOBuffer(Buffer):
     def __init__(self, data: np.ndarray):
         self.buffer_size = data.nbytes
         self.data = data
+        self._current_slot = 0
 
         self.ubo = glGenBuffers(1)        
         glBindBuffer(GL_UNIFORM_BUFFER, self.ubo)
@@ -14,8 +15,39 @@ class UBOBuffer(Buffer):
     
         glBufferSubData(GL_UNIFORM_BUFFER, 0, self.buffer_size, self.data)
 
-        self.binding_point
+        glBindBuffer(GL_UNIFORM_BUFFER, 0)
 
+    def bind(self, slot: int):
+        """
+        Bind the UBO to the specified uniform binding point.
+        This allows shaders with 'layout(binding = slot)' to access this UBO.
+        """
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot, self.ubo)
+        self._current_slot = slot
 
+    def unbind(self):
+        glBindBufferBase(GL_UNIFORM_BUFFER, self._current_slot, 0)
+
+    def set_data(self, new_data: np.ndarray):
+        self.data = new_data
+        new_size = new_data.nbytes
 
         glBindBuffer(GL_UNIFORM_BUFFER, self.ubo)
+
+        if new_size != self.buffer_size:
+            glBufferData(GL_UNIFORM_BUFFER, new_size, None, GL_DYNAMIC_DRAW)
+            self.buffer_size = new_size
+
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, new_size, new_data)
+        glBindBuffer(GL_UNIFORM_BUFFER, 0)
+
+    def get_max_size(self) -> int:
+        return glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE)
+
+    def update(self, data: np.ndarray, offset: int = 0):
+        glBindBuffer(GL_UNIFORM_BUFFER, self.ubo)
+        glBufferSubData(GL_UNIFORM_BUFFER, offset, data.nbytes, data)
+        glBindBuffer(GL_UNIFORM_BUFFER, 0)
+
+    def destroy(self):
+        glDeleteBuffers(1, [self.ubo])

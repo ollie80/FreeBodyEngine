@@ -6,8 +6,10 @@ from typing import TYPE_CHECKING
 from importlib.resources import files
 
 import PIL
-from FreeBodyEngine import get_main, warning, error
+from FreeBodyEngine import get_main, warning, error, get_flag, DEVMODE, get_service
 from FreeBodyEngine.graphics.sprite import Sprite
+from FreeBodyEngine.graphics.material import Material
+from FreeBodyEngine.core.service import Service
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -34,23 +36,31 @@ def read_assets(path):
     return assets
 
 
-class FileManager:
+class FileManager(Service):
     """
     The asset manager loads the files packaged by the engine. Uses paths that are relative to the asset folder specified in the build config.
     """
-    def __init__(self, main: 'Main', path, dev):
-        self.path: str = path
+    def __init__(self):
+        super().__init__('files')
+        path = './'
+        self.dev = get_flag(DEVMODE, False)
+        if self.dev:
+            if os.path.exists(os.path.join('./', 'fbproject.toml')): 
+                build_settings = tomllib.loads(open(os.path.join(path, 'fbproject.toml')).read())
+                self.path = os.path.join('./', build_settings.get('assets', './assets'))
+                self.game_name = build_settings.get('name')
+        else:
+            self.path = './assets'        
+
         self.engine_path = 'FreeBodyEngine'
-        self.dev = dev
     
         if not self.dev:
-            self.data: dict[str, str] = read_assets(os.path.join(path, "data.pak"))
-            self.images: dict[str, str] = read_assets(os.path.join(path, "images.pak"))
+            self.data: dict[str, str] = read_assets(os.path.join(self.path, "data.pak"))
+            self.images: dict[str, str] = read_assets(os.path.join(self.path, "images.pak"))
         
-            print(self.data.keys())
             self.atlas_map = self.create_atlas_map()
 
-        self.main = main
+         
 
     def get_file_path(self, path: str):
         n_path = path
@@ -95,7 +105,7 @@ class FileManager:
         else:  # Linux and others
             base = os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
         
-        return os.path.join(base, self.main.name)
+        return os.path.join(base, "CHANGE THIS PLEASE")
 
     def load_data(self, path: str, bytes: bool = False):
         if not self.dev:
@@ -115,15 +125,15 @@ class FileManager:
 
     def load_sound(self, path: str):
         data = self.load_data(path, bytes=True)
-        return self.main.audio.create_sound(io.BytesIO(data))
+        return get_service('audio').create_sound(io.BytesIO(data))
 
-    def load_material(self, path: str):
+    def load_material(self, path: str, injector=None) -> Material:
         """
         Load an '.fbmat' file.
         """
         data = self.load_toml(path)
         
-        mat = self.main.graphics.load_material(data)
+        mat = get_service('renderer').load_material(data)
         return mat        
 
     def create_atlas_map(self):
@@ -134,8 +144,6 @@ class FileManager:
             for path in data:
                 atlas_map[path] = atlas_path
         return atlas_map
-            
-
 
     def find_image_atlas(self, path):
         atlas_path = self.atlas_map[path]
@@ -146,13 +154,13 @@ class FileManager:
     def load_image(self, path: str):
         if self.file_exsists(path):
             if self.dev:
-                tex = self.main.graphics.renderer.texture_manager._create_standalone_texture(open(self.get_file_path(path), 'rb').read())
-                return self.main.graphics.load_image(tex)
+                tex = get_service('renderer').texture_manager._create_standalone_texture(open(self.get_file_path(path), 'rb').read())
+                return get_service('renderer').load_image(tex)
             else:
                 atlas_img, atlas_data, atlas_path = self.find_image_atlas(path)
                 
-                tex = self.main.graphics.renderer.texture_manager._create_atlas_texture(atlas_img, atlas_path, atlas_data, path)
-                return self.main.graphics.load_image(tex)
+                tex = get_service('renderer').texture_manager._create_atlas_texture(atlas_img, atlas_path, atlas_data, path)
+                return get_service('renderer').load_image(tex)
         else:
             raise FileExistsError(f"No image at path '{path}'.")
 
@@ -177,4 +185,4 @@ class FileManager:
         visible = data.get('visible', True)
         z = data.get('z', 0)
 
-        return Sprite(image, mat, self.main.renderer, visible, z)
+        return Sprite(image, mat, get_service('renderer'), visible, z)

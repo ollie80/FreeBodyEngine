@@ -1,9 +1,19 @@
 from FreeBodyEngine.core.window.generic import Window, Cursor
 from FreeBodyEngine import get_main, warning
+import sys
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from FreeBodyEngine.graphics.image import Image
+
+def get_window() -> type[Window]:
+    """Gets the correct window class for the platform."""
+    platform = sys.platform
+    
+    if platform == 'win32':
+        from FreeBodyEngine.core.window.glfw import GLFWWindow
+        return GLFWWindow
+    
 
 
 def create_cursor(image: 'Image'):

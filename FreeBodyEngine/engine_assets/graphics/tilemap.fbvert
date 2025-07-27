@@ -1,0 +1,18 @@
+#version 330 core 
+#define CHUNK_SIZE _ENGINE_CHUNK_SIZE
+
+struct Tile {
+    vec2 position;
+    int image_id;
+    int spritesheet_id;
+}
+
+struct Chunk {
+    vec2 position;
+    Tile tiles[_ENGINE_CHUNK_SIZE];
+}
+
+layout(std140, binding = 1) uniform Chunks {
+    Chunk chunks[64];
+};
+

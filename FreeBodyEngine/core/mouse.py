@@ -1,9 +1,13 @@
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine.utils import abstractmethod
+from FreeBodyEngine.core.service import Service
+from FreeBodyEngine import register_service_update, unregister_service_update
 
-
-class Mouse:
+class Mouse(Service):
     def __init__(self):
+        super().__init__('mouse')
+        self.dependencies.append('window')
+
         self._dragging = False
         self.drag_start = Vector()
 
@@ -12,8 +16,15 @@ class Mouse:
         
         self._cursor_hidden = False
         self._interal_cursor_hidden = False
-        self.double_click_threshold = 0.4 #seconds
+        self.double_click_threshold = 0.4 
     
+    def on_initialize(self):
+        register_service_update('early', self.update)
+
+    def on_destroy(self):
+        unregister_service_update('early', self.update)
+
+
     @abstractmethod
     def get_pressed(self, button: int) -> bool:
         pass

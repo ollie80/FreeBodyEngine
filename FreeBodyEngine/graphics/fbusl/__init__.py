@@ -6,7 +6,7 @@ be easily compiled into them.
 
 import sys
 
-def throw_error(msg, line, file_path = None):
+def fbusl_error(msg, line, file_path = None):
     f = file_path
     if file_path == None:
         f = "Unkown File"
@@ -22,4 +22,4 @@ from FreeBodyEngine.graphics.fbusl.compiler import compile
 
 
 
-__all__ = ["throw_error", "parser", "ast_nodes", "semantic", "generator", "injector", "compile"]
+__all__ = ["fbusl_error", "parser", "ast_nodes", "semantic", "generator", "injector", "compile"]

@@ -3,7 +3,7 @@
 from typing import List
 import re
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
-from FreeBodyEngine.graphics.fbusl import throw_error
+from FreeBodyEngine.graphics.fbusl import fbusl_error
 
 class Token:
     def __init__(self, kind: str, value, pos: int):
@@ -51,7 +51,7 @@ def tokenize(code: str, file_path) -> List[Token]:
                 indent_stack.pop()
                 tokens.append(Token("DEDENT", indent_stack[-1], pos=line_num))
             if indent != indent_stack[-1]:
-                throw_error(f"Inconsistent indentation: expected {indent_stack[-1]}, got {indent}", line_num, file_path)
+                fbusl_error(f"Inconsistent indentation: expected {indent_stack[-1]}, got {indent}", line_num, file_path)
 
         # Tokenize the line
         pos = len(indent_str)
@@ -73,7 +73,7 @@ def tokenize(code: str, file_path) -> List[Token]:
                         pos += len(value)
                         break
             else:
-                throw_error(f"Unexpected character {line[pos]!r}", line_num, file_path)
+                fbusl_error(f"Unexpected character {line[pos]!r}", line_num, file_path)
 
         tokens.append(Token("NEWLINE", "\\n", pos=line_num))
 
@@ -104,16 +104,16 @@ class FBUSLParser: # im so  sorry
 
         if tok == 0:
             if value == None:
-                throw_error(f"Missing '{kind}'", self.tokens[len(self.tokens)-1].pos, self.file_path)
+                fbusl_error(f"Missing '{kind}'", self.tokens[len(self.tokens)-1].pos, self.file_path)
             else:
-                throw_error(f"Missing '{kind}' '{value}'", self.tokens[len(self.tokens)-1].pos, self.file_path)
+                fbusl_error(f"Missing '{kind}' '{value}'", self.tokens[len(self.tokens)-1].pos, self.file_path)
 
         if value != None:
             if tok.value != value:
-                throw_error(f"Expected token of kind '{kind}' with value of {value}, instead got '{tok.kind}' '{tok.value}'.", tok.pos, self.file_path)
+                fbusl_error(f"Expected token of kind '{kind}' with value of {value}, instead got '{tok.kind}' '{tok.value}'.", tok.pos, self.file_path)
         
         if tok.kind != kind:
-            throw_error(f"Expected token of kind '{kind}', instead got kind '{tok.kind}' ", tok.pos, self.file_path)
+            fbusl_error(f"Expected token of kind '{kind}', instead got kind '{tok.kind}' ", tok.pos, self.file_path)
     
         self.consume()
         return tok
@@ -373,7 +373,7 @@ class FBUSLParser: # im so  sorry
             return self.parse_var_set(name)
         
         else:
-            throw_error('Cannot change precision of defined value', name.pos, self.file_path)
+            fbusl_error('Cannot change precision of defined value', name.pos, self.file_path)
 
     def parse_var_decl(self, name, precision):
         self.expect("SYMBOL", ":")
@@ -418,7 +418,7 @@ class FBUSLParser: # im so  sorry
         elif tok.kind == "TYPE" and self.peek(1).value == "(":
             return self.parse_typecast()
         else:
-            throw_error(f"Unexpected token '{tok.value}'", tok.pos, self.file_path)
+            fbusl_error(f"Unexpected token '{tok.value}'", tok.pos, self.file_path)
 
     def parse_get(self) -> Node:
         node = Identifier(self.peek().pos, self.expect("IDENT").value)

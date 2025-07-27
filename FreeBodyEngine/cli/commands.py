@@ -262,7 +262,7 @@ def delete_project(env, args):
             return
     else:
         project = args[0]
-        if not env.project_registry.project_exisits(project):
+        if not env.project_registry.project_exists(project):
             print(f'Project with ID "{project}" does not exist.')
             return
 

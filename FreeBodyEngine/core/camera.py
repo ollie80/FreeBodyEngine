@@ -5,6 +5,7 @@ import numpy as np
 import math
 import time
 from enum import Enum, auto
+from FreeBodyEngine import get_service
 
 class CAMERA_PROJECTION(Enum):
     PERSPECTIVE = auto()
@@ -47,8 +48,8 @@ class Camera2D(Node2D, Camera):
 
 
     def _update_projection_matrix(self):
-        width = self.scene.main.window.size[0]
-        height = self.scene.main.window.size[1]
+        width = get_service('window').size[0]
+        height = get_service('window').size[1]
         aspect = width / height if height != 0 else 1.0
         near = 0.1
         far = 100.0

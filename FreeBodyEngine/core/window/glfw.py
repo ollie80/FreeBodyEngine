@@ -2,11 +2,10 @@ from FreeBodyEngine.core.window import Window, Cursor
 from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING
-from FreeBodyEngine import error
 from FreeBodyEngine.core.input import Key
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine.core.camera import Camera
-
+from FreeBodyEngine import get_flag, DEVMODE, error, get_main, get_service, get_time
 import numpy
 
 import glfw
@@ -139,24 +138,18 @@ GLFW_CHARACTER_MAP = {
 
 
 class GLFWWindow(Window):
-    def __init__(self, main: 'Main', size: tuple[int, int], window_type: str, title="FreeBodyEngine", display=None):
-        super().__init__(main, size, window_type, title, display)
+    def __init__(self, size: tuple[int, int], title: str):
+        super().__init__(size, title)
+        self.window_type = 'glfw'
         
-        self._size = size
-        self._title = title
-        self._should_close = False
-
+        
         if not glfw.init():
             raise RuntimeError("GLFW failed to initialize")
         
-        if main.dev:
-            debug = glfw.TRUE
-        else:
-            debug = glfw.FALSE
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        glfw.window_hint(glfw.OPENGL_DEBUG_CONTEXT, debug)
+        glfw.window_hint(glfw.OPENGL_DEBUG_CONTEXT, get_flag(DEVMODE, False))
         glfw.window_hint(glfw.DEPTH_BITS, 24)
 
         self._window = glfw.create_window(size[0], size[1], title, None, None)
@@ -164,7 +157,6 @@ class GLFWWindow(Window):
             glfw.terminate()
             error("Failed to create GLFW window")
 
-        print(self._window)
         glfw.make_context_current(self._window)
         glfw.set_window_size_callback(self._window, self.resize)
 
@@ -220,7 +212,7 @@ class GLFWWindow(Window):
         glfw.poll_events()
         if glfw.window_should_close(self._window):
             
-            self.main.quit()
+            get_main().quit()
 
 glfw_mouse_button_map = {
     0: glfw.MOUSE_BUTTON_1,
@@ -258,7 +250,8 @@ class GLFWMouse(Mouse):
 
     def update(self):
         self.position = Vector(glfw.get_cursor_pos(self.window._window))
-        scene = self.window.main.active_scene
+        scene = get_service('scene_manager').get_active()
+        
         self.world_position = self.position
         if scene != None:
             cam: Camera = scene.camera
@@ -289,7 +282,7 @@ class GLFWMouse(Mouse):
             
             if pressed:
                 self._down[i] = True
-                time = self.window.main.time.get_time()
+                time = get_time()
                 time_dif = time - self.last_click_time
                 if time_dif <= self.double_click_threshold:
                     self._double_clicked[i] = True
