@@ -2,7 +2,7 @@ from FreeBodyEngine.core.time import Time
 from typing import Literal, Callable
 
 class UpdateCoordinator:
-    def __init__(self, time: Time, max_fps: int, max_tps: int):
+    def __init__(self, time: Time, max_fps: int = 60, max_tps:  int = 60):
         self.time = time
         self._phases = {
             "early": [],

@@ -235,6 +235,7 @@ class GLFWMouse(Mouse):
         self._double_clicked = [False] * 8
         self._dragging = [False] * 8
         self.last_click_time = -500
+        self.drag_threshold = 0.2
 
     def get_pressed(self, button: int):
         return self._pressed[button]
@@ -268,7 +269,6 @@ class GLFWMouse(Mouse):
         self._pressed = [False] * 8
         self._released = [False] * 8
         self._double_clicked = [False] * 8
-        self._dragging = [False] * 8
 
         for i in range(len(self._pressed)):
             glfw_i = glfw_mouse_button_map[i]
@@ -293,6 +293,8 @@ class GLFWMouse(Mouse):
                 self._down[i] = False
 
             self._pressed[i] = pressed
+
             self._released[i] = released
             
+        
         

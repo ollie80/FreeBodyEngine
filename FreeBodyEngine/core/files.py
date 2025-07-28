@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from importlib.resources import files
 
 import PIL
-from FreeBodyEngine import get_main, warning, error, get_flag, DEVMODE, get_service
+from FreeBodyEngine import get_main, warning, error, get_flag, get_service, DEVMODE, PROJECT_PATH
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.core.service import Service
@@ -42,13 +42,15 @@ class FileManager(Service):
     """
     def __init__(self):
         super().__init__('files')
-        path = './'
+        path = get_flag(PROJECT_PATH, './')
         self.dev = get_flag(DEVMODE, False)
+        
         if self.dev:
-            if os.path.exists(os.path.join('./', 'fbproject.toml')): 
+            if os.path.exists(os.path.join(path, 'fbproject.toml')): 
                 build_settings = tomllib.loads(open(os.path.join(path, 'fbproject.toml')).read())
-                self.path = os.path.join('./', build_settings.get('assets', './assets'))
+                self.path = os.path.join(path, build_settings.get('assets', './assets'))
                 self.game_name = build_settings.get('name')
+            
         else:
             self.path = './assets'        
 
@@ -61,7 +63,6 @@ class FileManager(Service):
             self.atlas_map = self.create_atlas_map()
 
          
-
     def get_file_path(self, path: str):
         n_path = path
         if path.startswith('engine'):

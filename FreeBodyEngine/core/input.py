@@ -267,7 +267,6 @@ class Gamepad:
     def get_state(self):
         return self.window.get_gamepad_state(self.id)
 
-
 comparison_ops = {
     '>': operator.gt,
     '<': operator.lt,
