@@ -60,17 +60,20 @@ class CooldownManager(Service):
         self.physics_cooldowns = {}
 
     def on_initialize(self):
-        register_service_update('early', self.update)
+        register_service_update('update', self.update)
+        register_service_update('physics', self.physics_update)
 
     def update(self):
         for cooldown in self.cooldowns:
             self.cooldowns[cooldown] = self.cooldowns[cooldown] - delta()
         
+    def physics_update(self):
         for cooldown in self.physics_cooldowns:
             self.physics_cooldowns[cooldown] = self.physics_cooldowns[cooldown] - physics_delta()
 
     def on_destroy(self):
-        unregister_service_update('early', self.update)
+        unregister_service_update('update', self.update)
+        unregister_service_update('physics', self.physics_update)
 
 def cooldown(seconds: float):
     """Decorator to add a cooldown to functions."""

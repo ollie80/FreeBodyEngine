@@ -24,6 +24,14 @@ class Mouse(Service):
     def on_destroy(self):
         unregister_service_update('early', self.update)
 
+    @abstractmethod
+    def lock_position(self):
+        """Locks the cursor position on screen, stoping it from moving while still getting movement information."""
+        pass
+
+    @abstractmethod
+    def unlock_position(self):
+        pass
 
     @abstractmethod
     def get_pressed(self, button: int) -> bool:

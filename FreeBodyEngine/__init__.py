@@ -21,7 +21,7 @@ DLL_DIRECTORY = None
 # flag constants
 HEADLESS = "HEADLESS"
 DEVMODE = "DEVMODE"
-
+PROJECT_PATH = "PROJECT_PATH"
 
 
 def init():

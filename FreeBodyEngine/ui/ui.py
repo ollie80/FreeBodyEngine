@@ -83,7 +83,6 @@ class UIElement:
         
         self.manager: UIManager = manager
         
-
         self.style = style
         self.z = 0
 
