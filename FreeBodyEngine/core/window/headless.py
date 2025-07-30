@@ -146,8 +146,9 @@ SDL_KEY_MAP = {
 
 
 class HeadlessWindow(Window):
-    def __init__(self, main: 'Main', size: tuple[int, int], window_type: str, title="FreeBodyEngine", display=None):
-        super().__init__(main, size, window_type, title, display)
+    def __init__(self, size: tuple[int, int], title="FreeBodyEngine"):
+        super().__init__(size, title)
+        self.window_type = 'headless'
         self._size = size
         self._title = title
         self._should_close = False
@@ -170,7 +171,7 @@ class HeadlessWindow(Window):
             error("Failed to create SDL window")
 
     def create_mouse(self):
-        return DummyMouse()
+        return None
 
     def set_title(self, new_title):
         pass

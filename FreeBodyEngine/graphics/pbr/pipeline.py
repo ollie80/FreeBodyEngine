@@ -2,11 +2,13 @@ from FreeBodyEngine.graphics.pipeline import GraphicsPipeline
 from FreeBodyEngine.core.scene import SceneManager
 from FreeBodyEngine import get_service
 from FreeBodyEngine.graphics.color import Color
+from FreeBodyEngine.graphics.pbr.material import PBRMaterial
 
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
 from FreeBodyEngine.core.tilemap import TilemapRenderer
 from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
 from FreeBodyEngine.graphics.debug import Debug2D
+from FreeBodyEngine.graphics.model.model import Model3D
 
 class PBRPipeline(GraphicsPipeline):
     def __init__(self):
@@ -50,8 +52,13 @@ class PBRPipeline(GraphicsPipeline):
         for debug in debugs:
             self.renderer.draw_mesh(debug.mesh, debug.material, debug.world_transform, camera)
 
+        models: list[Model3D] = camera.scene.root.find_nodes_with_type('Model3D')
+        for model in models:
+            self.renderer.draw_model(model._model)
+
         self.main_framebuffer.unbind()
         self.main_framebuffer.draw('albedo', get_service('window').size)
 
 
-        
+    def create_material(self, data):
+        return PBRMaterial(data)

@@ -55,10 +55,7 @@ def load_dlls():
     return dll_dir
 
 def load_sprite(path: str):
-    if not get_flag('HEADLESS', False):
-        return get_service('files').load_sprite(path)
-    else:
-        warning("Cannot load a sprite while in headless mode as it requires a renderer.")
+    return get_service('files').load_sprite(path)
 
 def load_data(path: str):
     return get_service('files').load_data(path)
@@ -68,16 +65,10 @@ def load_toml(path: str):
 
 
 def load_image(path: str):
-    if not get_flag('HEADLESS', False):
-        return get_service('files').load_image(path)
-    else:
-        warning("Cannot load an image while in headless mode as it requires a renderer.")
+    return get_service('files').load_image(path)
 
 def load_material(path: str):
-    if not get_flag('HEADLESS', False):
-        return get_service('files').load_material(path)
-    else:
-        warning("Cannot load a material while in headless mode as it requires a renderer.")
+    return get_service('files').load_material(path)
 
 
 def load_sound(path: str):
@@ -85,13 +76,7 @@ def load_sound(path: str):
 
 
 def load_shader(path: str):
-    if not get_flag('HEADLESS', False):
-        return get_service('files').load_shader(path)
-    else:
-        warning("Cannot load a shader while in headless mode as it requires a renderer.")
+    return get_service('files').load_shader(path)
 
 def load_sprite(path: str):
-    if not get_flag('HEADLESS', False):
-        return get_service('files').load_sprite(path)
-    else:
-        warning("Cannot load a shader while in healess mode as it requires a renderer.")
+    return get_service('files').load_sprite(path)

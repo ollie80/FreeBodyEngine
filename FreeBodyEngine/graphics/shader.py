@@ -20,6 +20,10 @@ class Shader:
     def get_uniform(self, name: str):
         pass
  
+    @abstractmethod
+    def use(self):
+        pass
+
     def __getitem__(self, name):
         return self.get_uniform(name)
 

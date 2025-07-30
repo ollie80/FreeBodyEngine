@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from FreeBodyEngine.graphics.material import Material
     from FreeBodyEngine.graphics.color import Color
     from FreeBodyEngine.core.camera import Camera2D
+    from FreeBodyEngine.graphics.model.model import Model
     from FreeBodyEngine.math import Vector, Transform
 
 
@@ -81,6 +82,10 @@ class Renderer(Service):
 
     @abstractmethod
     def draw_mesh(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
+        pass
+
+    @abstractmethod
+    def draw_model(self, model: 'Model', transform: 'Transform', camera: 'Camera2D'):
         pass
 
     @abstractmethod

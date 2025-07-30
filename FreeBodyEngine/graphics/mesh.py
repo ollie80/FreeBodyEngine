@@ -187,3 +187,10 @@ class Mesh:
             uvs=np.array(uvs, dtype=np.float32),
             indices=np.array(indices, dtype=np.uint32)
         )
+
+
+    def __str__(self):
+        return str(self.vertices)
+    
+    def __repr__(self):
+        return str(self)

@@ -3,6 +3,8 @@ from functools import wraps
 from FreeBodyEngine.core.service import Service
 from FreeBodyEngine import get_main, get_service
 import os
+import inspect
+
 
 colors = {
     "black": 30, "red": 31, "green": 32, "yellow": 33, "blue": 34, "magenta": 35, "cyan": 36, "white": 37, "reset": 0
@@ -54,7 +56,9 @@ class Logger(Service):
 
     @store_log('WARNING')
     def warning(self, msg):
-        print_colored(f"WARNING: {msg}", color="yellow")
+
+        print_colored(f'WARNING: {msg}', color="yellow")
+        
 
     def get_history(self) -> str:
         return '\n'.join(f"[{ts}] {type_}: {msg}" for ts, type_, msg in self.history)

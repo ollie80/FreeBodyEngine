@@ -134,7 +134,7 @@ class FileManager(Service):
         """
         data = self.load_toml(path)
         
-        mat = get_service('renderer').load_material(data)
+        mat = get_service('graphics').create_material(data)
         return mat        
 
     def create_atlas_map(self):
