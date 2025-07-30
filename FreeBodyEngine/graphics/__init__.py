@@ -17,7 +17,7 @@ def get_renderer() -> type[renderer.Renderer]:
     if platform == 'win32':
         from FreeBodyEngine.graphics.gl33.renderer import GL33Renderer
         return GL33Renderer
-     
+    
 
 
 __all__ = ["color", "mesh", "material", "renderer", "pipeline", "image", 'pbr', "gl33", 'sprite', 'fbusl']

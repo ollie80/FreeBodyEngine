@@ -4,8 +4,9 @@ from FreeBodyEngine.graphics.gl33 import GLImage, GLMesh, GLFramebuffer, context
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.gl33.shader import GLShader
 from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
-from FreeBodyEngine.graphics.gl33.material import GLMaterial
 from FreeBodyEngine.graphics.fbusl.injector import Injector 
+from FreeBodyEngine.graphics.texture import Texture
+from FreeBodyEngine.graphics.material import Material
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -61,14 +62,11 @@ class GL33Renderer(Renderer):
     def load_image(self, texture: "Texture"):
         return GLImage(texture)
          
-    def load_material(self, data):
-        return Material(data)
 
     def destroy(self):
         if self.main.winow.window_type == "win32":
             WGL.wglMakeCurrent(self.window.hdc, None)
         WGL.wglDeleteContext(self.context)
-
     def create_framebuffer(self, width, height, attachments, **kwargs):
         return GLFramebuffer(width, height, attachments, **kwargs)
 
@@ -80,9 +78,6 @@ class GL33Renderer(Renderer):
 
     def load_shader(self, vertex, fragment, injector: Injector = Injector):
         return GLShader(vertex, fragment, injector)
-
-    def load_material(self, data, ):
-        return GLMaterial(data)
 
     def draw_mesh_instanced(self, mesh, instances, material, transform, camera):
         material.use(transform, camera)
@@ -99,18 +94,21 @@ class GL33Renderer(Renderer):
         glBindVertexArray(0)
 
 
-    def draw_mesh(self, mesh, material: 'GLMaterial', transform, camera):
+    def draw_mesh(self, mesh, material: 'Material', transform, camera):
         material.use(transform, camera)
         material.shader.use()
-        if material.render_mode == "wireframe":
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
 
+        render_mode = material.data.get('render_mode', None)
+        if render_mode != None:
+            if render_mode == "wireframe":
+                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+            
         glBindVertexArray(mesh.vao)
         glDrawElements(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
 
-        if material.render_mode == "wireframe":
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-
+        if render_mode != None:
+            if render_mode == "wireframe":
+                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
         glBindVertexArray(0)
 

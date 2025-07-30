@@ -24,9 +24,7 @@ class Color:
         elif len(hex_value) == 8:
             return tuple(int(hex_value[i : i + 2], 16) / 255.0 for i in range(0, 8, 2))
         else:
-            raise ValueError(
-                "Invalid hex string. It must be either 6 (RGB) or 8 (RGBA) characters long."
-            )
+            raise ValueError("Invalid hex string. It must be either 6 (RGB) or 8 (RGBA) characters long.")
 
     def _rgb_to_fn(self, rgb_value: tuple):
         if len(rgb_value) == 3:
@@ -34,9 +32,7 @@ class Color:
         elif len(rgb_value) == 4:
             return tuple(c / 255.0 for c in rgb_value)
         else:
-            raise ValueError(
-                "Invalid tuple length. It must have 3 (RGB) or 4 (RGBA) values."
-            )
+            raise ValueError("Invalid tuple length. It must have 3 (RGB) or 4 (RGBA) values.")
 
     def _fn_to_rgb(self, val: tuple, alpha: bool = False):
         rgb = tuple(round(c * 255) for c in val[:3])
@@ -44,11 +40,18 @@ class Color:
             return rgb
         else:
             return rgb + (round(val[3] * 255),)
-
+    
     def _fn_to_hex(self, val: tuple, alpha: bool = False):
-        hex_color = "".join(f"{int(c):02x}" for c in val[:3])
+        if len(val) < 3 or len(val) > 4:
+            raise ValueError("Expected a tuple of 3 or 4 floats")
+
+        r, g, b = (int(c * 255) for c in val[:3])
+        hex_color = f"{r:02x}{g:02x}{b:02x}"
+
         if alpha:
-            hex_color += f"{int(val[3] * 255):02x}"
+            a = int((val[3] if len(val) == 4 else 1.0) * 255)
+            hex_color += f"{a:02x}"
+
         return f"#{hex_color}"
 
     @property
@@ -76,15 +79,7 @@ class Color:
     def hex(self, new):
         self.float_normalized_a = self._hex_to_fn(new)
 
-    @hex.setter
-    def hex(self, new):
-        self.float_normalized_a = self._hex_to_fn(new)
-
-    @hex.setter
-    def hex(self, new):
-        self.float_normalized_a = self._hex_to_fn(new)
-
-    @hex.setter
+    @rgb.setter
     def rgb(self, new):
         self.float_normalized_a = self._rgb_to_fn(new)
 
@@ -93,7 +88,7 @@ class Color:
         """
         #RRGGBBAA
         """
-        return self._fn_to_rgb(self.float_normalized_a, True)
+        return self._fn_to_hex(self.float_normalized_a, True)
 
     @property
     def float_normalized(self) -> tuple[float, float, float]:
@@ -111,3 +106,9 @@ class Color:
 
     def __len__(self):
         return len(self.float_normalized_a)
+
+    def __str__(self):
+        return str(self.hexa)
+    
+    def __repr__(self):
+        return str(self)

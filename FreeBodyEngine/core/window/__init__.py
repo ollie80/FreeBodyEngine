@@ -1,5 +1,5 @@
 from FreeBodyEngine.core.window.generic import Window, Cursor
-from FreeBodyEngine import get_main, warning
+from FreeBodyEngine import get_main, warning, get_flag, HEADLESS
 import sys
 
 from typing import TYPE_CHECKING
@@ -10,10 +10,16 @@ def get_window() -> type[Window]:
     """Gets the correct window class for the platform."""
     platform = sys.platform
     
+    if get_flag(HEADLESS, False):
+        from FreeBodyEngine.core.window.headless import HeadlessWindow
+        return HeadlessWindow
+
     if platform == 'win32':
         from FreeBodyEngine.core.window.glfw import GLFWWindow
         return GLFWWindow
     
+    
+
 
 
 def create_cursor(image: 'Image'):
