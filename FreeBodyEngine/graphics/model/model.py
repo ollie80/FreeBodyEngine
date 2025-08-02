@@ -6,8 +6,8 @@ from FreeBodyEngine.math import Vector3
 class Model:
     def __init__(self, meshes: dict[str, Mesh], material_map: dict[str, str], materials: dict[str, Material]):
         self.meshes: dict[str, Mesh] = meshes
-        self.material_map: dict[str, str] = {}
-        self.materials: dict[str, Material] = {}
+        self.material_map: dict[str, str] = material_map
+        self.materials: dict[str, Material] = materials
         
         self.animations = None
         self.skeleton = None
@@ -22,6 +22,7 @@ class Model:
 
 
 class Model3D(Node3D):
-    def __init__(self, model: Model, position: Vector3 = Vector3(), rotation: Vector3 = Vector3(), scale: Vector3 = Vector3()):
+    def __init__(self, model: Model, position: Vector3 = Vector3(), rotation: Vector3 = Vector3(), scale: Vector3 = Vector3(1, 1, 1)):
         super().__init__(position, rotation, scale)
+
         self._model = model

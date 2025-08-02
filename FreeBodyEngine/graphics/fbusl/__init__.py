@@ -10,7 +10,7 @@ def fbusl_error(msg, line, file_path = None):
     f = file_path
     if file_path == None:
         f = "Unkown File"
-    print(f"\033[91mFBUSL ERROR: {msg} in file {f}, line {line}.\033[0m")
+    print(f'\033[91mFBUSL ERROR: {msg} in file "{f}", line {line}.\033[0m')
     sys.exit()
 
 from FreeBodyEngine.graphics.fbusl import parser

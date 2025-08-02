@@ -2,6 +2,7 @@ from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.core.window import Window, Cursor
 from FreeBodyEngine.core.window.win32cursor import build_cursor_from_pil
 from typing import TYPE_CHECKING, Union, Literal
+from FreeBodyEngine.core.service import Service
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -33,8 +34,8 @@ class Win32Window(Window):
     """
     The Win32 implmentation of the window class. Supports both OpenGL and Vulkan renderers.
     """
-    def __init__(self, main: 'Main', size: tuple[int, int], window_type, display=0):
-        super().__init__(main, size, 'win32', display)
+    def __init__(self, size: tuple[int, int], title):
+        super().__init__(size, title)
         self.window_type = 'win32'
 
         # Register window class
@@ -57,7 +58,7 @@ class Win32Window(Window):
         # Create the window
         self._window = win32gui.CreateWindow(
             self._atom,
-            main.name, # title
+            title, # title
             win32con.WS_OVERLAPPEDWINDOW, # style
             0, 0, size[0], size[1], # x, y, width, height
             0, 0, hInstance, None
@@ -97,6 +98,9 @@ class Win32Window(Window):
         
         win32gui.MoveWindow(self._window, rect[0], rect[1], *new, True)
 
+    def create_mouse(self):
+        return Service('mouse')
+
     @property
     def position(self) -> tuple[int, int]:
         rect = win32gui.GetWindowRect(self._window)
@@ -107,6 +111,8 @@ class Win32Window(Window):
         rect = win32gui.GetWindowRect(self._window)
         win32gui.MoveWindow(self._window, rect[0], rect[1], *new, True)
         
+    def _get_key_down(self, key):
+        return False
 
     def close(self):
         win32gui.ReleaseDC(self._window, self.hdc)

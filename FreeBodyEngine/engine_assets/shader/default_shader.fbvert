@@ -1,20 +1,24 @@
-#version 330 core
+@uniform
+view: mat4 
+@uniform
+proj: mat4
+@uniform
+model: mat4 
 
-uniform mat4 view;
-uniform mat4 proj;
-uniform mat4 model;
+@input
+vertex: vec3
+@input
+uvs: vec2
+@input
+normals: vec3
 
-layout(location = 0) in vec3 vertex;
-layout(location = 1) in vec2 uvs;
-layout(location = 2) in vec3 normal;
+@output
+uv: vec2
 
-out vec2 uv;
-out vec3 normals;
+@output
+normal: vec3
 
-
-void main() {
-    uv = uvs;
-    normals = normal;
-    
-    gl_Position = proj * view * model * vec4(vertex.x, vertex.y, vertex.z, 1.0);
-}
+def main():
+    uv = uvs
+    normal = normals 
+    VERTEX_POSITION = proj * view * model * vec4(vertex.x, vertex.y, vertex.z, 1.0)

@@ -135,7 +135,7 @@ class Transform:
             [px, -py, 0, 1]
         ], dtype=float)
 
-        return scale @ rotation @ translation
+        return translation @ rotation @ scale 
     
     def __eq__(self, other):
         if isinstance(other, Transform):
@@ -252,7 +252,6 @@ class Transform:
         rotation = math.degrees(rot_rad)
 
         return cls((px, py), rotation, (sx, sy))
-    
 
 class Transform3:
     def __init__(self, position: 'Vector3', rotation: 'Vector3', scale: 'Vector3'):
@@ -261,76 +260,83 @@ class Transform3:
         self.scale = Vector3(scale)
 
     def copy(self):
-        return Transform(self.position.copy(), self.rotation, self.scale.copy())
+        return Transform3(self.position.copy(), self.rotation.copy(), self.scale.copy())
 
     def neg(self):
-        return Transform(-self.position, -self.rotation, -self.scale)
-    
+        return Transform3(-self.position, -self.rotation, -self.scale)
+
     @property
     def model(self) -> numpy.ndarray:
-        px = self.position.x
-        py = self.position.y
-        pz = self.position.z
+        tx, ty, tz = self.position
+        sx, sy, sz = self.scale
+        rx, ry, rz = map(math.radians, self.rotation)
 
-        sx = self.scale.x
-        sy = self.scale.y
-        sz = self.scale.x
+        cosx, sinx = math.cos(rx), math.sin(rx)
+        cosy, siny = math.cos(ry), math.sin(ry)
+        cosz, sinz = math.cos(rz), math.sin(rz)
 
-        rx = self.rotation
-        ry = self.rotation
-        rz = self.rotation
+        rot_x = numpy.array([
+            [1,     0,      0,     0],
+            [0,   cosx,  -sinx,   0],
+            [0,   sinx,   cosx,   0],
+            [0,     0,      0,     1]
+        ])
 
-        rz_rad = math.radians(rz)
+        rot_y = numpy.array([
+            [cosy,  0, siny, 0],
+            [0,     1,   0,  0],
+            [-siny, 0, cosy, 0],
+            [0,     0,   0,  1]
+        ])
 
-        cos_r = math.cos(rz_rad)
-        sin_r = math.sin(rz_rad)
+        rot_z = numpy.array([
+            [cosz, -sinz, 0, 0],
+            [sinz,  cosz, 0, 0],
+            [0,       0,  1, 0],
+            [0,       0,  0, 1]
+        ])
 
-        scale = numpy.array([
-            [sx, 0,  0,  0],
-            [0,  sy, 0,  0],
-            [0,  0,  sz, 0],
-            [0,  0,  0,  1]
-        ], dtype=float)
-
-        rotation = numpy.array([
-            [cos_r, -sin_r, 0, 0],
-            [sin_r,  cos_r, 0, 0],
-            [0,      0,     1, 0],
-            [0,      0,     0, 1]
-        ], dtype=float)
+        scale = numpy.diag([sx, sy, sz, 1])
 
         translation = numpy.array([
-            [1, 0, 0, px],
-            [0, 1, 0, py],
-            [0, 0, 1, pz],
-            [0, 0, 0, 1]
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [tx, ty, tz, 1]
         ], dtype=float)
 
+        rotation = rot_z @ rot_y @ rot_x
+
         return translation @ rotation @ scale
-    
+
+
     def __eq__(self, other):
-        if isinstance(other, Transform):
-            return (self.position == other.position and
-                    self.rotation == other.rotation and
-                    self.scale == other.scale)
-    
+        return (isinstance(other, Transform3) and
+                self.position == other.position and
+                self.rotation == other.rotation and
+                self.scale == other.scale)
+
     def __add__(self, other):
-        if isinstance(other, Transform):
-            return Transform(self.position + other.position, self.rotation + other.rotation, self.scale + other.scale)
+        if isinstance(other, Transform3):
+            return Transform3(self.position + other.position,
+                              self.rotation + other.rotation,
+                              self.scale + other.scale)
 
     def __iadd__(self, other):
-        if isinstance(other, Transform):
+        if isinstance(other, Transform3):
             self.position += other.position
             self.rotation += other.rotation
             self.scale += other.scale
             return self
-    
+
     def __sub__(self, other):
-        if isinstance(other, Transform):
-            return Transform(self.position - other.position, self.rotation - other.rotation, self.scale - other.scale)
+        if isinstance(other, Transform3):
+            return Transform3(self.position - other.position,
+                              self.rotation - other.rotation,
+                              self.scale - other.scale)
 
     def __isub__(self, other):
-        if isinstance(other, Transform):
+        if isinstance(other, Transform3):
             self.position -= other.position
             self.rotation -= other.rotation
             self.scale -= other.scale
@@ -338,14 +344,14 @@ class Transform3:
 
     def __mul__(self, other):
         if isinstance(other, (int, float)):
-            return Transform(self.position * other,
-                            self.rotation * other,
-                            self.scale * other)
-        elif isinstance(other, Transform):
-            return Transform(self.position * other.position,
-                            self.rotation + other.rotation,
-                            self.scale * other.scale)
-        raise TypeError("Transform can only be multiplied by a scalar or another Transform")
+            return Transform3(self.position * other,
+                              self.rotation * other,
+                              self.scale * other)
+        elif isinstance(other, Transform3):
+            return Transform3(self.position * other.position,
+                              self.rotation + other.rotation,
+                              self.scale * other.scale)
+        raise TypeError("Transform3 can only be multiplied by a scalar or another Transform3")
 
     def __imul__(self, other):
         if isinstance(other, (int, float)):
@@ -353,23 +359,23 @@ class Transform3:
             self.rotation *= other
             self.scale *= other
             return self
-        elif isinstance(other, Transform):
+        elif isinstance(other, Transform3):
             self.position *= other.position
             self.rotation += other.rotation
             self.scale *= other.scale
             return self
-        raise TypeError("Transform can only be multiplied by a scalar or another Transform")
+        raise TypeError("Transform3 can only be multiplied by a scalar or another Transform3")
 
     def __truediv__(self, other):
         if isinstance(other, (int, float)):
-            return Transform(self.position / other,
-                            self.rotation / other,
-                            self.scale / other)
-        elif isinstance(other, Transform):
-            return Transform(self.position / other.position,
-                            self.rotation - other.rotation,
-                            self.scale / other.scale)
-        raise TypeError("Transform can only be divided by a scalar or another Transform")
+            return Transform3(self.position / other,
+                              self.rotation / other,
+                              self.scale / other)
+        elif isinstance(other, Transform3):
+            return Transform3(self.position / other.position,
+                              self.rotation - other.rotation,
+                              self.scale / other.scale)
+        raise TypeError("Transform3 can only be divided by a scalar or another Transform3")
 
     def __itruediv__(self, other):
         if isinstance(other, (int, float)):
@@ -377,50 +383,12 @@ class Transform3:
             self.rotation /= other
             self.scale /= other
             return self
-        elif isinstance(other, Transform):
+        elif isinstance(other, Transform3):
             self.position /= other.position
             self.rotation -= other.rotation
             self.scale /= other.scale
             return self
-        raise TypeError("Transform can only be divided by a scalar or another Transform")
-
-    def to_matrix(self):
-        # Construct 2D affine transform matrix: T * R * S
-        cos_r = math.cos(math.radians(self.rotation))
-        sin_r = math.sin(math.radians(self.rotation))
-
-        sx, sy = self.scale.x, self.scale.y
-        px, py = self.position.x, self.position.y
-
-        return numpy.array(
-            [[cos_r * sx, -sin_r * sy, px],
-            [sin_r * sx,  cos_r * sy, py],
-            [0,           0,          1]])
-        
-    def compose_with(self, parent_transform: 'Transform') -> 'Transform':
-        parent_mat = parent_transform.to_matrix()
-        local_mat = self.to_matrix()
-        result_mat = parent_mat @ local_mat
-        return Transform.from_matrix(result_mat)
-
-    @classmethod
-    def from_matrix(cls, mat: numpy.ndarray) -> 'Transform':
-        assert mat.shape == (3, 3), "Matrix must be 3x3 for 2D transforms"
-
-        px = mat[0, 2]
-        py = mat[1, 2]
-
-        sx = math.hypot(mat[0, 0], mat[1, 0])
-        sy = math.hypot(mat[0, 1], mat[1, 1])
-
-        if sx == 0 or sy == 0:
-            raise ValueError("Cannot extract rotation from zero scale")
-
-        rot_rad = math.atan2(mat[1, 0] / sx, mat[0, 0] / sx)
-        rotation = math.degrees(rot_rad)
-
-        return cls((px, py), rotation, (sx, sy))
-
+        raise TypeError("Transform3 can only be divided by a scalar or another Transform3")
 
 class Vector(GenericVector):
     @overload
@@ -555,8 +523,18 @@ class Vector(GenericVector):
         return f"[{self.x}, {self.y}]"
 
 class Vector3:
-    def __init__(self, x=0.0, y=0.0, z=0.0):
-        if isinstance(x, Vector3):
+    def __init__(self, x=0.0, y=None, z=None):
+        if isinstance(x, (int, float)):
+            self.x = x
+            if y == None:
+                self.y = x
+            else:
+                self.y = y
+            if z == None:
+                self.z = x
+            else:
+                self.z = z
+        elif isinstance(x, Vector3):
             self.x, self.y, self.z = x.x, x.y, x.z
         elif isinstance(x, (list, tuple)) and len(x) == 3:
             self.x, self.y, self.z = x
@@ -595,6 +573,9 @@ class Vector3:
 
     def __repr__(self):
         return f"Vector3({self.x}, {self.y}, {self.z})"
+    
+    def __iter__(self):
+        return iter((self.x, self.y, self.z))
 
 
 class Curve(ABC):

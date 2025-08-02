@@ -5,6 +5,7 @@ from FreeBodyEngine.graphics.shader import Shader
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
 from FreeBodyEngine.graphics.gl33.image import Image
+from FreeBodyEngine.graphics.texture import Texture
 from OpenGL.GL import *
 import numpy as np
 from FreeBodyEngine.graphics.color import Color
@@ -256,6 +257,8 @@ class GLShader(Shader):
                 img = self.uniform_cache[name]
                 if img != None and isinstance(img, Image):
                     glUniform1i(self.uniforms[name].location, img.texture.use())
+                if img != None and isinstance(img, Texture):
+                    glUniform1i(self.uniforms[name].location, img.use())
 
         glUseProgram(self._shader)
         
@@ -269,6 +272,8 @@ class GLGenerator(Generator):
         self.analyser = analyser
         self.precisions = {"high": "highp", "med": "mediump", "low": "lowp"}
         self.default_precision = "high"
+        self.input_index = -1
+        self.output_index = -1
 
     def generate(self, default_precision="high") -> str:
         self.default_precision = default_precision
@@ -285,6 +290,9 @@ class GLGenerator(Generator):
         elif isinstance(node, InputDecl):
             return self.generate_input(node)
         
+        elif isinstance(node, (Int, Float)):
+            return str(node.value)
+        
         elif isinstance(node, OutputDecl):
             return self.generate_output(node)
         
@@ -296,9 +304,6 @@ class GLGenerator(Generator):
         
         elif isinstance(node, FuncDecl):
             return self.generate_function(node)
-        
-        elif isinstance(node, (Int, Float)):
-            return node.value
         
         elif isinstance(node, Set):
             return self.generate_set(node)
@@ -333,21 +338,25 @@ class GLGenerator(Generator):
         elif isinstance(node, Call):
             return self.generate_call(node)
 
+
+
         return None
     
     def generate_call(self, node: Call):
-        args = ""
-        i = 0
         s = ""
-        for arg in node.args:
+        for i, arg in enumerate(node.args):
             s += self.generate_node(arg.val)
-            if i < len(node.args)-1:
+            if i < len(node.args) - 1:
                 s += ', '
-            i+=1
         return f"{node.name}({s})"
 
     def generate_identifier(self, node: Identifier):
-        return f"{node.name}"
+        if node.name == "VERTEX_POSITION":
+            s = "gl_Position"
+        else:
+            s = node.name
+        
+        return f"{s}"
     
     def generate_field_identifier(self, node: MethodIdentifier):        
         if node.struct:
@@ -356,37 +365,31 @@ class GLGenerator(Generator):
             return f"{self.generate_node(node.struct)}[{node.method_name}]"
 
     def generate_var(self, node: VarDecl):
-        prec = f"{node.precision} "
-        if node.precision == None:
-            prec = f""
-        return f"{prec}{node.type} {node.name} = {self.generate_node(node.val)}"
+        prec = f"{node.precision} " if node.precision else ""
+        return f"{prec}{node.type} {self.generate_node(node.name)} = {self.generate_node(node.val)}"
 
     def generate_input(self, node: InputDecl) -> str:
-        prec = f" {node.precision} "
-        if node.precision == None:
-            prec = " "
-        return f"\nin{prec}{node.type} {node.name};\n"
+        self.input_index += 1
+        prec = f" {node.precision} " if node.precision else " "
+        return f"\nlayout(location = {self.input_index}) in{prec}{node.type} {node.name.name};\n"
     
     def generate_output(self, node: OutputDecl) -> str:
-        prec = f" {node.precision} "
-        if node.precision == None:
-            prec = " "
-        return f"\nout{prec}{node.type} {node.name};\n"
+        self.output_index += 1
+        prec = f" {node.precision} " if node.precision else " "
+        return f"\nlayout(location = {self.output_index}) out{prec}{node.type} {node.name.name};\n"
     
     def generate_uniform(self, node: UniformDecl) -> str:
-        prec = f" {node.precision} "
-        if node.precision == None:
-            prec = " "
-        return f"\nuniform{prec}{node.type} {node.name};\n"
+        prec = f" {node.precision} " if node.precision else " "
+        return f"\nuniform{prec}{node.type} {node.name.name};\n"
     
     def generate_definition(self, node: Define) -> str:
-        return f"#define {node.name} {self.generate_node(node.val)}\n"
+        return f"#define {self.generate_node(node.name)} {self.generate_node(node.val)}\n"
 
     def generate_param(self, node: Param) -> str:
-        return f"{node.type} {node.name}"     
+        return f"{node.type} {node.name}"
 
     def generate_set(self, node: Set):
-        return f"{node.ident.name} = {self.generate_node(node.value)}"
+        return f"{self.generate_node(node.ident)} = {self.generate_node(node.value)}"
 
     def generate_return(self, node: Return):
         return f"return {self.generate_node(node.expr)}"            
@@ -394,7 +397,7 @@ class GLGenerator(Generator):
     def generate_if_statement(self, node: Union[IfStatement, ElseStatement]):
         body = ""
         for b_node in node.body:
-            body+=f"    {self.generate_node(b_node)};\n"
+            body += f"    {self.generate_node(b_node)};\n"
 
         if isinstance(node, ElseIfStatement):
             return f"else if ({self.generate_node(node.condition)})" + "{\n" + body + "    }"
@@ -414,17 +417,13 @@ class GLGenerator(Generator):
     def generate_function(self, node: FuncDecl) -> str:
         r = "\n"
         params = ""
-        i = 0
-        for param in node.params:
+        for i, param in enumerate(node.params):
             params += f"{param.type} {param.name}"
             if i < len(node.params) - 1:
-                params += ", "  
-            i += 1
+                params += ", "
 
-        return_type = "void"
-        if node.return_type != None:
-            return_type = node.return_type
-        r += f"{return_type} {str(node.name)}({params})" + " {\n"
+        return_type = node.return_type if node.return_type is not None else "void"
+        r += f"{return_type} {node.name.name}({params})" + " {\n"
         
         for b_node in node.body:
             r += f"    {self.generate_node(b_node)};\n"
@@ -436,9 +435,7 @@ class GLGenerator(Generator):
         return f"{node.type}({self.generate_node(node.target)})"
 
     def generate_method(self, node: StructField):
-        prec = ""
-        if node.precision != None:
-            prec = f"{self.precisions[node.precision]} "
+        prec = f"{self.precisions[node.precision]} " if node.precision else ""
         return f"   {prec}{node.type} {node.name};"
 
     def generate_struct(self, node: StructDecl) -> str:
@@ -459,4 +456,3 @@ class GLGenerator(Generator):
             right = self.generate_node(node.right)
             r += str(left) + str(node.op) + str(right)
         return r
-

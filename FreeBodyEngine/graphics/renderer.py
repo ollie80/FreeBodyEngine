@@ -84,9 +84,14 @@ class Renderer(Service):
     def draw_mesh(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
         pass
 
-    @abstractmethod
     def draw_model(self, model: 'Model', transform: 'Transform', camera: 'Camera2D'):
-        pass
+        for mesh_name in model.meshes:
+            mesh = model.meshes[mesh_name]
+
+            material_name = model.material_map[mesh_name]
+            material = model.materials[material_name]
+            
+            self.draw_mesh(mesh, material, transform, camera)
 
     @abstractmethod
     def draw_circle(self, radius: float, position: tuple[float, float], color: 'Color'):

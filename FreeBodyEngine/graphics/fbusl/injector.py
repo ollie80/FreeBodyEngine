@@ -1,4 +1,5 @@
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
+from FreeBodyEngine.graphics.fbusl.semantic import Function
 from FreeBodyEngine.utils import abstractmethod
 from typing import Literal
 
@@ -14,13 +15,12 @@ class Injector:
         self.shader_type = shader_type 
         self.file_path = file_path
 
-    def get_builtins() -> dict[str, list]:
+    def get_builtins(self) -> dict[str, list]:
         return {}
-
+        
     def pre_lexer_inject(self, source: str) -> str:
         "Modifies the raw shader source code text."
         return source
-
 
     def _pre_generation_inject(self, tree: Tree):
         self.tree = tree
@@ -32,29 +32,101 @@ class Injector:
 
     def inject(self):
         return self.tree
+    
+    def find_main_function(self) -> FuncDecl | None:
+        def recursive_search(node):
+            if isinstance(node, FuncDecl) and node.name.name == "main":
+                return node
 
-    def replace_node(self, node: Node, new: Node):
-        for node in self.tree.children:
-            for name, value in vars(node).items():
-
+            for value in vars(node).values():
                 if isinstance(value, Node):
-                    if value == node:
-                        node.__setattr__(name, new)    
-                        return
-                    
-                    self.replace_node(node, new)
-        
-    def find_nodes(self, attr_name, attr_val) -> Node:
+                    result = recursive_search(value)
+                    if result:
+                        return result
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, Node):
+                            result = recursive_search(item)
+                            if result:
+                                return result
+            return None
+
+        for root in self.tree.children:
+            result = recursive_search(root)
+            if result:
+                return result
+
+        return None
+
+    def replace_node(self, target: Node, replacement: Node):
+        def recursive_replace(current: Node):
+            for name, value in vars(current).items():
+                if isinstance(value, Node):
+                    if value is target:
+                        setattr(current, name, replacement)
+                    else:
+                        recursive_replace(value)
+
+                elif isinstance(value, list):
+                    new_list = []
+                    for item in value:
+                        if isinstance(item, Node):
+                            if item is target:
+                                new_list.append(replacement)
+                            else:
+                                recursive_replace(item)
+                                new_list.append(item)
+                        else:
+                            new_list.append(item)
+                    setattr(current, name, new_list)
+
+        for root in self.tree.children:
+            recursive_replace(root)
+
+    def find_parent(self, target: Node) -> Node | None:
+        def recursive_search(current: Node):
+            for name, value in vars(current).items():
+                if isinstance(value, Node):
+                    if value is target:
+                        return current
+                    result = recursive_search(value)
+                    if result:
+                        return result
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, Node):
+                            if item is target:
+                                return current
+                            result = recursive_search(item)
+                            if result:
+                                return result
+            return None
+
+        for root in self.tree.children:
+            result = recursive_search(root)
+            if result:
+                return result
+
+        return None
+    
+    def find_nodes(self, attr_name, attr_val) -> list[Node]:
         nodes = []
 
-        for node in self.tree.children:
+        def recursive_search(node):
+            if hasattr(node, attr_name) and getattr(node, attr_name) == attr_val:
+                nodes.append(node)
+
             for name, value in vars(node).items():
-
                 if isinstance(value, Node):
-                    nodes += self.find_nodes(attr_name, attr_val)
+                    recursive_search(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        if isinstance(item, Node):
+                            recursive_search(item)
 
-                if name == attr_name and value == attr_val:
-                    nodes += node
-        
+
+
+        for node in self.tree.children:
+            recursive_search(node)
+
         return nodes
-
