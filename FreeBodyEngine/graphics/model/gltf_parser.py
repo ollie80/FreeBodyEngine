@@ -3,23 +3,24 @@ import json
 from FreeBodyEngine.graphics.model import Model
 from FreeBodyEngine.graphics.mesh import Mesh
 from FreeBodyEngine.graphics.material import Material
+from FreeBodyEngine.graphics.pipeline import GraphicsPipeline
+from FreeBodyEngine.graphics.renderer import Renderer
+from FreeBodyEngine.graphics.gl33 import GL33Renderer
+from FreeBodyEngine.graphics.pbr.pipeline import PBRPipeline
 import numpy as np
 
 class GLBParser:
-    def __init__(self, path):
+    def __init__(self, data_bytes):
         "Parses .glb (glTF blob) files into its glTF + bin data."
-        self.path = path
+        self.bytes = data_bytes
         self.json_chunk = None
         self.bin_chunk = None
         self._parse()
 
     def _parse(self):
-        with open(self.path, 'rb') as f:
-            data = f.read()
-
         offset = 0
 
-        magic, version, length = struct.unpack_from('<4sII', data, offset)
+        magic, version, length = struct.unpack_from('<4sII', self.bytes, offset)
         offset += 12
 
         if magic != b'glTF':
@@ -28,23 +29,21 @@ class GLBParser:
         if version != 2:
             raise ValueError("Only glTF version 2.0 is supported")
 
-        # JSON chunk
-        chunk_length, chunk_type = struct.unpack_from('<I4s', data, offset)
+        chunk_length, chunk_type = struct.unpack_from('<I4s', self.bytes, offset)
         offset += 8
         if chunk_type != b'JSON':
             raise ValueError("First chunk must be JSON")
 
-        json_bytes = data[offset:offset+chunk_length]
+        json_bytes = self.bytes[offset:offset+chunk_length]
         self.json_chunk = json.loads(json_bytes.decode('utf-8'))
         offset += chunk_length
 
-        # BIN chunk
-        if offset < len(data):
-            chunk_length, chunk_type = struct.unpack_from('<I4s', data, offset)
+        if offset < len(self.bytes):
+            chunk_length, chunk_type = struct.unpack_from('<I4s', self.bytes, offset)
             offset += 8
             if chunk_type != b'BIN\x00':
                 raise ValueError("Second chunk must be BIN")
-            self.bin_chunk = data[offset:offset+chunk_length]
+            self.bin_chunk = self.bytes[offset:offset+chunk_length]
 
     def get_json(self):
         return self.json_chunk
@@ -115,18 +114,65 @@ class GLTFParser:
                 return i
             i += 1   
 
-    def build_model(self, model_name: str) -> Model:
+    def get_image_data(self, image_index):
+        image = self.gltf['images'][image_index]
+
+        if "bufferView" in image:
+            buffer_view = self.gltf["bufferViews"][image["bufferView"]]
+            offset = buffer_view.get("byteOffset", 0)
+            length = buffer_view["byteLength"]
+            return self.bin_data[offset:offset + length]
+        
+        elif "uri" in image:
+            uri = image["uri"]
+            if uri.startswith("data:"):
+                import base64
+                header, encoded = uri.split(",", 1)
+                return base64.b64decode(encoded)
+            else:
+                raise NotImplementedError("External images not supported in this context")
+        
+        else:
+            raise ValueError("Image has no bufferView or URI")
+
+    def build_model(self, model_name: str, pipeline: GraphicsPipeline, renderer: Renderer) -> Model:
+        if model_name == None:
+            print(self.gltf['meshes'])
+            model_name = self.gltf['meshes'][0].get('name')
+
         model = self.gltf['meshes'][self.get_model_index(model_name)]
         
         meshes = {}
         materials = {}
+        textures = {}
 
         material_map = {}
         
         i = 0
-        for material in model['materials']:
-            Material()
-        
+        for texture_index in range(len(self.gltf['images'])):
+            data = self.get_image_data(texture_index)
+            textures[texture_index] = renderer.texture_manager._create_standalone_texture(data)
+
+        for material in self.gltf['materials']:
+            data = {
+                'albedo': [0.0, 0.0, 0.0, 1.0],
+                'normal': [0.0, 0.0, 0.0, 1.0],
+                'emmisive': [0.0, 0.0, 0.0, 1.0],
+                'roughness': 0.0,
+                'metallic': 1.0,
+            }
+
+            pbr = material.get('pbrMetallicRoughness', {})
+            if 'baseColorFactor' in pbr:
+                data['albedo'] = pbr['baseColorFactor']
+            if 'baseColorTexture' in pbr:
+                tex = textures[pbr['baseColorTexture']['index']]
+                data['albedo'] = tex
+
+            materials[material.get('name', f'material_{i}')] = pipeline.create_material(data)    
+            i += 1
+
+        i = 0
         for mesh in model['primitives']:
             pos_accessor = mesh['attributes']['POSITION']
             positions = np.array(self.get_accessor_data(pos_accessor), np.float32)
@@ -146,16 +192,9 @@ class GLTFParser:
             material = self.gltf['materials'][material_index]
             material_name = material.get('name', f'material_{material_index}')
 
-            meshes[mesh_name] = (Mesh(positions, normals, uvs, indices))
+            meshes[mesh_name] = (renderer.mesh_class(positions, normals, uvs, indices))
             material_map[mesh_name] = material_name
 
             i += 1
-
         return Model(meshes, material_map, materials)
 
-
-
-if __name__ == "__main__":
-    glb = GLBParser("C:\\Users\\Ollie\\Documents\\GitHub\\wultuh.glb")
-    parser = GLTFParser(glb.get_json(), glb.get_binary_buffer())
-    print(parser.gltf)

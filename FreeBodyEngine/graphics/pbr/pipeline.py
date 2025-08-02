@@ -42,7 +42,6 @@ class PBRPipeline(GraphicsPipeline):
         tilemaps: list[TilemapRenderer] = camera.scene.root.find_nodes_with_type('TilemapRenderer')
         for tilemap in tilemaps:
             tilemap.draw()
-            
 
         sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
         for sprite in sprites:
@@ -52,12 +51,18 @@ class PBRPipeline(GraphicsPipeline):
         for debug in debugs:
             self.renderer.draw_mesh(debug.mesh, debug.material, debug.world_transform, camera)
 
+        self.renderer.enable_depth_testing()
+
         models: list[Model3D] = camera.scene.root.find_nodes_with_type('Model3D')
-        for model in models:
-            self.renderer.draw_model(model._model)
+        for model in models:    
+            self.renderer.draw_model(
+                model._model, model.world_transform, camera)
+            
+        self.renderer.disable_depth_testing()
 
         self.main_framebuffer.unbind()
-        self.main_framebuffer.draw('albedo', get_service('window').size)
+        window_size = get_service('window').size
+        self.main_framebuffer.draw('albedo', window_size)
 
 
     def create_material(self, data):

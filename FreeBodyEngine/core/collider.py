@@ -252,7 +252,7 @@ class CircleCollider2D(Collider2D):
                 for d in debug:
                     d.kill()
             else:
-                self.add(CircleColliderDebug(self.scene.main.renderer))
+                self.add(CircleColliderDebug())
         
     def apply_transform(self):
         self.collision_shape.position = self.world_transform.position

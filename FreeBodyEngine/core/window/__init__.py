@@ -14,10 +14,12 @@ def get_window() -> type[Window]:
         from FreeBodyEngine.core.window.headless import HeadlessWindow
         return HeadlessWindow
 
-    if platform == 'win32':
-        from FreeBodyEngine.core.window.glfw import GLFWWindow
-        return GLFWWindow
+    from FreeBodyEngine.core.window.glfw import GLFWWindow
+    return GLFWWindow
     
+    if platform == 'win32':
+        from FreeBodyEngine.core.window.win32 import Win32Window
+        return Win32Window
     
 
 

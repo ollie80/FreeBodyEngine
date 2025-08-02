@@ -322,6 +322,7 @@ class Input(Service):
 
     def reset(self):
         self.pressed = {}
+        self.pressed_set = set(self.pressed.keys())
         self.released = set()
 
     def action_exists(self, name) -> bool:
@@ -359,6 +360,7 @@ class Input(Service):
         pass
 
     def update(self):
+        self.reset()
         input_vals = {}
         for name in self.actions:
             highest = 0.0

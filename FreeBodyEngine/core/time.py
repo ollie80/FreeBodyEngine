@@ -1,5 +1,5 @@
 import time
-from FreeBodyEngine import delta, physics_delta, get_main, register_service_update, unregister_service_update, get_service, service_exists
+from FreeBodyEngine import delta, physics_delta, warning, get_main, register_service_update, unregister_service_update, get_service, service_exists
 from functools import wraps
 from FreeBodyEngine.core.service import Service
 
@@ -47,11 +47,14 @@ class Time:
         raw_delta = current_time - self._last_time
 
         self.unscaled_delta_time = raw_delta
-        self.delta_time = raw_delta * self.time_scale
+        self.delta_time = min(raw_delta * self.time_scale, 0.1)
         self.total_time = current_time - self._start_time
         self._last_time = current_time
         self.frame_count += 1
 
+        
+        if self.delta_time > 0.05:
+            warning(f'Delta time spike: {self.delta_time}')
 
 class CooldownManager(Service):
     def __init__(self):

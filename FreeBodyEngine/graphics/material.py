@@ -2,10 +2,10 @@ from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.graphics.shader import Shader
 from FreeBodyEngine.graphics.fbusl.injector import Injector
 from FreeBodyEngine.graphics.fbusl import fbusl_error
-from FreeBodyEngine.graphics.fbusl.semantic import FuncCall
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
 from FreeBodyEngine import get_main,get_service
 from FreeBodyEngine.graphics.image import Image
+from FreeBodyEngine.graphics.texture import Texture
 from FreeBodyEngine import warning
 import numpy as np
 from enum import Enum, auto
@@ -30,51 +30,102 @@ class PropertyType(Enum):
     COLOR_RGBA = auto()
 
     TEXTURE = auto()
-    
-    
-
 
 
 class MaterialInjector(Injector):
-    def __init__(self, shader_type, file_path, material: 'Material'):
-        super().__init__(shader_type, file_path)
+    def __init__(self, material: 'Material'):
+        super().__init__()
+        self.material = material
+        self.mat_properties = {}
 
-    def get_builtins(shader_type):
-        if shader_type == "frag":
-            return {"vars": {"ALBEDO": {"type": "sampler2D"}, "NORMAL": {"type": "sampler2D"}, "EMMISION": {"type": "sampler2D"}, "ROUGHNESS": {"type": "sampler2D"}, "METALLIC": {"type": "sampler2D"}}}
+    def parse_property(self, property: PropertyType):
+        if property == PropertyType.COLOR_R:
+            return 'float'
+        if property == PropertyType.COLOR_RG:
+            return 'vec2'
+        if property == PropertyType.COLOR_RGB:
+            return 'vec3'
+        if property == PropertyType.COLOR_RGBA:
+            return 'vec4'
+
+    def get_builtins(self):
+        if self.shader_type == "vert":
+            return {} 
         else:
-            return {'vars': {"WORLD_POS": {"type": "vec4"}}}
-        
-    def inject_main_frag(self, main: FuncDecl):
-        defaults = {"albedo": 'vec4', "normal": 'vec4', 'emmision': 'vec4', 'roughness': 'float', 'metallic': 'float'}
-        
-        for name, type in reversed(defaults.items()):
-            self.tree.children.insert(1, UniformDecl(0, f'{name.capitalize()}_useTexture', 'bool', None))
-            self.tree.children.insert(1, UniformDecl(0, f'{name.capitalize()}_Texture', 'sampler2D', None))
-            self.tree.children.insert(1, UniformDecl(0, f'{name.capitalize()}_Color', f'{type}', None))
+            builtins = {'vars': {}}
 
-        remaining_defaults = set(defaults.keys())
+            for property in self.material.property_definitions:
+                self.mat_properties[property] = self.parse_property(self.material.property_definitions[property])
+                builtins['vars'][property.upper()] = self.parse_property(self.material.property_definitions[property])
+            return builtins
 
-        for node in main.body:
-            if isinstance(node, Set):
-                if isinstance(node, Set) and node.ident.name in remaining_defaults:
-                    remaining_defaults.remove(node.ident.name)
+    def pre_generation_inject(self):
+        if self.shader_type == 'frag':
+            self.inject_frag()
+        return self.tree
 
-        for name in defaults:
-            self.tree.children.insert(1, OutputDecl(0, f'{name}', f'{defaults[name]}', None))
-            main.body.append(Set(main.pos, Identifier(main.pos, name), Call(main.pos, "texture", [Arg(main.pos, Identifier(main.pos, f"{name.upper()}")), Arg(main.pos, Identifier(main.pos, "uv"))])))
+    def inject_frag(self):
+        main = self.find_main_function()
+
+        for property in self.mat_properties:
+            tex_nodes = self.find_nodes('name', property.upper())
+            if len(tex_nodes) == 0:
+                main.body.append(Set(0, Identifier(0, property), Identifier(0, property.upper())))
             
-        builtins = self.__class__.get_builtins('frag').get('vars', {})
-        self.replace_texture_calls(main, builtins, defaults)
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Texture'), 'sampler2D', None))
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Color'), 'vec4', None))
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_UVRect'), 'vec4', None))
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_useTexture'), 'bool', None))
+
+            tex_nodes = self.find_nodes('name', property.upper())
+
+            for node in tex_nodes:
+                parent = self.find_parent(node)
+                custom_sample_pos = False 
+
+                if isinstance(parent, Arg):
+                    
+                    function = self.find_parent(parent)
+                    if function != None:
+                        custom_sample_pos = True
+
+                if not custom_sample_pos:
+                    uv_coord = Identifier(node.pos, 'uv')
+                else:
+                    node: Call = function
+                    print("Node: ", node)
+                    uv_coord = node.args[1].val          
+
+                uv_rect = f"{property.capitalize()}_UVRect"
+
+                sample_pos_left = BinOp(node.pos, MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'zw'), "*", uv_coord)
+                sample_pos_right = Call(node.pos, 'vec2', (Arg(node.pos, MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'x')), Arg(node.pos, BinOp(node.pos, BinOp(node.pos, Float(node.pos, 1.0), '-', MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'y')), '-', MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'w')))))
+                sample_pos = BinOp(node.pos, sample_pos_left, '+', sample_pos_right)
+                sample_call = Call(node.pos, 'texture', (Arg(node.pos, Identifier(node.pos, f"{property.capitalize()}_Texture")), Arg(node.pos, sample_pos)))
+
+                color = Identifier(node.pos, f"{property.capitalize()}_Color")
+                use_tex = Identifier(node.pos, f"{property.capitalize()}_useTexture")
+                ternary = TernaryExpression(node.pos, sample_call, color, use_tex)
+
+                self.replace_node(node, ternary)
+
+            
+
+
 
 class Material:
-    def __init__(self, data: dict, property_definitions: dict[str, str], injector: Injector = MaterialInjector):
+    def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = None):
         self.data = data
         self.properties = self.parse_properties(property_definitions)
+        self.property_definitions = property_definitions
 
         shader = data.get('shader', {})
         frag_source = shader.get('frag','engine/shader/default_shader.fbfrag')
         vert_source = shader.get('vert', 'engine/shader/default_shader.fbvert')
+        
+        if injector == None:
+            injector = MaterialInjector(self)
+        
         self.shader: Shader = get_service('renderer').load_shader(get_service('files').load_data(vert_source), get_service('files').load_data(frag_source), injector) 
 
     def __getattribute__(self, name):
@@ -105,12 +156,16 @@ class Material:
     def parse_property_val(self, val: any, property, property_definitions):
         type = property_definitions[property]
         if type in (PropertyType.COLOR_RGBA, PropertyType.COLOR_RGB):
-            if isinstance(val, str):
+            if isinstance(val, (Texture, Image)):
+                return val
+
+            elif isinstance(val, str):
                 if val.startswith('#'):
                     return Color(val)
                 else:
                     warning(f"Couldn't parse material color value, '{property}' is a string that doesn't contain a hex color.")
             else:
+                print(property)
                 if len(val) >= 2 and len(val) <= 4:
                     correct_type = True
                     for v in val:
@@ -133,9 +188,14 @@ class Material:
                 self.shader.set_uniform(f"{material_property.capitalize()}_Color", val)
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)
             else:
-                self.shader.set_uniform(f"{material_property.capitalize()}_Texture", val)
+                if isinstance(val, Texture):
+                    tex = val
+                elif isinstance(val, Image):
+                    tex = val.texture
+
+                self.shader.set_uniform(f"{material_property.capitalize()}_Texture", tex)
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", True)
-                self.shader.set_uniform("Albedo_UVRect", val.texture.uv_rect)
+                self.shader.set_uniform("Albedo_UVRect", tex.uv_rect)
 
         self.shader.set_uniform('model', transform.model)
         self.shader.set_uniform('view', camera.view_matrix)

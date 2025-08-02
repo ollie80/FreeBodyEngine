@@ -7,6 +7,7 @@ from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
 from FreeBodyEngine.graphics.fbusl.injector import Injector 
 from FreeBodyEngine.graphics.texture import Texture
 from FreeBodyEngine.graphics.material import Material
+from FreeBodyEngine import DEVMODE, get_flag
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ class GL33Renderer(Renderer):
         self.window = get_service('window') 
 
         if self.window.window_type == "win32":
-            self.context = context.create_win32_opengl_context(self.window, self.main.dev)
+            self.context = context.create_win32_opengl_context(self.window, get_flag(DEVMODE, False))
         
         glEnable(GL_DEBUG_OUTPUT)
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS)  
@@ -93,6 +94,12 @@ class GL33Renderer(Renderer):
 
         glBindVertexArray(0)
 
+    def enable_depth_testing(self):
+        glEnable(GL_DEPTH_TEST)
+
+
+    def disable_depth_testing(self):
+        glDisable(GL_DEPTH_TEST)
 
     def draw_mesh(self, mesh, material: 'Material', transform, camera):
         material.use(transform, camera)

@@ -108,12 +108,20 @@ class GLFramebuffer(Framebuffer):
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
+    def _draw_depth_texture(tex, size):
+        pass
+
     def draw(self, attachment, size: tuple[int,int] = None):
         """Draw a named attachment to the screen."""
         if attachment not in self.attachments:
             raise ValueError(f"No attachment named '{attachment}'")
-        
-        size = (self.width, self.height) if size == None else size
+
+        size = (self.width, self.height) if size is None else size
+        tex = self.textures.get(attachment)
+
+        if self._attachments[attachment][0] == AttachmentType.DEPTH:
+            self._draw_depth_texture(tex, size)
+            return
 
         attachment_enum = self.attachments[attachment]
 

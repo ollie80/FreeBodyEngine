@@ -112,7 +112,7 @@ from FreeBodyEngine import math
 from FreeBodyEngine.core.time import cooldown, physics_cooldown
 from FreeBodyEngine.core.input import get_action_pressed, get_action_released, get_action_strength, get_action_vector
 from FreeBodyEngine.core.mouse import Mouse
-from FreeBodyEngine.utils import load_image, load_material, load_sprite, load_shader, load_sound, load_data, load_toml
+from FreeBodyEngine.utils import load_image, load_material, load_sprite, load_shader, load_sound, load_data, load_toml, load_model
 from FreeBodyEngine import graphics
 from FreeBodyEngine import utils
 

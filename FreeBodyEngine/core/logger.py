@@ -1,7 +1,7 @@
 from datetime import datetime
 from functools import wraps
 from FreeBodyEngine.core.service import Service
-from FreeBodyEngine import get_main, get_service
+from FreeBodyEngine import get_main, get_service, get_flag
 import os
 import inspect
 
@@ -31,6 +31,7 @@ class Logger(Service):
         self.history: list[tuple[str, str, str]] = []  # (timestamp, type, msg)
         self.max_history_length = max_history_length
         self.dependencies.append('files')
+        self.supress = {"ERROR": get_flag('SUPRESS_ERRORS', False), "WARNING": get_flag('SUPRESS_WARNINGS', False), "DEBUG": get_flag('SUPRESS_LOGS', False)}
 
     def store_log(type_: str):
         def decorator(func):
@@ -48,16 +49,19 @@ class Logger(Service):
     
     @store_log('DEBUG')
     def log(self, *msg, color: str = "reset"):
-        print_colored(*msg, color=color)
+        if not self.supress["DEBUG"]:
+
+            print_colored(*msg, color=color)
 
     @store_log("ERROR")
     def error(self, msg):
-        print_colored(f"ERROR: {msg}", color="red")
+        if not self.supress["ERROR"]:
+            print_colored(f"ERROR: {msg}", color="red")
 
     @store_log('WARNING')
     def warning(self, msg):
-
-        print_colored(f'WARNING: {msg}', color="yellow")
+        if not self.supress["WARNING"]:
+            print_colored(f'WARNING: {msg}', color="yellow")
         
 
     def get_history(self) -> str:
