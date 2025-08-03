@@ -359,10 +359,17 @@ class GLGenerator(Generator):
         elif isinstance(node, Call):
             return self.generate_call(node)
 
-
+        elif isinstance(node, Type):
+            return self.generate_type(node)
 
         return None
     
+    def generate_type(self, node: Type):
+        if node.length == 1:
+            return f"{self.generate_node(node.name)}"
+        else:
+            return f"{self.generate_node(node.name)}[{node.length}]"
+
     def generate_call(self, node: Call):
         s = ""
         for i, arg in enumerate(node.args):
@@ -374,6 +381,8 @@ class GLGenerator(Generator):
     def generate_identifier(self, node: Identifier):
         if node.name == "VERTEX_POSITION":
             s = "gl_Position"
+        elif node.name == "INSTANCE_ID":
+            s = 'gl_InstanceID'
         else:
             s = node.name
         
@@ -387,17 +396,17 @@ class GLGenerator(Generator):
 
     def generate_var(self, node: VarDecl):
         prec = f"{node.precision} " if node.precision else ""
-        return f"{prec}{node.type} {self.generate_node(node.name)} = {self.generate_node(node.val)}"
+        return f"{prec}{self.generate_node(node.type)} {self.generate_node(node.name)} = {self.generate_node(node.val)}"
 
     def generate_input(self, node: InputDecl) -> str:
         self.input_index += 1
         prec = f" {node.precision} " if node.precision else " "
-        return f"\nlayout(location = {self.input_index}) in{prec}{node.type} {node.name.name};\n"
+        return f"\nlayout(location = {self.input_index}) in{prec}{self.generate_node(node.type)} {node.name.name};\n"
     
     def generate_output(self, node: OutputDecl) -> str:
         self.output_index += 1
         prec = f" {node.precision} " if node.precision else " "
-        return f"\nlayout(location = {self.output_index}) out{prec}{node.type} {node.name.name};\n"
+        return f"\nlayout(location = {self.output_index}) out{prec}{self.generate_node(node.type)} {node.name.name};\n"
     
     def generate_buffer(self, node: Buffer):
         s = ""
@@ -412,17 +421,17 @@ class GLGenerator(Generator):
         return s
 
     def generate_buffer_field(self, field: BufferField) -> str:
-        return f"{field.type} {self.generate_node(field.name)};"
+        return f"{self.generate_node(field.type)} {self.generate_node(field.name)};"
 
     def generate_uniform(self, node: UniformDecl) -> str:
         prec = f" {node.precision} " if node.precision else " "
-        return f"\nuniform{prec}{node.type} {node.name.name};\n"
+        return f"\nuniform{prec}{self.generate_node(node.type)} {node.name.name};\n"
     
     def generate_definition(self, node: Define) -> str:
         return f"#define {self.generate_node(node.name)} {self.generate_node(node.val)}\n"
 
     def generate_param(self, node: Param) -> str:
-        return f"{node.type} {node.name}"
+        return f"{self.generate_node(node.type)} {node.name}"
 
     def generate_set(self, node: Set):
         return f"{self.generate_node(node.ident)} = {self.generate_node(node.value)}"
@@ -454,11 +463,11 @@ class GLGenerator(Generator):
         r = "\n"
         params = ""
         for i, param in enumerate(node.params):
-            params += f"{param.type} {param.name}"
+            params += f"{self.generate_node(param.type)} {param.name}"
             if i < len(node.params) - 1:
                 params += ", "
 
-        return_type = node.return_type if node.return_type is not None else "void"
+        return_type = self.generate_node(node.return_type) if node.return_type is not None else "void"
         r += f"{return_type} {node.name.name}({params})" + " {\n"
         
         for b_node in node.body:
@@ -468,11 +477,11 @@ class GLGenerator(Generator):
         return r
 
     def generate_typecast(self, node: TypeCast):
-        return f"{node.type}({self.generate_node(node.target)})"
+        return f"{self.generate_node(node.type)}({self.generate_node(node.target)})"
 
     def generate_method(self, node: StructField):
         prec = f"{self.precisions[node.precision]} " if node.precision else ""
-        return f"   {prec}{node.type} {node.name};"
+        return f"   {prec}{self.generate_node(node.type)} {node.name};"
 
     def generate_struct(self, node: StructDecl) -> str:
         r = "\n"

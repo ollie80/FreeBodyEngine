@@ -41,6 +41,7 @@ class UBOBuffer(Buffer):
     def get_data(self):
         return self.data
 
+    @staticmethod
     def get_max_size(self) -> int:
         return glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE)
 

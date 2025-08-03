@@ -14,7 +14,6 @@ normals: vec3
 
 @output
 uv: vec2
-
 @output
 normal: vec3
 

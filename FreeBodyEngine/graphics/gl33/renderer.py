@@ -8,6 +8,7 @@ from FreeBodyEngine.graphics.fbusl.injector import Injector
 from FreeBodyEngine.graphics.texture import Texture
 from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine import DEVMODE, get_flag
+from FreeBodyEngine.graphics.gl33.buffer import UBOBuffer
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -55,6 +56,9 @@ class GL33Renderer(Renderer):
         width, height = self.window.size
         glViewport(0, 0, width, height)
         
+
+    def get_max_buffer_size(self):
+        return UBOBuffer.get_max_size()
 
     def resize(self):
         width, height = self.window.size
