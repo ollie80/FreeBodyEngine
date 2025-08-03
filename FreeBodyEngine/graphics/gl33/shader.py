@@ -4,8 +4,10 @@ from FreeBodyEngine.graphics.fbusl.semantic import SemanticAnalyser
 from FreeBodyEngine.graphics.shader import Shader
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
+from FreeBodyEngine import warning
 from FreeBodyEngine.graphics.gl33.image import Image
 from FreeBodyEngine.graphics.texture import Texture
+from FreeBodyEngine.graphics.buffer import Buffer as DataBuffer
 from OpenGL.GL import *
 import numpy as np
 from FreeBodyEngine.graphics.color import Color
@@ -248,6 +250,20 @@ class GLShader(Shader):
             if not isinstance(val, Image):
                 glUniform1i(loc, val)
 
+    def set_buffer(self, name: str, buffer: DataBuffer):
+        if name in self.data['buffers']:
+
+            block_index = glGetUniformBlockIndex(self._shader, name.encode('utf-8'))
+            
+            binding_point = self.data['buffers'][name]
+            glUniformBlockBinding(self._shader, block_index, binding_point)
+            
+            buffer.bind(binding_point)
+            
+        
+        else:
+            warning(f'Shader {self}, does not have buffer of name "{name}".')
+
     def get_uniform(self, name: str):
         return self.uniforms[name]
 
@@ -267,13 +283,15 @@ class GLGenerator(Generator):
     """
     GLSL implementation of the FBUSL code generator. 
     """
-    def __init__(self, tree, analyser: SemanticAnalyser):
+    def __init__(self, tree, analyser: SemanticAnalyser, buffer_index: int):
         self.tree: Tree = tree
         self.analyser = analyser
         self.precisions = {"high": "highp", "med": "mediump", "low": "lowp"}
         self.default_precision = "high"
         self.input_index = -1
         self.output_index = -1
+        self.buffer_index = buffer_index
+        self.data = {"buffers": {}}
 
     def generate(self, default_precision="high") -> str:
         self.default_precision = default_precision
@@ -281,7 +299,7 @@ class GLGenerator(Generator):
 
         for child in self.tree.children:
             string += str(self.generate_node(child))
-        return string
+        return string, self.data
     
     def generate_node(self, node: Node):
         if isinstance(node, UniformDecl):
@@ -302,6 +320,9 @@ class GLGenerator(Generator):
         elif isinstance(node, Expression):
             return self.generate_expression(node)
         
+        elif isinstance(node, Buffer):
+            return self.generate_buffer(node)
+
         elif isinstance(node, FuncDecl):
             return self.generate_function(node)
         
@@ -378,6 +399,21 @@ class GLGenerator(Generator):
         prec = f" {node.precision} " if node.precision else " "
         return f"\nlayout(location = {self.output_index}) out{prec}{node.type} {node.name.name};\n"
     
+    def generate_buffer(self, node: Buffer):
+        s = ""
+        name = self.generate_node(node.name)
+        s += f"\nlayout(std140) uniform {name} " + "{\n"
+        
+        for field in node.fields:
+            s += "  " + self.generate_buffer_field(field) + "\n" 
+        
+        s += "};\n"
+        
+        return s
+
+    def generate_buffer_field(self, field: BufferField) -> str:
+        return f"{field.type} {self.generate_node(field.name)};"
+
     def generate_uniform(self, node: UniformDecl) -> str:
         prec = f" {node.precision} " if node.precision else " "
         return f"\nuniform{prec}{node.type} {node.name.name};\n"

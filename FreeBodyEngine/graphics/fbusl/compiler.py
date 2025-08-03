@@ -4,7 +4,7 @@ from typing import Literal
 import sys
 
 
-def compile(source, generator_class: type[fbusl.generator.Generator], injector: fbusl.injector.Injector, shader_type: Literal["frag", "vert"], file_path="C:\\Users\\Ollie\\Documents\\GitHub\\FreeBodyDev\\FreeBodyEngine\\engine_assets\\shader\\default_shader.fbvert"):
+def compile(source, generator_class: type[fbusl.generator.Generator], injector: fbusl.injector.Injector, shader_type: Literal["frag", "vert"], buffer_index: int, file_path=""):
     inj = injector
     inj.init(shader_type, file_path)
 
@@ -19,10 +19,10 @@ def compile(source, generator_class: type[fbusl.generator.Generator], injector: 
 
     ast = inj._pre_generation_inject(ast)
     
-    generator = generator_class(ast, analyser)
-    generated_code = generator.generate()
+    generator = generator_class(ast, analyser, buffer_index)
+    generated_code, data = generator.generate()
     
     with open(f"test.{shader_type}", 'w') as f:
         f.write(generated_code)
     
-    return generated_code
+    return generated_code, data

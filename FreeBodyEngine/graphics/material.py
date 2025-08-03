@@ -187,7 +187,7 @@ class Material:
             if isinstance(val, Color):
                 self.shader.set_uniform(f"{material_property.capitalize()}_Color", val)
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)
-            else:
+            elif isinstance(val, (Texture, Image)):
                 if isinstance(val, Texture):
                     tex = val
                 elif isinstance(val, Image):
@@ -196,6 +196,9 @@ class Material:
                 self.shader.set_uniform(f"{material_property.capitalize()}_Texture", tex)
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", True)
                 self.shader.set_uniform("Albedo_UVRect", tex.uv_rect)
+            else:
+                self.shader.set_uniform(f"{material_property.capitalize()}_Color", Color('#FF00FFFF'))
+                self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)
 
         self.shader.set_uniform('model', transform.model)
         self.shader.set_uniform('view', camera.view_matrix)
