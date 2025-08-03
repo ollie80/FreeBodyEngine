@@ -29,7 +29,7 @@ class Input(Uniform):
 
 class Output(Uniform):
     def __repr__(self):
-        return "Output"
+        return f"Output({self.name} type={self.type})"
 
 class Function:
     def __init__(self, name: Identifier | str, return_type, params):
@@ -113,60 +113,68 @@ class SemanticAnalyser:
         for var_name, var_type in vars.items():
             self.global_scope.define(Var(var_name, var_type))
         
-
-        self.functions['round'] = Function('round', 'float', {"x": "float"})
-        self.functions['texture'] = Function('texture', 'vec4', {"sampler": 'sampler2D', "sample_pos": 'vec2'})
-        self.global_scope.define(Output("VERTEX_POSITION", 'vec4'))
+        float_type = Type(0, Identifier(0, "float"))
+        int_type = Type(0, Identifier(0, "int"))
+        self.functions['round'] = Function('round', Type(0, Identifier(0, float_type)), {"x": float_type})
+        self.functions['texture'] = Function('texture', Type(0, Identifier(0, 'vec4')), {"sampler": Type(0, Identifier(0, 'sampler2D')), "sample_pos": Type(0, Identifier(0, 'vec2'))})
+        
+        self.global_scope.define(Output("VERTEX_POSITION", Type(0, Identifier(0, 'vec4'))))
+        self.global_scope.define(Output("INSTANCE_ID", Type(0, Identifier(0, 'int'))))
 
         # Vector structs
-        self.structs['vec2'] = StructDecl(None, 'vec2', [
-            StructField(None, 'x', 'float', None),
-            StructField(None, 'y', 'float', None)
+        vec2_type = Type(0, Identifier(0, 'vec2'))
+        self.structs['vec2'] = StructDecl(None, vec2_type, [
+            StructField(None, 'x', float_type, None),
+            StructField(None, 'y', float_type, None)
         ])
-        self.structs['vec3'] = StructDecl(None, 'vec3', [
-            StructField(None, 'x', 'float', None),
-            StructField(None, 'y', 'float', None),
-            StructField(None, 'z', 'float', None)
+
+        vec3_type = Type(0, Identifier(0, 'vec3'))
+        self.structs['vec3'] = StructDecl(None, vec3_type, [
+            StructField(None, 'x', float_type, None),
+            StructField(None, 'y', float_type, None),
+            StructField(None, 'z', float_type, None)
         ])
-        self.structs['vec4'] = StructDecl(None, 'vec4', [
-            StructField(None, 'x', 'float', None),
-            StructField(None, 'y', 'float', None),
-            StructField(None, 'z', 'float', None),
-            StructField(None, 'w', 'float', None)
+
+        vec4_type = Type(0, Identifier(0, 'vec4'))
+        self.structs['vec4'] = StructDecl(None, vec4_type, [
+            StructField(None, 'x', float_type, None),
+            StructField(None, 'y', float_type, None),
+            StructField(None, 'z', float_type, None),
+            StructField(None, 'w', float_type, None)
         ])
 
         # Int vectors
-        self.structs['ivec2'] = StructDecl(None, 'ivec2', [
-            StructField(None, 'x', 'int', None),
-            StructField(None, 'y', 'int', None)
+        self.structs['ivec2'] = StructDecl(None, Type(0, Identifier(0, 'ivec2')), [
+            StructField(None, 'x', int_type, None),
+            StructField(None, 'y', int_type, None)
         ])
-        self.structs['ivec3'] = StructDecl(None, 'ivec3', [
-            StructField(None, 'x', 'int', None),
-            StructField(None, 'y', 'int', None),
-            StructField(None, 'z', 'int', None)
+        self.structs['ivec3'] = StructDecl(None, Type(0, Identifier(0, 'ivec3')), [
+            StructField(None, 'x', int_type, None),
+            StructField(None, 'y', int_type, None),
+            StructField(None, 'z', int_type, None)
         ])
-        self.structs['ivec4'] = StructDecl(None, 'ivec4', [
-            StructField(None, 'x', 'int', None),
-            StructField(None, 'y', 'int', None),
-            StructField(None, 'z', 'int', None),
-            StructField(None, 'w', 'int', None)
+        self.structs['ivec4'] = StructDecl(None, Type(0, Identifier(0, 'ivec4')), [
+            StructField(None, 'x', int_type, None),
+            StructField(None, 'y', int_type, None),
+            StructField(None, 'z', int_type, None),
+            StructField(None, 'w', int_type, None)
         ])
 
         # Matrices
-        self.structs['mat2'] = StructDecl(None, 'mat2', [
-            StructField(None, 'col0', 'vec2', None),
-            StructField(None, 'col1', 'vec2', None)
+        self.structs['mat2'] = StructDecl(None, Type(0, Identifier(0, 'mat2')), [
+            StructField(None, 'col0', vec2_type, None),
+            StructField(None, 'col1', vec2_type, None)
         ])
-        self.structs['mat3'] = StructDecl(None, 'mat3', [
-            StructField(None, 'col0', 'vec3', None),
-            StructField(None, 'col1', 'vec3', None),
-            StructField(None, 'col2', 'vec3', None)
+        self.structs['mat3'] = StructDecl(None, Type(0, Identifier(0, 'mat3')), [
+            StructField(None, 'col0', vec3_type, None),
+            StructField(None, 'col1', vec3_type, None),
+            StructField(None, 'col2', vec3_type, None)
         ])
-        self.structs['mat4'] = StructDecl(None, 'mat4', [
-            StructField(None, 'col0', 'vec4', None),
-            StructField(None, 'col1', 'vec4', None),
-            StructField(None, 'col2', 'vec4', None),
-            StructField(None, 'col3', 'vec4', None)
+        self.structs['mat4'] = StructDecl(None, Type(0, Identifier(0, 'mat4')), [
+            StructField(None, 'col0', vec4_type, None),
+            StructField(None, 'col1', vec4_type, None),
+            StructField(None, 'col2', vec4_type, None),
+            StructField(None, 'col3', vec4_type, None)
         ])
 
     def analyse(self):
@@ -252,6 +260,7 @@ class SemanticAnalyser:
             expected_type = struct_def.fields[node.ident.method_name]
             value_type = self.get_node_type(node.value)
             if value_type != expected_type:
+                
                 fbusl_error(f"Type mismatch: Cannot assign {value_type} to {expected_type}", node.pos, self.file_path)
 
         else:
@@ -284,7 +293,8 @@ class SemanticAnalyser:
             if left != right:
                 fbusl_error(f"Operator '{node.op}' not supported between types '{left}' and '{right}'", node.pos, self.file_path)
 
-    def get_node_type(self, node: Node):
+    def get_node_type(self, node: Node)->Type:
+        print(node)
         if isinstance(node, Expression):
             return self.get_expression_type(node)
         elif isinstance(node, Return):
@@ -296,7 +306,8 @@ class SemanticAnalyser:
         elif isinstance(node, MethodIdentifier):
             return self.get_field_type(node)
         elif isinstance(node, Identifier):
-            return self.current_scope.lookup(node.name, node.pos).type
+            var = self.current_scope.lookup(node.name, node.pos)
+            return var.type
         elif isinstance(node, TypeCast):
             return node.type
         elif isinstance(node, TernaryExpression):
@@ -306,10 +317,13 @@ class SemanticAnalyser:
             if call_name in self.functions:
                 return self.functions[call_name].return_type
             if call_name in self.structs:
-                return call_name
+                
+                return Type(node.pos, Identifier(node.pos, call_name))
+            
             fbusl_error(f"'{call_name}' not defined", node.pos, self.file_path)
         else:
             fbusl_error(f"Cannot determine type of node {type(node).__name__}", getattr(node, 'pos', None), self.file_path)
+
 
     def get_field_type(self, node: MethodIdentifier):
         struct_var = self.current_scope.lookup(node.struct, node.pos)
@@ -326,8 +340,8 @@ class SemanticAnalyser:
             left = self.get_node_type(node.left)
             right = self.get_node_type(node.right)
             for i in range(2, 5):
-                if left == f'mat{i}' and right == f'vec{i}':
-                    return f'vec{i}'
+                if left.name.name == f'mat{i}' and right.name.name == f'vec{i}':
+                    return Type(node.pos, Identifier(node.pos, f'vec{i}'))
             
             if left == right:
                 return left

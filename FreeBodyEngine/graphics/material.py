@@ -72,10 +72,10 @@ class MaterialInjector(Injector):
             if len(tex_nodes) == 0:
                 main.body.append(Set(0, Identifier(0, property), Identifier(0, property.upper())))
             
-            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Texture'), 'sampler2D', None))
-            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Color'), 'vec4', None))
-            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_UVRect'), 'vec4', None))
-            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_useTexture'), 'bool', None))
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Texture'), Type(0, Identifier(0, 'sampler2D')), None))
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Color'), Type(0, Identifier(0, 'vec4')), None))
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_UVRect'), Type(0, Identifier(0, 'vec4')), None))
+            self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_useTexture'), Type(0, Identifier(0, 'bool')), None))
 
             tex_nodes = self.find_nodes('name', property.upper())
 

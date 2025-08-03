@@ -1,5 +1,3 @@
-# Simple Shader Language Compiler: Lexer + Parser
-
 from typing import List
 import re
 from FreeBodyEngine.graphics.fbusl.ast_nodes import *
@@ -23,7 +21,7 @@ TOKEN_TYPES = [
     ("IDENT", r"[a-zA-Z_][a-zA-Z0-9_]*"),
     ("FLOAT", r"\d+\.\d+"),
     ("INT", r"\d+"),
-    ("SYMBOL", r"[{}():,\.]"),
+    ("SYMBOL", r"[{}()[\]:,\.]"),
     ("OPERATOR", r"(\+=|-=|\*=|/=|=|\+|-|\*|/)"),
     ("WHITESPACE", r"[ \t]+"),
     ("COMMENT", r"#.*"),
@@ -34,11 +32,9 @@ def tokenize(code: str, file_path) -> List[Token]:
     lines = code.splitlines()
 
     for line_num, line in enumerate(lines, start=1):
-        # Skip empty or comment-only lines
         if re.match(r"^\s*$", line) or re.match(r"^\s*#", line):
             continue
 
-        # Handle indentation
         indent_match = re.match(r"[ \t]*", line)
         indent_str = indent_match.group(0)
         indent = len(indent_str.replace('\t', '    '))  # convert tabs to spaces
@@ -184,10 +180,8 @@ class FBUSLParser:
         name = self.expect('IDENT')
         self.expect('SYMBOL', ':')
 
-        if self.peek().kind == "TYPE":
-            type = self.expect('TYPE').value
-        else:
-            type = self.expect('IDENT').value
+        type = self.parse_type()
+        print(type)
 
         return UniformDecl(name.pos, Identifier(name.pos, name.value), type, precision)
 
@@ -222,10 +216,7 @@ class FBUSLParser:
         name = self.expect('IDENT')
         self.expect('SYMBOL', ':')
 
-        if self.peek().kind == "TYPE":
-            type = self.expect('TYPE').value
-        else:
-            type = self.expect('IDENT').value
+        type = self.parse_type()
 
         ident = Identifier(name.pos, name.value)
         if inout_type == "in":
@@ -237,6 +228,22 @@ class FBUSLParser:
         pos = self.expect("KEYWORD", 'return').pos
         val = self.parse_expression()
         return Return(pos, val)
+
+    def parse_type(self, allow_array=True):
+        if self.peek().kind == "TYPE":
+            type_name = self.expect('TYPE')
+        else:
+            type_name = self.expect('IDENT')
+
+        if allow_array:
+            if self.peek().kind == "SYMBOL" and self.peek().value == "[":
+                self.expect("SYMBOL", "[")
+                size_token = self.expect("INT")
+                size = int(size_token.value)
+                self.expect("SYMBOL", "]")
+                return Type(type_name.pos, Identifier(type_name.pos, type_name.value), size)
+        
+        return Type(type_name.pos, Identifier(type_name.pos, type_name.value))
 
     def parse_function(self):
         self.expect("KEYWORD", "def")
@@ -253,7 +260,7 @@ class FBUSLParser:
         return_type = None
         if self.peek().kind == "ARROW":
             self.expect("ARROW", "->")
-            return_type = self.expect("TYPE").value
+            return_type = self.parse_type(False)
 
         self.expect("SYMBOL", ":")
         self.expect("NEWLINE")
@@ -271,7 +278,8 @@ class FBUSLParser:
     def parse_param(self) -> Param:
         name = self.expect('IDENT')
         self.expect("SYMBOL", ":")
-        type = self.consume().value
+        type = self.parse_type()
+
         return Param(name.pos, Identifier(name.pos, name.value), type)
 
     def parse_expression(self):
@@ -354,10 +362,7 @@ class FBUSLParser:
 
     def parse_var_decl(self, name, precision):
         self.expect("SYMBOL", ":")
-        if self.peek().kind == "TYPE":
-            type = self.expect('TYPE').value
-        else:
-            type = self.expect('IDENT').value
+        type = self.parse_type()
 
         val = None
         if self.peek().kind == 'OPERATOR' and self.peek().value == "=":
@@ -412,12 +417,11 @@ class FBUSLParser:
         name = self.expect('IDENT')
         self.expect("SYMBOL", ":")
 
-        if self.peek().kind == "TYPE":
-            type = self.expect('TYPE').value
-        else:
-            type = self.expect('IDENT').value
+        type = self.parse_type()
 
         return StructField(name.pos, Identifier(name.pos, name.value), type, precision)
+
+    
 
     def parse_buffer(self) -> Buffer:
         self.expect('KEYWORD', 'buffer')
@@ -430,16 +434,16 @@ class FBUSLParser:
             self.expect('INDENT')
             field_name = self.expect('IDENT')
             self.expect("SYMBOL", ":")
-            if self.peek().kind == "IDENT":
-                field_type = self.expect('IDENT').value
-            else:
-                field_type = self.expect('TYPE').value
+            
+            field_type = self.parse_type()
+            
             fields.append(BufferField(field_name.pos, Identifier(field_name.pos, field_name.value), field_type))
 
             self.expect("NEWLINE")
 
         self.expect("DEDENT")
-        
+
+
 
         return Buffer(name.pos, Identifier(name.pos, name.value), fields)
 

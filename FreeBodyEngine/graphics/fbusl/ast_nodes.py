@@ -62,6 +62,23 @@ class Buffer(Node):
     def get_debug(self):
         return (f"Buffer binding={self.binding}", self.name, self.fields)
 
+class Type(Node):
+    def __init__(self, pos, name: Identifier, length=1):
+        super().__init__(pos)
+        self.name = name
+        self.length = length
+    
+    def __eq__(self, other):
+        if isinstance(other, Type):
+            return other.name.name == self.name.name and other.length == self.length
+
+    def __str__(self):
+        if not self.length > 1:
+            return f"Type({self.name.name})"
+        else:
+            return f"Type({self.name.name})[{self.length}]"
+
+
 class BufferField(Node):
     def __init__(self, pos, name: Identifier, type: str):
         super().__init__(pos)

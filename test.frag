@@ -50,10 +50,6 @@ layout(location = 3) out vec4 roughness;
 
 layout(location = 4) out vec4 metallic;
 
-layout(std140) uniform testBuffer {
-  vec4 vector;
-};
-
 layout(location = 0) in vec2 uv;
 
 layout(location = 1) in vec3 normals;

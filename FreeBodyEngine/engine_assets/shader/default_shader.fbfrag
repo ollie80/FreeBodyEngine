@@ -10,9 +10,6 @@ roughness: vec4
 @output
 metallic: vec4
 
-buffer testBuffer:
-    vector: vec4
-
 @input
 uv: vec2
 @input
@@ -20,3 +17,4 @@ normals: vec3
 
 def main() -> void:
     albedo = texture(ALBEDO, 1.0-uv)
+    

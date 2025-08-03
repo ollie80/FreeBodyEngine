@@ -3,9 +3,10 @@ from FreeBodyEngine.math import Vector
 from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.graphics.fbusl.injector import Injector
 import numpy as np
-from FreeBodyEngine import get_main, warning, error
+from FreeBodyEngine import get_main, warning, error, get_service
 from FreeBodyEngine.utils import abstractmethod
 from dataclasses import dataclass
+
 import math
 
 from typing import TYPE_CHECKING
@@ -185,18 +186,18 @@ class TilemapRenderer(Node2D):
         self.parent: Tilemap
 
     def on_initialize(self):
-        self.renderer = self.scene.main.renderer
+        self.renderer: Renderer = get_service('renderer')
 
         chunk_world_size = self.parent.chunk_size * self.parent.tile_size
-        self.mesh = get_main().renderer.mesh_class.generate_quad(chunk_world_size, chunk_world_size)
+        self.mesh = self.renderer.mesh_class.generate_quad(chunk_world_size, chunk_world_size)
 
 
-        self.tilemap_buffer = self.renderer.create_buffer(self.parent.get_layer_data())
+        self.tilemap_buffer = self.renderer.create_buffer(np.array([]))
         
         tile_bytes = 16 # position (8 bytes) + image id (4 bytes) + spritesheet id (4 bytes)
         chunk_bytes = 16 + (tile_bytes * self.parent.chunk_size) # position (8 bytes) + padding (8 bytes) + tiles 
         
-        max_ubo_size = get_main().renderer.buffer_class.get_max_size()
+        max_ubo_size = self.renderer.buffer_class.get_max_size()
 
         self.max_rendered_chunks = math.floor(max_ubo_size / chunk_bytes)
 
