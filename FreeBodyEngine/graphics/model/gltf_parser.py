@@ -135,25 +135,25 @@ class GLTFParser:
         else:
             raise ValueError("Image has no bufferView or URI")
 
-    def build_model(self, model_name: str, pipeline: GraphicsPipeline, renderer: Renderer) -> Model:
-        if model_name == None:
+    def build_model(self, model_name: str, pipeline: GraphicsPipeline, renderer: Renderer, scale: tuple[int, int, int] = None) -> Model:
+        if model_name is None:
             print(self.gltf['meshes'])
             model_name = self.gltf['meshes'][0].get('name')
 
         model = self.gltf['meshes'][self.get_model_index(model_name)]
-        
+
         meshes = {}
         materials = {}
         textures = {}
-
         material_map = {}
-        
-        i = 0
+
+        # Load all textures
         for texture_index in range(len(self.gltf['images'])):
             data = self.get_image_data(texture_index)
             textures[texture_index] = renderer.texture_manager._create_standalone_texture(data)
 
-        for material in self.gltf['materials']:
+        # Load all materials
+        for i, material in enumerate(self.gltf['materials']):
             data = {
                 'albedo': [0.0, 0.0, 0.0, 1.0],
                 'normal': [0.0, 0.0, 0.0, 1.0],
@@ -169,32 +169,35 @@ class GLTFParser:
                 tex = textures[pbr['baseColorTexture']['index']]
                 data['albedo'] = tex
 
-            materials[material.get('name', f'material_{i}')] = pipeline.create_material(data)    
-            i += 1
+            materials[material.get('name', f'material_{i}')] = pipeline.create_material(data)
 
-        i = 0
-        for mesh in model['primitives']:
+        # Meshes
+        for i, mesh in enumerate(model['primitives']):
             pos_accessor = mesh['attributes']['POSITION']
             positions = np.array(self.get_accessor_data(pos_accessor), np.float32)
-            
-            normal_accessor = mesh['attributes']['NORMAL']
-            normals = np.array(self.get_accessor_data(normal_accessor), np.float32)
-            
-            uv_accessor = mesh['attributes']['TEXCOORD_0']
-            uvs = np.array(self.get_accessor_data(uv_accessor), np.float32)
+
+            # ✅ Apply scale here
+            if scale:
+                positions *= np.array(scale, dtype=np.float32)
+
+            normal_accessor = mesh['attributes'].get('NORMAL')
+            normals = np.array(self.get_accessor_data(normal_accessor), np.float32) if normal_accessor is not None else None
+
+            uv_accessor = mesh['attributes'].get('TEXCOORD_0')
+            uvs = np.array(self.get_accessor_data(uv_accessor), np.float32) if uv_accessor is not None else None
 
             index_accessor = mesh['indices']
             indices = np.array(self.get_accessor_data(index_accessor), np.int32)
 
             mesh_name = f"Mesh_{i}"
-            
-            material_index = mesh['material']
-            material = self.gltf['materials'][material_index]
-            material_name = material.get('name', f'material_{material_index}')
 
-            meshes[mesh_name] = (renderer.mesh_class(positions, normals, uvs, indices))
+            material_index = mesh.get('material')
+            material_name = "default"
+            if material_index is not None:
+                material = self.gltf['materials'][material_index]
+                material_name = material.get('name', f'material_{material_index}')
+
+            meshes[mesh_name] = renderer.mesh_class(positions, normals, uvs, indices)
             material_map[mesh_name] = material_name
 
-            i += 1
         return Model(meshes, material_map, materials)
-

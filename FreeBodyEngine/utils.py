@@ -81,5 +81,5 @@ def load_shader(path: str):
 def load_sprite(path: str):
     return get_service('files').load_sprite(path)
 
-def load_model(path: str, model_name: str = None):
-    return get_service('files').load_model(path, model_name)
+def load_model(path: str, model_name: str = None, scale=None):
+    return get_service('files').load_model(path, model_name, scale)

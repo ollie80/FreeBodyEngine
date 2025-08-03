@@ -17,7 +17,7 @@ TOKEN_TYPES = [
     ("ARROW", r"->"),
     ("DECORATOR", r"@(?:uniform|input|output|define)"),
     ("PRECISION", r"(low|med|high)"),
-    ("KEYWORD", r"\b(def|return|struct|if|elif|else|not|and|or)\b"),
+    ("KEYWORD", r"\b(def|return|struct|if|buffer|elif|else|not|and|or)\b"),
     ("COMPARISON", r"(==|!=|<=|>=|<|>)"),
     ("TYPE", r"\b(void|float|int|bool|sampler2D|sampler3D)\b"),
     ("IDENT", r"[a-zA-Z_][a-zA-Z0-9_]*"),
@@ -125,6 +125,7 @@ class FBUSLParser:
         tree = Tree()
         while self.index < len(self.tokens):
             tree.children.append(self.parse_next())
+
         tree.children = [c for c in tree.children if c is not None]
         return tree
 
@@ -141,6 +142,8 @@ class FBUSLParser:
                 return self.parse_return()
             elif tok.value in ['if', 'elif', 'else']:
                 return self.parse_if_statement()
+            elif tok.value == "buffer":
+                return self.parse_buffer()
         elif tok.kind == "TYPE":
             return self.parse_typecast()
         elif tok.kind in ["PRECISION", "IDENT"]:
@@ -415,6 +418,31 @@ class FBUSLParser:
             type = self.expect('IDENT').value
 
         return StructField(name.pos, Identifier(name.pos, name.value), type, precision)
+
+    def parse_buffer(self) -> Buffer:
+        self.expect('KEYWORD', 'buffer')
+        name = self.expect('IDENT')
+        self.expect('SYMBOL', ':')
+        self.expect("NEWLINE")
+
+        fields = []
+        while self.peek().kind != "DEDENT":
+            self.expect('INDENT')
+            field_name = self.expect('IDENT')
+            self.expect("SYMBOL", ":")
+            if self.peek().kind == "IDENT":
+                field_type = self.expect('IDENT').value
+            else:
+                field_type = self.expect('TYPE').value
+            fields.append(BufferField(field_name.pos, Identifier(field_name.pos, field_name.value), field_type))
+
+            self.expect("NEWLINE")
+
+        self.expect("DEDENT")
+        
+
+        return Buffer(name.pos, Identifier(name.pos, name.value), fields)
+
 
     def parse_struct(self) -> StructDecl:
         self.expect('KEYWORD', 'struct')

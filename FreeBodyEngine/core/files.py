@@ -190,7 +190,7 @@ class FileManager(Service):
 
         return Sprite(image, mat, get_service('renderer'), visible, z)
 
-    def load_model(self, path: str, model_name: str = None) -> Model:
+    def load_model(self, path: str, model_name: str = None, scale=None) -> Model:
         s = path.split('.')
         file_type = s[len(s)-1]
         if file_type == 'gltf':
@@ -200,7 +200,7 @@ class FileManager(Service):
             bin_data = self.load_data(bin_path, True)
             
             parser = GLTFParser(data, bin_data)
-            return parser.build_model(model_name, get_service('graphics'), get_service('renderer'))
+            return parser.build_model(model_name, get_service('graphics'), get_service('renderer'), scale)
 
 
         elif file_type == 'glb':

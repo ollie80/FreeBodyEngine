@@ -53,12 +53,32 @@ class MethodIdentifier(Identifier):
     def get_debug(self):
         return (f"MethodIdentifier('{self.method_name}')", self.struct)
 
+class Buffer(Node):
+    def __init__(self, pos, name: Identifier, fields: list):
+        super().__init__(pos)
+        self.name = name
+        self.fields = fields
+    
+    def get_debug(self):
+        return (f"Buffer binding={self.binding}", self.name, self.fields)
+
+class BufferField(Node):
+    def __init__(self, pos, name: Identifier, type: str):
+        super().__init__(pos)
+        self.name = name
+        self.type = type
+
+    def get_debug(self):
+        return (f"BufferField {self.type}", self.name)
+
+
 class BinOp(Expression):
     def __init__(self, pos: int, left, op, right):
         super().__init__(pos)
         self.left = left
         self.op = op
         self.right = right
+
     def get_debug(self):
         return (f"BinOp('{self.op}')", self.left, self.right)
 

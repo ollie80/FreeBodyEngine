@@ -17,13 +17,10 @@ class UBOBuffer(Buffer):
 
         glBindBuffer(GL_UNIFORM_BUFFER, 0)
 
-    def bind(self, slot: int):
-        """
-        Bind the UBO to the specified uniform binding point.
-        This allows shaders with 'layout(binding = slot)' to access this UBO.
-        """
-        glBindBufferBase(GL_UNIFORM_BUFFER, slot, self.ubo)
-        self._current_slot = slot
+    def bind(self, point: int):
+
+        glBindBufferBase(GL_UNIFORM_BUFFER, point, self.ubo)
+        self._current_slot = point
 
     def unbind(self):
         glBindBufferBase(GL_UNIFORM_BUFFER, self._current_slot, 0)
@@ -41,8 +38,12 @@ class UBOBuffer(Buffer):
         glBufferSubData(GL_UNIFORM_BUFFER, 0, new_size, new_data)
         glBindBuffer(GL_UNIFORM_BUFFER, 0)
 
+    def get_data(self):
+        return self.data
+
     def get_max_size(self) -> int:
         return glGetIntegerv(GL_MAX_UNIFORM_BLOCK_SIZE)
+
 
     def update(self, data: np.ndarray, offset: int = 0):
         glBindBuffer(GL_UNIFORM_BUFFER, self.ubo)

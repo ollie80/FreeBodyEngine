@@ -202,15 +202,14 @@ class TilemapRenderer(Node2D):
 
         self.spritesheet_buffer = self.renderer.create_buffer(self.parent.get_spritesheet_data())
 
-        self.material = get_main().files.load_material('engine/graphics/tilemap.fbmat')
+        self.material: Material = get_main().files.load_material('engine/graphics/tilemap.fbmat')
 
     def draw(self, camera):
         self.spritesheet_buffer.set_data(self.parent.get_spritesheet_data())
-        self.spritesheet_buffer.bind(0)
+        self.material.shader.set_buffer('')
 
         for layer in self.parent.layers:
             self.tilemap_buffer.set_data(self.parent.get_layer_data(self.parent.layers[layer]))
-            self.tilemap_buffer.bind(1)
 
             self.renderer.draw_mesh_instanced(self.mesh, len(self.parent.layers[layer].chunks), self.material, self.world_transform, camera)
 

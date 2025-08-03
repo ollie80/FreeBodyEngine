@@ -8,6 +8,10 @@ class Buffer:
         pass
 
     @abstractmethod
+    def get_data(self):
+        pass
+
+    @abstractmethod
     def get_max_size(self) -> int:
         "Returns the max size of the buffer in bytes."
         pass
