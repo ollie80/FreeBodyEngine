@@ -6,12 +6,22 @@ be easily compiled into them.
 
 import sys
 
-def fbusl_error(msg, line, file_path = None):
-    f = file_path
-    if file_path == None:
+
+class Position:
+    def __init__(self, line: int = 0, file: str = None):
+        self.line = line
+        self.file = file
+
+    def __repr__(self):
+        return f"{self.line}"
+
+def fbusl_error(msg, position: Position=Position()):
+    f = position.file
+    if position.file == None:
         f = "Unkown File"
-    print(f'\033[91mFBUSL ERROR: {msg} in file "{f}", line {line}.\033[0m')
+    print(f'\033[91mFBUSL ERROR: {msg} in file "{f}", line {position.line}.\033[0m')
     sys.exit()
+
 
 from FreeBodyEngine.graphics.fbusl import parser
 from FreeBodyEngine.graphics.fbusl import ast_nodes

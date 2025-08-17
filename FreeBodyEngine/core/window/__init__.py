@@ -1,4 +1,4 @@
-from FreeBodyEngine.core.window.generic import Window, Cursor
+from FreeBodyEngine.core.window.generic import Window, Cursor, WINDOW_RESIZE
 from FreeBodyEngine import get_main, warning, get_flag, HEADLESS
 import sys
 
@@ -14,12 +14,13 @@ def get_window() -> type[Window]:
         from FreeBodyEngine.core.window.headless import HeadlessWindow
         return HeadlessWindow
 
+    if get_flag("WIN32_WINDOW", False):
+        from FreeBodyEngine.core.window.win32 import Win32Window
+        return Win32Window
+    
     from FreeBodyEngine.core.window.glfw import GLFWWindow
     return GLFWWindow
     
-    if platform == 'win32':
-        from FreeBodyEngine.core.window.win32 import Win32Window
-        return Win32Window
     
 
 
@@ -43,4 +44,4 @@ def set_cursor(cursor: Cursor):
 
 
 
-__all__ = ["Window", "Cursor"]
+__all__ = ["Window", "Cursor", "WINDOW_RESIZE"]

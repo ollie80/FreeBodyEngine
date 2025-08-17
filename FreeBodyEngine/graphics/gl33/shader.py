@@ -86,14 +86,13 @@ class GLShader(Shader):
 
         for i in range(count):
             name, size, type = glGetActiveUniform(self._shader, i)
-            name = name.tobytes().decode('utf-8').rstrip('\x00')
+            name = name.decode('utf-8').rstrip('\x00')
             location = glGetUniformLocation(self._shader, name)
 
 
             self.uniforms[name] = GLUniform(location, size, type)
 
     def check_val_type(self, val: any, gl_type: int, name: str) -> bool:
-
         def is_vec_of_length(obj, length, types=(int, float)):
             if isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj):
                 return True
@@ -253,14 +252,13 @@ class GLShader(Shader):
     def set_buffer(self, name: str, buffer: DataBuffer):
         if name in self.data['buffers']:
 
-            block_index = glGetUniformBlockIndex(self._shader, name.encode('utf-8'))
+            block_index = glGetUniformBlockIndex(self._shader, self.data['buffers'][name][1].encode('utf-8'))
             
-            binding_point = self.data['buffers'][name]
+            binding_point = self.data['buffers'][name][0]
             glUniformBlockBinding(self._shader, block_index, binding_point)
             
             buffer.bind(binding_point)
             
-        
         else:
             warning(f'Shader {self}, does not have buffer of name "{name}".')
 
@@ -268,24 +266,38 @@ class GLShader(Shader):
         return self.uniforms[name]
 
     def use(self):
+        glUseProgram(self._shader)
+
         for name in self.uniforms: # reload texture slots
             if self.uniforms[name].type == GL_SAMPLER_2D:
-                img = self.uniform_cache[name]
-                if img != None and isinstance(img, Image):
-                    glUniform1i(self.uniforms[name].location, img.texture.use())
-                if img != None and isinstance(img, Texture):
-                    glUniform1i(self.uniforms[name].location, img.use())
+                if self.uniforms[name].size == 1:
+                    img = self.uniform_cache[name]
+                    if img != None and isinstance(img, Image):
+                        glUniform1i(self.uniforms[name].location, img.texture.use())
+                    if img != None and isinstance(img, Texture):
+                        glUniform1i(self.uniforms[name].location, img.use())
+                else:
+                    images = self.uniform_cache[name]
+                    locations = []
+                    if images != None:
+                        for img in images:
+                            if isinstance(img, Image):
+                                locations.append(img.texture.use())
+                            if isinstance(img, Texture):
+                                locations.append(img.use())
+                        glUniform1i(self.uniforms[name].location, locations)
+                            
 
-        glUseProgram(self._shader)
         
 
 class GLGenerator(Generator):
     """
     GLSL implementation of the FBUSL code generator. 
     """
-    def __init__(self, tree, analyser: SemanticAnalyser, buffer_index: int):
+    def __init__(self, tree, analyser: SemanticAnalyser, buffer_index: int, shader_type):
         self.tree: Tree = tree
         self.analyser = analyser
+        self.shader_type = shader_type
         self.precisions = {"high": "highp", "med": "mediump", "low": "lowp"}
         self.default_precision = "high"
         self.input_index = -1
@@ -305,6 +317,18 @@ class GLGenerator(Generator):
         if isinstance(node, UniformDecl):
             return self.generate_uniform(node)
         
+        elif isinstance(node, (Get, MethodGet)):
+            return self.generate_get(node)
+
+        elif isinstance(node, And):
+            return self.generate_and(node)
+
+        elif isinstance(node, Or):
+            return self.generate_or(node)
+
+        elif isinstance(node, Not):
+            return self.generate_not(node)
+
         elif isinstance(node, InputDecl):
             return self.generate_input(node)
         
@@ -352,7 +376,7 @@ class GLGenerator(Generator):
         
         elif isinstance(node, Condition):
             return self.generate_condition(node)
-
+    
         elif isinstance(node, TypeCast):
             return self.generate_typecast(node)
 
@@ -361,14 +385,36 @@ class GLGenerator(Generator):
 
         elif isinstance(node, Type):
             return self.generate_type(node)
-
+        
+        elif isinstance(node, str):
+            return node
+        
         return None
     
-    def generate_type(self, node: Type):
-        if node.length == 1:
-            return f"{self.generate_node(node.name)}"
+    def generate_or(self, node: Or):
+        return f"({self.generate_node(node.left)} || {self.generate_node(node.right)})"
+
+    def generate_and(self, node: And):
+        return f"({self.generate_node(node.left)} && {self.generate_node(node.right)})"
+
+    def generate_not(self, node: Not):
+        return f"!{self.generate_node(node.node)}"
+    
+    def generate_get(self, node: Get | MethodGet):
+        if isinstance(node, Get):
+            if node.array_access:
+                return f"{self.generate_node(node.name)}[{self.generate_node(node.array_index)}]"
+            else:
+                return f"{self.generate_node(node.name)}"
         else:
-            return f"{self.generate_node(node.name)}[{node.length}]"
+            if node.array_access:
+                return f'{self.generate_node(node.struct_name)}.{self.generate_node(node.name)}[{self.generate_node(node.array_index)}]'
+            else:
+                return f'{self.generate_node(node.struct_name)}.{self.generate_node(node.name)}'
+            
+    
+    def generate_type(self, node: Type):
+        return f"{self.generate_node(node.name)}"
 
     def generate_call(self, node: Call):
         s = ""
@@ -376,12 +422,12 @@ class GLGenerator(Generator):
             s += self.generate_node(arg.val)
             if i < len(node.args) - 1:
                 s += ', '
-        return f"{node.name}({s})"
+        return f"{self.generate_node(node.name)}({s})"
 
     def generate_identifier(self, node: Identifier):
         if node.name == "VERTEX_POSITION":
             s = "gl_Position"
-        elif node.name == "INSTANCE_ID":
+        elif node.name == "INSTANCE_ID" and self.shader_type == 'vert':
             s = 'gl_InstanceID'
         else:
             s = node.name
@@ -396,32 +442,48 @@ class GLGenerator(Generator):
 
     def generate_var(self, node: VarDecl):
         prec = f"{node.precision} " if node.precision else ""
-        return f"{prec}{self.generate_node(node.type)} {self.generate_node(node.name)} = {self.generate_node(node.val)}"
+        array_access = ""
+        if node.type.length > 1:
+            array_access = f"[{node.type.length}]"
+        return f"{prec}{self.generate_node(node.type)} {self.generate_node(node.name)}{array_access} = {self.generate_node(node.val)}"
 
     def generate_input(self, node: InputDecl) -> str:
         self.input_index += 1
         prec = f" {node.precision} " if node.precision else " "
-        return f"\nlayout(location = {self.input_index}) in{prec}{self.generate_node(node.type)} {node.name.name};\n"
+        array_access = ""
+        if node.type.length > 1:
+            array_access = f"[{node.type.length}]"
+        return f"\nlayout(location = {self.input_index}) {prec}in {self.generate_node(node.type)} {node.name.name}{array_access};\n"
     
     def generate_output(self, node: OutputDecl) -> str:
         self.output_index += 1
         prec = f" {node.precision} " if node.precision else " "
-        return f"\nlayout(location = {self.output_index}) out{prec}{self.generate_node(node.type)} {node.name.name};\n"
+        array_access = ""
+        if node.type.length > 1:
+            array_access = f"[{node.type.length}]"
+        return f"\nlayout(location = {self.output_index}) {prec}out {self.generate_node(node.type)} {node.name.name}{array_access};\n"
     
     def generate_buffer(self, node: Buffer):
         s = ""
         name = self.generate_node(node.name)
-        s += f"\nlayout(std140) uniform {name} " + "{\n"
+        s += f"\nlayout(std140) uniform _ENGINE_{name}_BUFFER " + "{\n"
         
         for field in node.fields:
             s += "  " + self.generate_buffer_field(field) + "\n" 
         
-        s += "};\n"
+        s += "}" + f" {name};\n"
+
+        self.data['buffers'][name] = (self.buffer_index, f"_ENGINE_{name}_BUFFER")
+        self.buffer_index += 1
         
         return s
 
     def generate_buffer_field(self, field: BufferField) -> str:
-        return f"{self.generate_node(field.type)} {self.generate_node(field.name)};"
+        array_access = ""
+
+        if field.type.length > 1:
+            array_access = f"[{field.type.length}]"
+        return f"{self.generate_node(field.type)} {self.generate_node(field.name)}{array_access};"
 
     def generate_uniform(self, node: UniformDecl) -> str:
         prec = f" {node.precision} " if node.precision else " "
@@ -443,7 +505,7 @@ class GLGenerator(Generator):
         body = ""
         for b_node in node.body:
             body += f"    {self.generate_node(b_node)};\n"
-
+        
         if isinstance(node, ElseIfStatement):
             return f"else if ({self.generate_node(node.condition)})" + "{\n" + body + "    }"
 
@@ -463,16 +525,31 @@ class GLGenerator(Generator):
         r = "\n"
         params = ""
         for i, param in enumerate(node.params):
-            params += f"{self.generate_node(param.type)} {param.name}"
+            params += f"{self.generate_node(param.type)} {self.generate_node(param.name)}"
             if i < len(node.params) - 1:
                 params += ", "
 
         return_type = self.generate_node(node.return_type) if node.return_type is not None else "void"
         r += f"{return_type} {node.name.name}({params})" + " {\n"
         
+        i = 0
         for b_node in node.body:
-            r += f"    {self.generate_node(b_node)};\n"
-        r += "};"
+            if isinstance(b_node, (IfStatement, ElseIfStatement)):
+                if i < len(node.body) - 1:
+                    next = node.body[i+1]
+                else:
+                    next = None
+
+                if isinstance(next, (ElseIfStatement, ElseStatement)):
+                    r += f"    {self.generate_node(b_node)};\n"
+                else:
+                    r += f"    {self.generate_node(b_node)}\n"
+
+            else:
+                r += f"    {self.generate_node(b_node)};\n"
+
+        i+=1
+        r += "}"
 
         return r
 
@@ -481,14 +558,19 @@ class GLGenerator(Generator):
 
     def generate_method(self, node: StructField):
         prec = f"{self.precisions[node.precision]} " if node.precision else ""
-        return f"   {prec}{self.generate_node(node.type)} {node.name};"
+        array_access = ""
+        if node.type.length > 1:
+            array_access = f"[{node.type.length}]"
+        return f"   {prec}{self.generate_node(node.type)} {self.generate_node(node.name)}{array_access};"
 
     def generate_struct(self, node: StructDecl) -> str:
         r = "\n"
         methods = ""
+        
         for method in node.methods:
             methods += f"{self.generate_method(method)}\n"
-        r += f"struct {node.name}" + " {\n"
+        
+        r += f"struct {self.generate_node(node.name)}" + " {\n"
         r += methods
         r += "};\n"
         

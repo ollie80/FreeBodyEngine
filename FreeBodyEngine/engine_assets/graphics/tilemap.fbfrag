@@ -1,15 +1,19 @@
 @define
-CHUNK_SIZE _ENGINE_CHUNK_SIZE
+CHUNK_SIZE = _ENGINE_CHUNK_SIZE
+@define
+TILE_SIZE = _ENGINE_TILE_SIZE
+@define
+SPRITESHEETS = _ENGINE_MAX_SPRITESHEETS
 
 struct Spritesheet:
     size: vec2
     tex_index: int
 
 buffer SpritesheetData:
-    Spritesheet spritesheets[]
+    spritesheets: Spritesheet[_ENGINE_MAX_SPRITESHEETS]
 
 @uniform
-SpritesheetTextures: sampler2D[_ENGINE_MAX_SPRITESHEET_TEXTURES]
+spritesheetTextures: sampler2D[_ENGINE_MAX_SPRITESHEET_TEXTURES]
 
 struct Tile:
     position: vec2
@@ -18,14 +22,46 @@ struct Tile:
 
 struct Chunk:
     position: vec2
-    _padding: float
-    _padding2: float
     tiles: Tile[_ENGINE_CHUNK_SIZE]
 
 buffer Chunks:
-    chunks: Chunk[_ENGINE_MAX_CHUNKS]
+    chunk_array: Chunk[_ENGINE_MAX_CHUNKS]
+
+
+@output
+albedo: vec4
+
+@input
+uvs: vec2
+@input
+normal: vec3
+@input
+flat INSTANCE_ID: int
+
+def get_sampler_from_array(index: int, uv: vec2) -> vec4:
+    if index < 10:
+        if index == 0:
+            return texture(spritesheetTextures[0], uv)
+        if index == 1:
+            return texture(spritesheetTextures[1], uv)
+
+def get_current_tile(chunk: Chunk, uv: vec2) -> Tile:
+    tile_x: int = int(floor(uv.x * float(CHUNK_SIZE)))
+    tile_y: int = int(floor(uv.y * float(CHUNK_SIZE)))
+
+    tile_index_y: int = CHUNK_SIZE * tile_y
+    tile_index: int = tile_index_y + tile_x
+    
+    return chunk.tiles[tile_index]
 
 def main():
-    Chunk current_chunk = chunks[INSTANCE_ID]
+    current_chunk: Chunk = Chunks.chunk_array[INSTANCE_ID]
+    
+    albedo = vec4(0.0)
 
+    tile: Tile = get_current_tile(current_chunk, uvs)     
 
+    if tile.image_id >= 0 and tile.spritesheet_index >= 0 and tile.spritesheet_index < SPRITESHEETS:
+        albedo = get_sampler_from_array(tile.spritesheet_index, uvs)
+    else:
+        albedo = vec4(0.0, 0.0, 1.0, 1.0)

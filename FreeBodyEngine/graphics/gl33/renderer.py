@@ -56,13 +56,14 @@ class GL33Renderer(Renderer):
         width, height = self.window.size
         glViewport(0, 0, width, height)
         
+    def create_buffer(self, data):
+        return UBOBuffer(data)
 
-    def get_max_buffer_size(self):
+    def get_max_buffer_size(self) -> int:
         return UBOBuffer.get_max_size()
 
-    def resize(self):
-        width, height = self.window.size
-        glViewport(0, 0, width, height)
+    def resize(self, size: tuple[int, int]):
+        glViewport(0, 0, size[0], size[1])
 
     def load_image(self, texture: "Texture"):
         return GLImage(texture)
@@ -87,14 +88,10 @@ class GL33Renderer(Renderer):
     def draw_mesh_instanced(self, mesh, instances, material, transform, camera):
         material.use(transform, camera)
         material.shader.use()
-        if material.render_mode == "wireframe":
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
 
         glBindVertexArray(mesh.vao)
         glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), instances)
 
-        if material.render_mode == "wireframe":
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
         glBindVertexArray(0)
 

@@ -16,5 +16,5 @@ uv: vec2
 normals: vec3
 
 def main() -> void:
-    albedo = texture(ALBEDO, 1.0-uv)
+    albedo = vec4(1.0, 0.0, 0.0, 1.0)
     

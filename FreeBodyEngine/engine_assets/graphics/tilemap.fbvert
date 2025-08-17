@@ -1,18 +1,63 @@
-#version 330 core 
-#define CHUNK_SIZE _ENGINE_CHUNK_SIZE
+@define
+CHUNK_SIZE = _ENGINE_CHUNK_SIZE 
+@define
+TILE_SIZE = _ENGINE_TILE_SIZE
 
-struct Tile {
-    vec2 position;
-    int image_id;
-    int spritesheet_id;
-}
+struct Tile:
+    position: vec2
+    image_id: int
+    spritesheet_index: int
 
-struct Chunk {
-    vec2 position;
-    Tile tiles[_ENGINE_CHUNK_SIZE];
-}
+struct Chunk:
+    position: vec2
+    tiles: Tile[_ENGINE_CHUNK_SIZE]
 
-layout(std140, binding = 1) uniform Chunks {
-    Chunk chunks[64];
-};
+buffer Chunks:
+    chunk_array: Chunk[_ENGINE_MAX_CHUNKS]
 
+@uniform
+view: mat4
+@uniform
+proj: mat4
+@uniform
+model: mat4
+
+@input
+vertex: vec3
+@input
+uvs: vec2
+@input
+normals: vec3
+
+@output
+uv: vec2
+@output
+normal: vec3
+
+@output
+flat OUT_INSTANCE_ID:  int
+
+def main():
+    uv = uvs
+    normal = normals
+    OUT_INSTANCE_ID = INSTANCE_ID
+
+    current_chunk: Chunk = Chunks.chunk_array[INSTANCE_ID]
+    chunk_position: vec2 = current_chunk.position
+
+    chunk_world_size: float = float(CHUNK_SIZE) * float(TILE_SIZE)
+
+    # world position of the chunk origin
+    chunk_world_pos: vec2 = chunk_position * chunk_world_size
+
+    # shift vertex coords from centered (-0.5..0.5) to 0..1
+    half_vec: vec2 = vec2(0.5, 0.5)
+    shifted_vertex: vec2 = vertex.xy + half_vec
+
+    # scale the quad to chunk size
+    vertex_world_offset: vec2 = shifted_vertex * chunk_world_size
+
+    # final position in world space
+    world_pos_xy: vec2 = chunk_world_pos + vertex_world_offset
+
+    VERTEX_POSITION = proj * view * model * vec4(world_pos_xy, vertex.z, 1.0)

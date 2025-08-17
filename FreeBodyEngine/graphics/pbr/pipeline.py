@@ -31,17 +31,18 @@ class PBRPipeline(GraphicsPipeline):
         }, transparent = True
         )
         
-    def resize(self):
-        self.main_framebuffer.resize(get_service('window').size)
+    def resize(self, size: tuple[int, int]):
+        self.main_framebuffer.resize(size)
 
     def draw(self):
         self.main_framebuffer.bind()
         camera = self.scene_manager.get_active().camera
         self.renderer.clear(camera.background_color)
-        
+        self.renderer.enable_depth_testing()
+
         tilemaps: list[TilemapRenderer] = camera.scene.root.find_nodes_with_type('TilemapRenderer')
         for tilemap in tilemaps:
-            tilemap.draw()
+            tilemap.draw(camera)
 
         sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
         for sprite in sprites:
@@ -51,7 +52,6 @@ class PBRPipeline(GraphicsPipeline):
         for debug in debugs:
             self.renderer.draw_mesh(debug.mesh, debug.material, debug.world_transform, camera)
 
-        self.renderer.enable_depth_testing()
 
         models: list[Model3D] = camera.scene.root.find_nodes_with_type('Model3D')
         for model in models:    
@@ -65,5 +65,5 @@ class PBRPipeline(GraphicsPipeline):
         self.main_framebuffer.draw('albedo', window_size)
 
 
-    def create_material(self, data):
-        return PBRMaterial(data)
+    def create_material(self, data, injector=None):
+        return PBRMaterial(data, injector)

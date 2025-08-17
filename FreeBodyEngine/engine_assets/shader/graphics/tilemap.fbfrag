@@ -1,3 +1,33 @@
+@define
+CHUNK_SIZE = _ENGINE_CHUNK_SIZE
+@define
+SPRITESHEETS = _ENGINE_MAX_CHUNKS
 
+struct Spritesheet:
+    size: vec2
+    tex_index: int
 
-buffer 
+buffer SpritesheetData:
+    Spritesheet spritesheets[_ENGINE_MAX_SPRITESHEETS]
+
+@uniform
+SpritesheetTextures: sampler2D[_ENGINE_MAX_SPRITESHEET_TEXTURES]
+
+struct Tile:
+    position: vec2
+    image_id: int
+    spritesheet_index: int
+
+struct Chunk:
+    position: vec2
+    _padding: float
+    _padding2: float
+    tiles: Tile[_ENGINE_CHUNK_SIZE]
+
+buffer Chunks:
+    chunks: Chunk[_ENGINE_MAX_CHUNKS]
+
+def main():
+    current_chunk: Chunk = chunks[INSTANCE_ID]
+    
+

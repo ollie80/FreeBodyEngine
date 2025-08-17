@@ -93,15 +93,14 @@ class MaterialInjector(Injector):
                     uv_coord = Identifier(node.pos, 'uv')
                 else:
                     node: Call = function
-                    print("Node: ", node)
                     uv_coord = node.args[1].val          
 
                 uv_rect = f"{property.capitalize()}_UVRect"
 
                 sample_pos_left = BinOp(node.pos, MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'zw'), "*", uv_coord)
-                sample_pos_right = Call(node.pos, 'vec2', (Arg(node.pos, MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'x')), Arg(node.pos, BinOp(node.pos, BinOp(node.pos, Float(node.pos, 1.0), '-', MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'y')), '-', MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'w')))))
+                sample_pos_right = Call(node.pos, Identifier(0, 'vec2'), (Arg(node.pos, MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'x')), Arg(node.pos, BinOp(node.pos, BinOp(node.pos, Float(node.pos, 1.0), '-', MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'y')), '-', MethodIdentifier(node.pos, Identifier(node.pos, uv_rect), 'w')))))
                 sample_pos = BinOp(node.pos, sample_pos_left, '+', sample_pos_right)
-                sample_call = Call(node.pos, 'texture', (Arg(node.pos, Identifier(node.pos, f"{property.capitalize()}_Texture")), Arg(node.pos, sample_pos)))
+                sample_call = Call(node.pos, Identifier(0, 'texture'), (Arg(node.pos, Identifier(node.pos, f"{property.capitalize()}_Texture")), Arg(node.pos, sample_pos)))
 
                 color = Identifier(node.pos, f"{property.capitalize()}_Color")
                 use_tex = Identifier(node.pos, f"{property.capitalize()}_useTexture")
@@ -165,7 +164,6 @@ class Material:
                 else:
                     warning(f"Couldn't parse material color value, '{property}' is a string that doesn't contain a hex color.")
             else:
-                print(property)
                 if len(val) >= 2 and len(val) <= 4:
                     correct_type = True
                     for v in val:

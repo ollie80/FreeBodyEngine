@@ -27,7 +27,6 @@ class Shader:
         self.fragment_source, frag_data = compile(fragment_source, generator, injector, 'frag', buffer_index)
         
         self.data = merge_dicts(vert_data, frag_data)
-        print(self.data)
 
     @abstractmethod
     def set_uniform(self, name: str, value: any):
@@ -39,9 +38,8 @@ class Shader:
 
     @abstractmethod
     def set_buffer(self, name: str, data: np.array):
-        pass    
-    
- 
+        pass
+
     @abstractmethod
     def use(self):
         pass

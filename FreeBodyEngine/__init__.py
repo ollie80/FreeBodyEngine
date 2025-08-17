@@ -46,6 +46,7 @@ def register_service_update(phase: str, callback: Callable, priority: int = 0):
 def unregister_service_update(phase: str, callback: Callable):
     get_main().updater.unregister(phase, callback)
 
+
 def get_time():
     return get_main().time.get_time()
 
@@ -84,6 +85,27 @@ def delta() -> float:
     """Get deltatime for the current frame in seconds."""
     return get_main().time.delta_time
 
+def register_event_callback(event_name: str, callable: Callable):
+    get_service('event').register_callback(event_name, callable)
+
+def unregister_event_callback(event_name: str, callable: Callable):
+    get_service('event').unregister_callback(event_name, callable)
+
+def register_event(name: str, *categories: str) -> None:
+    return get_service('event').register_event(name, *categories)
+
+def unregister_event(name: str) -> None:
+    return get_service('event').unregister_event(name)
+
+def emit_event(name: str, *callback_args, **callback_kwargs) -> None:
+    return get_service('event').emit(name, *callback_args, **callback_kwargs)
+
+def register_event_category(name: str, priority=0) -> None:
+    return get_service('event').register_category(name, priority)
+
+def unregister_event_category(name: str) -> None:
+    return get_service('event').unregister_category(name)
+
 def get_mouse() -> 'Mouse':
     return get_service('mouse')
 
@@ -107,8 +129,8 @@ def log(*msg):
 
 from FreeBodyEngine import core
 from FreeBodyEngine import math
-# from FreeBodyEngine import net
-# from FreeBodyEngine import ui
+from FreeBodyEngine import net
+from FreeBodyEngine import ui
 from FreeBodyEngine.core.time import cooldown, physics_cooldown
 from FreeBodyEngine.core.input import get_action_pressed, get_action_released, get_action_strength, get_action_vector
 from FreeBodyEngine.core.mouse import Mouse
@@ -126,6 +148,8 @@ from FreeBodyEngine.core.window import create_cursor, set_cursor
 
 __all__ = [
             "utils",
+            "ui",
+            "net",
             "load_material",
             "load_image",
             'cooldown',

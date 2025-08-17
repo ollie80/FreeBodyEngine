@@ -1,3 +1,4 @@
-vert = 'tilemap.fbvert'
-frag = 'tilemap.fbfrag'
+[shader]
+vert = 'engine/graphics/tilemap.fbvert'
+frag = 'engine/graphics/tilemap.fbfrag'
 

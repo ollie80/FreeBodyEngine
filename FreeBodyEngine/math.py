@@ -410,7 +410,7 @@ class Vector(GenericVector):
         elif y is not None:
             self.x, self.y = x, y
         else:
-            self.x, self.y = x, 0
+            self.x, self.y = x, x
 
     @classmethod
     def from_angle(self, angle: float) -> 'Vector':
