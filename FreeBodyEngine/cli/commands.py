@@ -4,6 +4,7 @@ import os
 from FreeBodyEngine.cli.project import ProjectRegistry
 from FreeBodyEngine.cli.fulcrum import fulcrum_handler
 from FreeBodyEngine.dev.run import main as run_project
+from FreeBodyEngine.cli.cpp import compile_handler
 import tomllib
 import json
 import platform
@@ -14,7 +15,6 @@ from FreeBodyEngine.font.atlasgen import generate_atlas
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-import threading
 
 class Environment:
     def __init__(self, path=None, project_id=None):
@@ -198,58 +198,120 @@ def get_log_file(env):
 
     return os.path.join(base, name, "log.txt")
 
-def log_read_handler(env, args):
-    num_lines = int(args[0]) if len(args) > 0 else 50
-    log_type = args[1].upper() if len(args) > 1 else None
-
-    log = get_log_file(env)
-
-    if not os.path.exists(log):
-        print("No log file found.")
-        return
-
-    matching_lines = []
-    with open(log, "rb") as f:
-        f.seek(0, os.SEEK_END)
-        pos = f.tell()
-        line_bytes = []
-
-        while pos > 0 and len(matching_lines) < num_lines:
-            pos -= 1
-            f.seek(pos)
-            byte = f.read(1)
-            if byte == b'\n':
-                if line_bytes:
-                    line = b''.join(reversed(line_bytes)).decode('utf-8', errors='ignore')
-                    if log_type is None or f"[{log_type}]" in line:
-                        matching_lines.append(line)
-                    line_bytes = []
-            else:
-                line_bytes.append(byte)
-
-        if line_bytes and len(matching_lines) < num_lines:
-            line = b''.join(reversed(line_bytes)).decode('utf-8', errors='ignore')
-            if log_type is None or f"[{log_type}]" in line:
-                matching_lines.append(line)
-
-    for line in reversed(matching_lines):
-        print(line, end="" if line.endswith("\n") else "\n")
 
 def confirm():
     return input("Are you sure you want to do that? y/N: ").lower().strip() == 'y'
 
+def get_json_log_file(env):
+    """Return path to the JSON log for the current project or environment."""
+    name = env.project_registry.get_project_config(env.project_id).get('name') if env.project_id else None
+
+    if not name:
+        print("No project found.")
+        return ''
+
+    system = platform.system()
+    if system == "Windows":
+        base = os.getenv("APPDATA")
+    elif system == "Darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+
+    return os.path.join(base, name, "log.jsonl")
+
+
+def log_read_handler(env, args):
+    """Read the last N log entries from the JSON log file, optionally filtered by type."""
+    num_entries = int(args[0]) if len(args) > 0 else 50
+    log_type = args[1].upper() if len(args) > 1 else None
+
+    log_file = get_json_log_file(env)
+    if not os.path.exists(log_file):
+        print("No log file found.")
+        return
+
+    matching_entries = []
+    with open(log_file, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+                if log_type is None or entry["type"] == log_type:
+                    matching_entries.append(entry)
+            except Exception:
+                continue
+
+    for entry in matching_entries[-num_entries:]:
+        print(f"[{entry['timestamp']}] {entry['type']} [{entry['id']}]: {entry['message']}")
+
+
 def log_wipe_handler(env, args):
-    log = get_log_file(env)
-    if not os.path.exists(log):
+    """Wipe the JSON log file."""
+    log_file = get_json_log_file(env)
+    if not os.path.exists(log_file):
         print("No log file found.")
         return
 
     if confirm():
-        with open(log, "w") as f:
+        with open(log_file, "w", encoding="utf-8") as f:
             f.write('')
+        print("Log wiped.")
     else:
-        print('Aborting.')
+        print("Aborting.")
+
+def log_traceback_handler(env, args):
+    """Print the traceback for a specific log entry by ID, colored like Python traceback, then show warnings/errors at the bottom."""
+    if not args:
+        print("Usage: fb log traceback <id>")
         return
+
+    log_id = int(args[0])
+    log_file = get_json_log_file(env)
+
+    if not os.path.exists(log_file):
+        print("No log file found.")
+        return
+
+    with open(log_file, "r", encoding="utf-8") as f:
+        for line in f:
+            try:
+                entry = json.loads(line)
+                if entry["id"] == log_id:
+                    tb = entry.get("traceback")
+                    if tb:
+                        if isinstance(tb, list):
+                            tb_text = "\n".join(tb)
+                        else:
+                            tb_text = str(tb)
+
+                        for tb_line in tb_text.splitlines():
+                            stripped = tb_line.strip()
+
+                            if tb_line.startswith("Traceback"):
+                                print(f"\033[1;31m{tb_line}\033[0m")  # bold red
+                            elif stripped.startswith('File'):
+                                print(f"\033[33m{tb_line}\033[0m")     # yellow
+                            elif any(keyword in tb_line for keyword in ("Error", "Exception")):
+                                print(f"\033[31m{tb_line}\033[0m")     # red
+                            else:
+                                print(f"\033[0m{tb_line}\033[0m")      # gray
+                    else:
+                        print(f"No traceback stored for log ID {log_id}")
+
+                    print('\n')
+                    message = entry.get('message')
+                    log_type = entry.get('type')
+                    if log_type == "WARNING":
+                        print(f"\033[33mWARNING: {message}\033[0m")  # yellow
+                    if log_type == "ERROR":
+                        print(f"\033[31mERROR: {message}\033[0m")    # red
+
+                    print('\n')
+                    return
+            except Exception:
+                continue
+
+    print(f"No log entry found with ID {log_id}")
 
 def delete_project(env, args):
     project = None
@@ -266,7 +328,6 @@ def delete_project(env, args):
             print(f'Project with ID "{project}" does not exist.')
             return
 
-    path = env.project_registry.get_project_path(project)
     print(f'Deleting project "{env.project_registry.get_project_name(project)}" with ID "{project}" at path {path}.')
 
     if confirm():
@@ -364,6 +425,7 @@ def get_project(env, args):
     else:
         print(f'ID: "{project}", Name: "{env.project_registry.get_project_name(project)}", Path: "{env.project_registry.get_project_path(project)}"')
 
+
 def get_project_lines(env, id: str):
     config = env.project_registry.get_project_config(id)
     lines = 0
@@ -402,12 +464,12 @@ def enter_handler(env, args):
     while env.running:
         try:
             prompt = "freebody"
-            at = "\033[34m@\033[0m"
+            at = "\033[35m@\033[0m"
             if env.project_id:
                 prompt += f"{at}{env.project_registry.get_project_name(env.project_id)}"
             elif env.path:
                 prompt += f'{at}{env.path}'
-            prompt += "\033[34m>\033[0m "
+            prompt += "\033[35m>\033[0m "
 
             command_line = input(prompt).strip()
         except KeyboardInterrupt:
@@ -482,6 +544,201 @@ def parse_options(args, allowed_flags=None):
             positional.append(arg)
 
     return flags, positional
+def cloc_handler(env, args):
+    extensions = {".cpp", ".py", ".fbusl", ".fbvert", ".fbfrag", ".fbspr", ".fbmat"}
+    paths_to_check = []
+
+    if args:
+        arg = args[0]
+        if env.project_registry.project_exists(arg):
+            config = env.project_registry.get_project_config(arg)
+            project_path = env.project_registry.get_project_path(arg)
+            print(f"Counting lines for project '{env.project_registry.get_project_name(arg)}'")
+
+            # Add main file
+            main_file = os.path.join(project_path, config.get('main_file'))
+            if os.path.exists(main_file):
+                paths_to_check.append(main_file)
+
+            # Add code directory
+            code_dir = os.path.join(project_path, config.get('code'))
+            if os.path.isdir(code_dir):
+                paths_to_check.append(code_dir)
+
+            # Add assets directory
+            assets_dir = os.path.join(project_path, config.get('assets'))
+            if os.path.isdir(assets_dir):
+                paths_to_check.append(assets_dir)
+
+        else:
+            # Arbitrary directory
+            target_path = os.path.abspath(os.path.join(env.path, arg))
+            if not os.path.exists(target_path):
+                print(f"Path '{target_path}' does not exist.")
+                return
+            paths_to_check.append(target_path)
+            print(f"Counting lines for directory '{target_path}'")
+    else:
+        if env.project_id:
+            config = env.project_registry.get_project_config(env.project_id)
+            project_path = env.project_registry.get_project_path(env.project_id)
+            print(f"Counting lines for project '{env.project_registry.get_project_name(env.project_id)}'")
+
+            # Add main file
+            main_file = os.path.join(project_path, config.get('main_file'))
+            if os.path.exists(main_file):
+                paths_to_check.append(main_file)
+
+            # Add code directory
+            code_dir = os.path.join(project_path, config.get('code'))
+            if os.path.isdir(code_dir):
+                paths_to_check.append(code_dir)
+
+            # Add assets directory
+            assets_dir = os.path.join(project_path, config.get('assets'))
+            if os.path.isdir(assets_dir):
+                paths_to_check.append(assets_dir)
+
+        else:
+            paths_to_check.append(env.path)
+            print(f"Counting lines for directory '{env.path}'")
+
+    total_files = 0
+    total_lines = 0
+    per_ext = {ext: {"files": 0, "lines": 0} for ext in extensions}
+
+    for path in paths_to_check:
+        if os.path.isfile(path):
+            ext = os.path.splitext(path)[1]
+            if ext in extensions:
+                total_files += 1
+                per_ext[ext]["files"] += 1
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                        line_count = sum(1 for _ in f)
+                        total_lines += line_count
+                        per_ext[ext]["lines"] += line_count
+                except Exception as e:
+                    print(f"Error reading {path}: {e}")
+        else:
+            for root, _, files in os.walk(path):
+                for filename in files:
+                    ext = os.path.splitext(filename)[1]
+                    if ext in extensions:
+                        total_files += 1
+                        per_ext[ext]["files"] += 1
+                        try:
+                            with open(os.path.join(root, filename), "r", encoding="utf-8", errors="ignore") as f:
+                                line_count = sum(1 for _ in f)
+                                total_lines += line_count
+                                per_ext[ext]["lines"] += line_count
+                        except Exception as e:
+                            print(f"Error reading {filename}: {e}")
+
+    print("\nExtension breakdown:")
+    for ext in sorted(extensions):
+        if per_ext[ext]["files"] > 0:
+            print(f"  {ext:<8} {per_ext[ext]['files']:>5} files, {per_ext[ext]['lines']:>7} lines")
+
+    print(f"\nTotal files: {total_files}")
+    print(f"Total lines: {total_lines}")
+
+def cwoc_handler(env, args):
+    extensions = {".cpp", ".py", ".fbusl", ".fbvert", ".fbfrag", ".fbspr", ".fbmat"}
+    paths_to_check = []
+
+    if args:
+        arg = args[0]
+        if env.project_registry.project_exists(arg):
+            config = env.project_registry.get_project_config(arg)
+            project_path = env.project_registry.get_project_path(arg)
+            print(f"Counting words for project '{env.project_registry.get_project_name(arg)}'")
+
+            # Add main file
+            main_file = os.path.join(project_path, config.get('main_file'))
+            if os.path.exists(main_file):
+                paths_to_check.append(main_file)
+
+            # Add code directory
+            code_dir = os.path.join(project_path, config.get('code'))
+            if os.path.isdir(code_dir):
+                paths_to_check.append(code_dir)
+
+            # Add assets directory
+            assets_dir = os.path.join(project_path, config.get('assets'))
+            if os.path.isdir(assets_dir):
+                paths_to_check.append(assets_dir)
+
+        else:
+            target_path = os.path.abspath(os.path.join(env.path, arg))
+            if not os.path.exists(target_path):
+                print(f"Path '{target_path}' does not exist.")
+                return
+            paths_to_check.append(target_path)
+            print(f"Counting words for directory '{target_path}'")
+    else:
+        if env.project_id:
+            config = env.project_registry.get_project_config(env.project_id)
+            project_path = env.project_registry.get_project_path(env.project_id)
+            print(f"Counting words for project '{env.project_registry.get_project_name(env.project_id)}'")
+
+            # Add main file
+            main_file = os.path.join(project_path, config.get('main_file'))
+            if os.path.exists(main_file):
+                paths_to_check.append(main_file)
+
+            # Add code directory
+            code_dir = os.path.join(project_path, config.get('code'))
+            if os.path.isdir(code_dir):
+                paths_to_check.append(code_dir)
+
+            # Add assets directory
+            assets_dir = os.path.join(project_path, config.get('assets'))
+            if os.path.isdir(assets_dir):
+                paths_to_check.append(assets_dir)
+        else:
+            paths_to_check.append(env.path)
+            print(f"Counting words for directory '{env.path}'")
+
+    total_files = 0
+    total_words = 0
+    per_ext = {ext: {"files": 0, "words": 0} for ext in extensions}
+
+    for path in paths_to_check:
+        if os.path.isfile(path):
+            ext = os.path.splitext(path)[1]
+            if ext in extensions:
+                total_files += 1
+                per_ext[ext]["files"] += 1
+                try:
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                        word_count = sum(len(line.split()) for line in f)
+                        total_words += word_count
+                        per_ext[ext]["words"] += word_count
+                except Exception as e:
+                    print(f"Error reading {path}: {e}")
+        else:
+            for root, _, files in os.walk(path):
+                for filename in files:
+                    ext = os.path.splitext(filename)[1]
+                    if ext in extensions:
+                        total_files += 1
+                        per_ext[ext]["files"] += 1
+                        try:
+                            with open(os.path.join(root, filename), "r", encoding="utf-8", errors="ignore") as f:
+                                word_count = sum(len(line.split()) for line in f)
+                                total_words += word_count
+                                per_ext[ext]["words"] += word_count
+                        except Exception as e:
+                            print(f"Error reading {filename}: {e}")
+
+    print("\nExtension breakdown:")
+    for ext in sorted(extensions):
+        if per_ext[ext]["files"] > 0:
+            print(f"  {ext:<8} {per_ext[ext]['files']:>5} files, {per_ext[ext]['words']:>7} words")
+
+    print(f"\nTotal files: {total_files}")
+    print(f"Total words: {total_words}")
 
 
 def cd_handler(env, args):
@@ -614,8 +871,13 @@ root_commands = [
     Command(['cat'], cat_handler, help_text="Print the contents of a file."),
     Command(["mkdir"], mkdir_handler, help_text="Create a directory."),
     Command(["rm"], rm_handler, help_text="Remove a file or directory."),
-    Command(["fulcrum"], fulcrum_handler, help_text='A small text editor.')
+    Command(["fulcrum"], fulcrum_handler, help_text='A small text editor.'),
+    Command(["compile_scripts", 'cs'], compile_handler, help_text='Compiles CPP scripts.'),
+    Command(["cloc"], cloc_handler, help_text="Counts the lines of code in the current directory or specified project."),
+    Command(["cwoc"], cwoc_handler, help_text="Counts the words of code in the current directory or specified project."),
+    Command(['traceback', 'tb'], log_traceback_handler, help_text="Print the traceback for a log entry by ID.")
 ]
+
 
 def dispatch(args, commands, env=None, path=[]):
     if not args:

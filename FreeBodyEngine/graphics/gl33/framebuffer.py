@@ -104,7 +104,6 @@ class GLFramebuffer(Framebuffer):
 
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glEnable(GL_BLEND)
-            print('transparent')
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 

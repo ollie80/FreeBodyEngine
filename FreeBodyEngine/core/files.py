@@ -108,7 +108,7 @@ class FileManager(Service):
         else:  # Linux and others
             base = os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
         
-        return os.path.join(base, "CHANGE THIS PLEASE")
+        return os.path.join(base, self.game_name)
 
     def load_data(self, path: str, bytes: bool = False):
         if not self.dev:
@@ -136,7 +136,7 @@ class FileManager(Service):
         """
         data = self.load_toml(path)
         
-        mat = get_service('graphics').create_material(data)
+        mat = get_service('graphics').create_material(data, injector)
         return mat        
 
     def create_atlas_map(self):

@@ -1,6 +1,8 @@
 from typing import TYPE_CHECKING
 from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.graphics.fbusl.injector import Injector 
+from FreeBodyEngine import register_event_callback, unregister_event_callback
+from FreeBodyEngine.core.window import WINDOW_RESIZE
 
 from FreeBodyEngine.graphics.image import Image
 from FreeBodyEngine.graphics.buffer import Buffer
@@ -25,6 +27,12 @@ class Renderer(Service):
         self.mesh_class = Mesh
         self.image_class = Image
         self.texture_manager = TextureManager()
+
+    def on_initialize(self):
+        register_event_callback(WINDOW_RESIZE, self.resize)
+
+    def on_destroy(self):
+        unregister_event_callback(WINDOW_RESIZE, self.resize)
     
     @abstractmethod
     def load_image(self, texture: 'Texture'):
@@ -47,6 +55,10 @@ class Renderer(Service):
         pass
 
     @abstractmethod
+    def get_max_buffer_size(self) -> int:
+        pass
+
+    @abstractmethod
     def create_framebuffer(self, width: int, height: int, attachments: dict[str, tuple[AttachmentFormat, AttachmentType]], **kwargs) -> Framebuffer:
         pass
 
@@ -59,7 +71,7 @@ class Renderer(Service):
         pass
 
     @abstractmethod
-    def resize(self):
+    def resize(self, size: tuple[int, int]):
         pass
 
     @abstractmethod

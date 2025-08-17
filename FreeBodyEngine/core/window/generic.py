@@ -1,5 +1,5 @@
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine import register_service_update, unregister_service_update, get_service, service_exists
+from FreeBodyEngine import register_event, unregister_event, register_service_update, register_event_category, unregister_event_category, unregister_service_update, get_service, service_exists
 from typing import TYPE_CHECKING, Union, Literal
 from FreeBodyEngine.core.input import Key
 from FreeBodyEngine.core.mouse import Mouse
@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from FreeBodyEngine.graphics.image import Image
 
 from FreeBodyEngine.core.service import Service
+
+WINDOW_RESIZE = "ENGINE_window_resize"
 
 class Cursor:
     """The generic cursor class. Abstracts cursor management to easily create cross-platform cursors."""
@@ -26,9 +28,15 @@ class Window(Service):
         register_service_update('early', self.update)
         register_service_update('late', self.draw)
 
+        register_event_category('window')
+        register_event(WINDOW_RESIZE, 'window')
+
     def on_destroy(self):
         unregister_service_update('early', self.update)
         unregister_service_update('late', self.draw)
+
+        unregister_event_category('window')
+        unregister_event(WINDOW_RESIZE)
 
     @property
     @abstractmethod
@@ -43,13 +51,6 @@ class Window(Service):
     @abstractmethod
     def create_mouse(self) -> Mouse:
         pass
-
-    def _resize(self):
-        if service_exists('renderer'):
-            get_service('renderer').resize()        
-
-        if service_exists('graphics'):
-            get_service('graphics').resize()
 
     @abstractmethod
     def is_ready(self) -> bool:

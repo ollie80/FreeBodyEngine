@@ -4,65 +4,93 @@ from FreeBodyEngine.core.service import Service
 from FreeBodyEngine import get_main, get_service, get_flag
 import os
 import inspect
-
+import json
+import traceback
 
 colors = {
-    "black": 30, "red": 31, "green": 32, "yellow": 33, "blue": 34, "magenta": 35, "cyan": 36, "white": 37, "reset": 0
+    "black": 30, "red": 31, "green": 32, "yellow": 33, "blue": 34,
+    "magenta": 35, "cyan": 36, "white": 37, "reset": 0
 }
 
 def get_timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 def print_colored(*text: str, color='reset'):
-    s = ""
-    for t in text:
-        s += f"\033[{colors[color]}m" + str(t) + "\033[0m" 
+    s = "".join(f"\033[{colors[color]}m{t}\033[0m" for t in text)
     print(s)
 
 class Logger(Service):
-    """
-    The logger class replaces print statements and python errors to work with the rest of FBE.
-
-    :param max_history_length: The maximum length of log history that is stored in memory before being written to disk.
-    :type max_history_length: int
-    """
-    def __init__(self, max_history_length = 250):
+    def __init__(self, max_history_length=250):
         super().__init__('logger')
-        self.history: list[tuple[str, str, str]] = []  # (timestamp, type, msg)
+        self.history: list[dict] = []
         self.max_history_length = max_history_length
+        self.next_id = 1
         self.dependencies.append('files')
-        self.supress = {"ERROR": get_flag('SUPRESS_ERRORS', False), "WARNING": get_flag('SUPRESS_WARNINGS', False), "DEBUG": get_flag('SUPRESS_LOGS', False)}
+        self.supress = {
+            "ERROR": get_flag('SUPRESS_ERRORS', False),
+            "WARNING": get_flag('SUPRESS_WARNINGS', False),
+            "DEBUG": get_flag('SUPRESS_LOGS', False)
+        }
 
-    def store_log(type_: str):
-        def decorator(func):
-            @wraps(func)
-            def wrapper(self, msg, *args, **kwargs):
-                timestamp = get_timestamp()
-                path = get_service('files').get_save_location()
-                os.makedirs(path, exist_ok=True)
-                with open(os.path.join(path, "log.txt"), 'a') as f:
-                    f.write(f"[{timestamp}][{type_}] {msg}\n")
+    def _clear_log(self):
+        path = get_service('files').get_save_location()
+        os.makedirs(path, exist_ok=True)
+        open(os.path.join(path, "log.jsonl"), 'w')
 
-                return func(self, msg, *args, **kwargs)
-            return wrapper
-        return decorator
-    
-    @store_log('DEBUG')
+    def _write_json_log(self, log_entry: dict):
+        path = get_service('files').get_save_location()
+
+        os.makedirs(path, exist_ok=True)
+        with open(os.path.join(path, "log.jsonl"), 'a', encoding='utf-8') as f:
+            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+    def _store_log(self, type_: str, msg: str):
+        tb = None
+        if type_ in ("ERROR", "WARNING"):
+            tb = traceback.format_stack()[:-2]
+
+        log_entry = {
+            "id": self.next_id,
+            "timestamp": get_timestamp(),
+            "type": type_,
+            "message": msg,
+            "traceback": tb
+        }
+
+        self.history.append(log_entry)
+        self._write_json_log(log_entry)
+
+        if len(self.history) > self.max_history_length:
+            self.history.pop(0)
+
+        
+        self.next_id += 1
+        return log_entry["id"]
+
     def log(self, *msg, color: str = "reset"):
         if not self.supress["DEBUG"]:
-
+            full_msg = " ".join(str(m) for m in msg)
+            log_id = self._store_log("DEBUG", full_msg)
             print_colored(*msg, color=color)
+            return log_id
 
-    @store_log("ERROR")
     def error(self, msg):
         if not self.supress["ERROR"]:
-            print_colored(f"ERROR: {msg}", color="red")
+            log_id = self._store_log("ERROR", msg)
+            print_colored(f"ERROR [{log_id}]: {msg}", color="red")
+            return log_id
 
-    @store_log('WARNING')
     def warning(self, msg):
         if not self.supress["WARNING"]:
-            print_colored(f'WARNING: {msg}', color="yellow")
-        
+            log_id = self._store_log("WARNING", msg)
+            print_colored(f"WARNING [{log_id}]: {msg}", color="yellow")
+            return log_id
 
-    def get_history(self) -> str:
-        return '\n'.join(f"[{ts}] {type_}: {msg}" for ts, type_, msg in self.history)
+    def get_traceback(self, log_id: int):
+        entry = next((e for e in self.history if e["id"] == log_id), None)
+        if entry:
+            return "".join(entry["traceback"] or [])
+        return f"No log found for ID {log_id}"
+
+    def get_history(self):
+        return "\n".join(f"[{e['timestamp']}] {e['type']} [{e['id']}]: {e['message']}" for e in self.history)

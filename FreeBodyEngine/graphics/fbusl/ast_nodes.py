@@ -60,7 +60,7 @@ class Buffer(Node):
         self.fields = fields
     
     def get_debug(self):
-        return (f"Buffer binding={self.binding}", self.name, self.fields)
+        return (f"Buffer", self.name, self.fields)
 
 class Type(Node):
     def __init__(self, pos, name: Identifier, length=1):
@@ -68,6 +68,12 @@ class Type(Node):
         self.name = name
         self.length = length
     
+    def base_type(self):
+        return Type(self.pos, self.name)
+
+    def get_debug(self):
+        return (f"Type('{self.name.name}'), len={self.length}",)
+
     def __eq__(self, other):
         if isinstance(other, Type):
             return other.name.name == self.name.name and other.length == self.length
@@ -117,6 +123,29 @@ class UniformDecl(Node):
         self.precision = precision
     def get_debug(self):
         return (f"UniformDeclaration", self.name, self.type)
+
+class Get(Node):
+    def __init__(self, pos, name: Identifier, array_access: bool, array_index=0):
+        super().__init__(pos)
+        self.name = name
+        self.array_access = array_access
+        self.array_index = array_index
+
+    def get_debug(self):
+        return (f"Get array={self.array_access}", self.name)
+    
+class MethodGet(Node):
+    def __init__(self, pos, struct_name: Node, name: Identifier, array_access: bool, array_index=0):
+        super().__init__(pos)
+        self.struct_name = struct_name
+        self.name = name                
+        self.array_access = array_access
+        self.array_index = array_index
+
+    def get_debug(self):
+        kind = "array" if self.array_access else "field"
+        return (f"MethodGet ({kind}) to {self.name.name}", self.struct_name)
+
 
 class InputDecl(Node):
     def __init__(self, pos, name, type, precision):
@@ -187,19 +216,21 @@ class IfStatement(Node):
         super().__init__(pos)
         self.condition = condition
         self.body = body
+
     def get_debug(self):
-        return ("IfStatement", self.condition, self.body)
+        return ("IfStatement", self.condition, *self.body)
 
 class ElseIfStatement(IfStatement):
     def get_debug(self):
-        return ("ElseIfStatement", self.condition, self.body)
+        return ("ElseIfStatement", self.condition, *self.body)
 
 class ElseStatement(Node):
     def __init__(self, pos, body):
         super().__init__(pos)
         self.body = body
+
     def get_debug(self):
-        return ("ElseStatement", self.body)
+        return ("ElseStatement", *self.body)
 
 class Condition(Node):
     def __init__(self, pos, left, right, comparison):
@@ -242,7 +273,7 @@ class FuncDecl(Node):
         self.params = params
         self.body = body
     def get_debug(self):
-        return (f"Function", self.name, self.return_type, *self.params, *self.body)
+        return (f"Function -> {self.return_type}", self.name, *self.params, *self.body)
 
 class StructField(Node):
     def __init__(self, pos, name, type, precision):

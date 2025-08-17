@@ -1,467 +1,522 @@
 from typing import List
 import re
-from FreeBodyEngine.graphics.fbusl.ast_nodes import *
-from FreeBodyEngine.graphics.fbusl import fbusl_error
+from FreeBodyEngine.graphics.fbusl import fbusl_error, Position
+from typing import List, Optional
+from enum import Enum, auto
+from FreeBodyEngine.graphics.fbusl.node import *
+import sys
+
 
 class Token:
-    def __init__(self, kind: str, value, pos: int):
+    def __init__(self, kind: str, value, pos: Position = Position()):
         self.kind = kind
         self.value = value
         self.pos = pos
+
     def __repr__(self):
         return f"Token({self.kind}, {repr(self.value)})"
 
+
+class TokenType(Enum):
+    ARROW = auto()
+    DECORATOR = auto()
+    qualifier = auto()
+    KEYWORD = auto()
+    IDENT = auto()
+    FLOAT = auto()
+    INT = auto()
+    BOOL = auto()
+    SYMBOL = auto()
+    OPERATOR = auto()
+    WHITESPACE = auto()
+    NEWLINE = auto()
+    COMMENT = auto()
+    INDENT = auto()
+    DEDENT = auto()
+
+
 TOKEN_TYPES = [
-    ("ARROW", r"->"),
-    ("DECORATOR", r"@(?:uniform|input|output|define)"),
-    ("PRECISION", r"(low|med|high)"),
-    ("KEYWORD", r"\b(def|return|struct|if|buffer|elif|else|not|and|or)\b"),
-    ("COMPARISON", r"(==|!=|<=|>=|<|>)"),
-    ("TYPE", r"\b(void|float|int|bool|sampler2D|sampler3D)\b"),
-    ("IDENT", r"[a-zA-Z_][a-zA-Z0-9_]*"),
-    ("FLOAT", r"\d+\.\d+"),
-    ("INT", r"\d+"),
-    ("SYMBOL", r"[{}()[\]:,\.]"),
-    ("OPERATOR", r"(\+=|-=|\*=|/=|=|\+|-|\*|/)"),
-    ("WHITESPACE", r"[ \t]+"),
-    ("COMMENT", r"#.*"),
+    (TokenType.NEWLINE, r"\n"),  # newlines first
+    (TokenType.WHITESPACE, r"[ \t]+"),  # only spaces and tabs
+    (TokenType.ARROW, r"->"),
+    (TokenType.DECORATOR, r"@(?:uniform|input|output|define)"),
+    (TokenType.qualifier, r"(low|med|flat|high)"),
+    (TokenType.KEYWORD, r"\b(def|return|struct|if|buffer|elif|else|not|and|or)\b"),
+    (TokenType.BOOL, r"(True|False)"),
+    (TokenType.IDENT, r"[a-zA-Z_][a-zA-Z0-9_]*"),
+    (TokenType.FLOAT, r"\d(?:_?\d)*\.\d(?:_?\d)*"),
+    (TokenType.INT, r"\d(?:_?\d)*"),
+    (TokenType.SYMBOL, r"[{}()[\]:,\.]"),
+    (TokenType.OPERATOR, r"(\+=|-=|\*=|/=|=|\+|-|\*|/|==|!=|<=|>=|<|>)"),
+    (TokenType.COMMENT, r"#.*"),
 ]
-def tokenize(code: str, file_path) -> List[Token]:
-    tokens = []
-    indent_stack = [0]
-    lines = code.splitlines()
 
-    for line_num, line in enumerate(lines, start=1):
-        if re.match(r"^\s*$", line) or re.match(r"^\s*#", line):
-            continue
+TOKEN_REGEX = [(kind, re.compile(pattern)) for kind, pattern in TOKEN_TYPES]
 
-        indent_match = re.match(r"[ \t]*", line)
-        indent_str = indent_match.group(0)
-        indent = len(indent_str.replace('\t', '    '))  # convert tabs to spaces
 
-        if indent > indent_stack[-1]:
-            tokens.append(Token("INDENT", indent, pos=line_num))
-            indent_stack.append(indent)
-        elif indent < indent_stack[-1]:
-            while indent < indent_stack[-1]:
-                indent_stack.pop()
-                tokens.append(Token("DEDENT", indent_stack[-1], pos=line_num))
-            if indent != indent_stack[-1]:
-                fbusl_error(f"Inconsistent indentation: expected {indent_stack[-1]}, got {indent}", line_num, file_path)
+class Lexer:
+    def __init__(self, code: str, filename: str = None):
+        self.code = code
+        self.filename = filename
+        self.pos = 0
+        self.line = 1
+        self.length = len(code)
+        self.indents = [0]  # stack of indentation levels
+        self._pending_tokens: List[Token] = []
 
-        # Tokenize the line
-        pos = len(indent_str)
-        line_length = len(line)
-        while pos < line_length:
-            for kind, pattern in TOKEN_TYPES:
-                match = re.match(pattern, line[pos:])
-                if match:
-                    value = match.group(0)
-                    if kind == "WHITESPACE":
-                        pos += len(value)
-                        break
-                    elif kind == "COMMENT":
-                        pos = line_length  # skip the rest of the line
-                        break
-                    else:
-                        token = Token(kind, value, pos=line_num)
-                        tokens.append(token)
-                        pos += len(value)
-                        break
-            else:
-                fbusl_error(f"Unexpected character {line[pos]!r}", line_num, file_path)
+    def next_token(self) -> Optional[Token]:
+        if self._pending_tokens:
+            return self._pending_tokens.pop(0)
 
-        tokens.append(Token("NEWLINE", "\\n", pos=line_num))
+        if self.pos >= self.length:
+            if len(self.indents) > 1:
+                self.indents.pop()
+                return Token(TokenType.DEDENT, "", Position(self.line, self.filename))
+            return None
 
-    # Close remaining indents
-    while len(indent_stack) > 1:
-        indent_stack.pop()
-        tokens.append(Token("DEDENT", indent_stack[-1], pos=line_num + 1))
+        if self.code[self.pos] == "\n":
+            self.pos += 1
+            self.line += 1
+            start_pos = self.pos
+            while self.pos < self.length and self.code[self.pos] in " \t":
+                self.pos += 1
+            indent = self.pos - start_pos
+            last_indent = self.indents[-1]
 
-    return tokens
-class FBUSLParser:
-    """Parses FBUSL code into an AST."""
-    def __init__(self, tokens, file_path):
-        self.tokens: list[Token] = tokens
-        self.index = 0
-        self.file_path = file_path
+            if indent > last_indent:
+                self.indents.append(indent)
 
-    def peek(self, offset=0) -> Token:
-        if not self.index + offset > len(self.tokens) - 1:
-            return self.tokens[self.index + offset]
-        return 0
+                self._pending_tokens.append(
+                    Token(TokenType.INDENT, "", Position(self.line, self.filename))
+                )
+            elif indent < last_indent:
+                while len(self.indents) > 1 and indent < self.indents[-1]:
+                    self.indents.pop()
+                    self._pending_tokens.append(
+                        Token(TokenType.DEDENT, "", Position(self.line, self.filename))
+                    )
 
-    def expect(self, kind: str, value: str = None):
+            return Token(
+                TokenType.NEWLINE, "\n", Position(self.line - 1, self.filename)
+            )
+
+        if self.code[self.pos] == "#":
+            while self.pos < self.length and self.code[self.pos] != "\n":
+                self.pos += 1
+            return self.next_token()
+
+        for kind, pattern in TOKEN_REGEX:
+            match = pattern.match(self.code, self.pos)
+            if match:
+                value = match.group(0)
+                tok_pos = Position(self.line, self.filename)
+                self.pos = match.end()
+                if kind in (TokenType.WHITESPACE, TokenType.COMMENT):
+                    return self.next_token()  # skip
+                return Token(kind, value, tok_pos)
+
+        fbusl_error(
+            f"Unexpected character: {self.code[self.pos]}",
+            Position(self.line, self.filename),
+        )
+        self.pos += 1
+        return self.next_token()
+
+    def tokenize(self) -> List[Token]:
+        tokens = []
+        while self.pos < self.length or self._pending_tokens:
+            tok = self.next_token()
+            if tok:
+                tokens.append(tok)
+
+        while len(self.indents) > 1:
+            self.indents.pop()
+            tokens.append(
+                Token(TokenType.DEDENT, "", Position(self.line, self.filename))
+            )
+
+        return tokens
+
+
+class Parser:
+    def __init__(self, tokens: list[Token]):
+        self.tokens = tokens
+        self.position = 0
+
+        self.max_repeat_tokens = 5
+
+    def peek(self) -> Token:
+        """Return the current token without consuming it."""
+        if self.position < len(self.tokens):
+            return self.tokens[self.position]
+
+        return Token("EOF", "", Position(self.position))
+
+    def consume(self) -> Token:
+        """Consume and return the current token."""
         tok = self.peek()
+        self.position += 1
+        return tok
 
-        if tok == 0:
-            if value is None:
-                fbusl_error(f"Missing '{kind}'", self.tokens[-1].pos, self.file_path)
+    def expect(self, kind: str, value=None) -> Token:
+        """
+        Consume the current token if it matches the expected kind (and optionally value),
+        otherwise raise an error.
+        """
+        tok = self.peek()
+        if tok.kind != kind or (value is not None and tok.value != value):
+            msg = f"Expected token {kind}"
+            if value is not None:
+                msg += f" with value {value}"
+            msg += f', but got {tok.kind} ("{tok.value}")'
+            fbusl_error(msg, self.get_current_pos())
+        self.position += 1
+        return tok
+
+    def get_current_pos(self) -> Position:
+        """Return the Position object of the current token."""
+        tok = self.peek()
+        return tok.pos
+
+    def parse(self):
+        last_tokens: list[Token] = []
+        ast: list[ASTNode] = []
+
+        while self.position < len(self.tokens):
+            token = self.peek()
+            node = self.parse_next()
+
+            if node is None:
+                self.consume()
+                continue
+
+            if isinstance(node, list):
+                ast.extend(node)
             else:
-                fbusl_error(f"Missing '{kind}' '{value}'", self.tokens[-1].pos, self.file_path)
+                ast.append(node)
 
-        if value is not None:
-            if tok.value != value:
+            last_tokens.append(token)
+
+            if len(last_tokens) > self.max_repeat_tokens:
+                last_tokens.pop(0)
+
+            if len(last_tokens) > self.max_repeat_tokens and all(
+                tok.kind == token.kind and tok.value == token.value
+                for tok in last_tokens
+            ):
                 fbusl_error(
-                    f"Expected token of kind '{kind}' with value of {value}, instead got '{tok.kind}' '{tok.value}'.",
-                    tok.pos, self.file_path)
+                    f"Too many repeats of token: {token}", self.get_current_pos()
+                )
 
-        if tok.kind != kind:
-            fbusl_error(f"Expected token of kind '{kind}', instead got kind '{tok.kind}' ", tok.pos, self.file_path)
+        return ast
 
-        self.consume()
-        return tok
+    def parse_next(self):
+        token = self.peek()
 
-    def consume(self):
-        tok = self.peek()
-        self.index += 1
-        return tok
+        if token.kind == TokenType.KEYWORD:
+            if token.value == "def":
+                pass
 
-    def parse(self) -> Tree:
-        tree = Tree()
-        while self.index < len(self.tokens):
-            tree.children.append(self.parse_next())
-
-        tree.children = [c for c in tree.children if c is not None]
-        return tree
-
-    def parse_next(self) -> Node:
-        tok = self.peek()
-        if tok.kind == "NEWLINE":
-            self.consume()
-        if tok.kind == "KEYWORD":
-            if tok.value == "def":
-                return self.parse_function()
-            elif tok.value == "struct":
-                return self.parse_struct()
-            elif tok.value == 'return':
-                return self.parse_return()
-            elif tok.value in ['if', 'elif', 'else']:
-                return self.parse_if_statement()
-            elif tok.value == "buffer":
-                return self.parse_buffer()
-        elif tok.kind == "TYPE":
-            return self.parse_typecast()
-        elif tok.kind in ["PRECISION", "IDENT"]:
-            return self.parse_var()
-        elif tok.kind == "DECORATOR":
+        if token.kind == TokenType.DECORATOR:
             return self.parse_decorator()
 
-    def parse_decorator(self):
-        decorator = self.expect('DECORATOR').value
-        self.expect('NEWLINE')
-        if decorator == "@define":
-            return self.parse_definition()
-        elif decorator == '@output':
-            return self.parse_inout('out')
-        elif decorator == '@input':
-            return self.parse_inout('in')
-        elif decorator == '@uniform':
-            return self.parse_uniform()
+        if token.kind == TokenType.KEYWORD:
+            if token.value == "def":
+                return self.parse_function_def()
 
-    def parse_definition(self):
-        name = self.expect('IDENT')
-        self.expect('OPERATOR', '=')
-        val = self.parse_expression()
-        return Define(name.pos, Identifier(name.pos, name.value), val)
+        if token.kind == TokenType.IDENT:
+            return self.parse_identifier()
 
-    def parse_typecast(self):
-        type = self.expect("TYPE").value
-        self.expect("SYMBOL", "(")
-        target = self.parse_expression()
-        self.expect("SYMBOL", ")")
-        return TypeCast(target.pos, target, type)
+    def parse_type(self) -> dict:
+        name = self.expect(TokenType.IDENT).value
 
-    def parse_uniform(self):
-        precision = None
-        if self.peek().kind == "PRECISION":
-            precision = self.expect('PRECISION').value
+        if self.peek().value == "[":
 
-        name = self.expect('IDENT')
-        self.expect('SYMBOL', ':')
+            self.expect(TokenType.SYMBOL, "[")
+            length = self.expect(TokenType.INT).value
+            self.expect(TokenType.SYMBOL, "]")
 
-        type = self.parse_type()
-        print(type)
-
-        return UniformDecl(name.pos, Identifier(name.pos, name.value), type, precision)
-
-    def parse_if_statement(self):
-        type = self.expect("KEYWORD")
-        condition = None
-
-        if type.value != "else":
-            condition = self.parse_expression()
-        self.expect('SYMBOL', ':')
-        self.expect('NEWLINE')
-        self.expect('INDENT')
-
-        body = []
-        while self.peek().kind != "DEDENT":
-            body.append(self.parse_next())
-            self.expect('NEWLINE')
-        self.expect("DEDENT")
-
-        if type.value == 'if':
-            return IfStatement(type.pos, condition, body)
-        elif type.value == 'elif':
-            return ElseIfStatement(type.pos, condition, body)
+            return {"name": "array", "data": {"length": length, "base_type": name}}
         else:
-            return ElseStatement(type.pos, body)
+            return {"name": name}
 
-    def parse_inout(self, inout_type: str):
-        precision = None
-        if self.peek().kind == "PRECISION":
-            precision = self.expect('PRECISION').value
+    def parse_function_def(self) -> FunctionDef:
+        position = self.get_current_pos()
+        self.expect(TokenType.KEYWORD, "def")
 
-        name = self.expect('IDENT')
-        self.expect('SYMBOL', ':')
-
-        type = self.parse_type()
-
-        ident = Identifier(name.pos, name.value)
-        if inout_type == "in":
-            return InputDecl(name.pos, ident, type, precision)
-        elif inout_type == "out":
-            return OutputDecl(name.pos, ident, type, precision)
-
-    def parse_return(self):
-        pos = self.expect("KEYWORD", 'return').pos
-        val = self.parse_expression()
-        return Return(pos, val)
-
-    def parse_type(self, allow_array=True):
-        if self.peek().kind == "TYPE":
-            type_name = self.expect('TYPE')
-        else:
-            type_name = self.expect('IDENT')
-
-        if allow_array:
-            if self.peek().kind == "SYMBOL" and self.peek().value == "[":
-                self.expect("SYMBOL", "[")
-                size_token = self.expect("INT")
-                size = int(size_token.value)
-                self.expect("SYMBOL", "]")
-                return Type(type_name.pos, Identifier(type_name.pos, type_name.value), size)
-        
-        return Type(type_name.pos, Identifier(type_name.pos, type_name.value))
-
-    def parse_function(self):
-        self.expect("KEYWORD", "def")
-        name = self.expect("IDENT")
-        self.expect("SYMBOL", "(")
+        name = self.expect(TokenType.IDENT).value
+        self.expect(TokenType.SYMBOL, "(")
 
         params = []
-        if self.peek().kind != "SYMBOL" or self.peek().value != ")":
-            params.append(self.parse_param())
-            while self.peek().kind == "SYMBOL" and self.peek().value == ",":
-                self.consume()
-                params.append(self.parse_param())
-        self.expect("SYMBOL", ")")
-        return_type = None
-        if self.peek().kind == "ARROW":
-            self.expect("ARROW", "->")
-            return_type = self.parse_type(False)
 
-        self.expect("SYMBOL", ":")
-        self.expect("NEWLINE")
-        self.expect("INDENT")
+        first = True
+        while self.peek().value != ")":
+            if not first:
+                self.expect(TokenType.SYMBOL, ",")
+
+            param_name = self.expect(TokenType.IDENT)
+            param_type, param_qualifier = self.parse_type_and_qualifier()
+
+            if param_qualifier not in ["in", "inout", "out", None]:
+                fbusl_error(
+                    'Function parameters can only have qualifiers of "in", "out", and "inout".',
+                    position,
+                )
+
+            params.append(
+                FunctionParam(param_name, param_type, param_qualifier, position)
+            )
+
+            first = False
+
+        self.expect(TokenType.SYMBOL, ")")
+
+        return_type = None
+        if self.peek().kind == TokenType.ARROW:
+            self.expect(TokenType.ARROW)
+            return_type = self.parse_type()
+
+        self.expect(TokenType.SYMBOL, ":")
+        self.expect(TokenType.NEWLINE)
+        self.expect(TokenType.INDENT)
 
         body = []
-        while self.peek().kind != "DEDENT":
-            stmt = self.parse_next()
-            if stmt:
-                body.append(stmt)
 
-        self.expect("DEDENT")
-        return FuncDecl(name.pos, Identifier(name.pos, name.value), return_type, params, body)
+        while self.peek().kind != TokenType.DEDENT:
+            node = self.parse_next()
+            if node is None:
+                self.consume()  # skip unknown or blank token
+                continue
+            print(node)
 
-    def parse_param(self) -> Param:
-        name = self.expect('IDENT')
-        self.expect("SYMBOL", ":")
-        type = self.parse_type()
+            if isinstance(node, list):
+                body.extend(node)
+            else:
+                body.append(node)
 
-        return Param(name.pos, Identifier(name.pos, name.value), type)
+            if self.peek().kind == TokenType.NEWLINE:
+                self.consume()
 
-    def parse_expression(self):
-        expr = self.parse_logical_or()
-        if self.peek().kind == "KEYWORD" and self.peek().value == "if":
-            self.consume()
-            condition = self.parse_logical_or()
-            self.expect("KEYWORD", "else")
-            false_expr = self.parse_expression()
-            return TernaryExpression(expr.pos, expr, false_expr, condition)
-        return expr
+        self.expect(TokenType.DEDENT)
 
-    def parse_logical_or(self):
-        left = self.parse_logical_and()
-        while self.peek().kind == "KEYWORD" and self.peek().value == "or":
-            self.consume()
-            right = self.parse_logical_and()
-            left = Or(left.pos, left, right)
-        return left
+        return FunctionDef(name, body, return_type, params)
 
-    def parse_logical_and(self):
-        left = self.parse_equality()
-        while self.peek().kind == "KEYWORD" and self.peek().value == "and":
-            self.consume()
-            right = self.parse_equality()
-            left = And(left.pos, left, right)
-        return left
+    def parse_decorator(self) -> ASTNode:
+        decorator_type = self.expect(TokenType.DECORATOR).value
+        self.expect(TokenType.NEWLINE)
 
-    def parse_equality(self):
-        left = self.parse_condition()
-        while self.peek().kind == "COMPARISON" and self.peek().value in ["==", "!="]:
-            comparison = self.consume().value
-            right = self.parse_condition()
-            left = Condition(left.pos, left, right, comparison)
-        return left
+        decorators = []
 
-    def parse_condition(self):
-        left = self.parse_term()
-        while self.peek().kind == "COMPARISON" and self.peek().value in ["<", ">", "<=", ">="]:
-            comparison = self.consume().value
-            right = self.parse_term()
-            left = Condition(left.pos, left, right, comparison)
-        return left
+        while self.peek().kind == TokenType.IDENT:
+            position = self.get_current_pos()
+            if decorator_type in ["@uniform", "@input", "@output"]:
 
-    def parse_term(self):
-        left = self.parse_factor()
-        while self.peek().kind == "OPERATOR" and self.peek().value in ["+", "-"]:
-            op = self.consume().value
-            right = self.parse_factor()
-            left = BinOp(left.pos, left, op, right)
-        return left
+                name = self.expect(TokenType.IDENT).value
+                var_type, qualifier = self.parse_type_and_qualifier()
 
-    def parse_factor(self):
-        left = self.parse_unary()
-        while self.peek().kind == "OPERATOR" and self.peek().value in ["*", "/"]:
-            op = self.consume().value
-            right = self.parse_unary()
-            left = BinOp(left.pos, left, op, right)
-        return left
+                dec_class_map = {
+                    "@output": Output,
+                    "@input": Input,
+                    "@uniform": Uniform,
+                }
+                decorators.append(
+                    dec_class_map[decorator_type](name, var_type, qualifier, position)
+                )
 
-    def parse_unary(self):
-        if self.peek().kind == "KEYWORD" and self.peek().value == "not":
-            op_tok = self.consume()
-            operand = self.parse_unary()
-            return Not(op_tok.pos, operand)
-        return self.parse_value()
+            else:
+                name = self.expect(TokenType.IDENT)
 
-    def parse_var(self):
-        precision = None
-        if self.peek().kind == "PRECISION":
-            precision = self.expect('PRECISION').value
-        name = self.expect('IDENT')
+                self.expect(TokenType.OPERATOR, "=")
 
-        if self.peek().value == ":":
-            return self.parse_var_decl(name, precision)
-        elif precision is None:
-            return self.parse_var_set(name)
-        else:
-            fbusl_error('Cannot change precision of defined value', name.pos, self.file_path)
+                val = self.parse_expression()
 
-    def parse_var_decl(self, name, precision):
-        self.expect("SYMBOL", ":")
-        type = self.parse_type()
+                decorators.append(Define(name, val, position))
 
-        val = None
-        if self.peek().kind == 'OPERATOR' and self.peek().value == "=":
-            self.consume()
-            val = self.parse_expression()
+            self.expect(TokenType.NEWLINE)
 
-        return VarDecl(name.pos, Identifier(name.pos, name.value), type, val, precision)
+        return decorators
 
-    def parse_var_set(self, name):
-        self.expect("OPERATOR", "=")
-        expression = None
-        if self.peek().kind != "NEWLINE":
-            expression = self.parse_expression()
-        return Set(name.pos, Identifier(name.pos, name.value), expression)
+    def parse_type_and_qualifier(self) -> tuple[dict, str | None]:
+        self.expect(TokenType.SYMBOL, ":")
 
-    def parse_value(self):
-        tok = self.peek()
-        if tok.kind == "INT":
-            return Int(tok.pos, self.consume().value)
-        elif tok.kind == "FLOAT":
-            return Float(tok.pos, self.consume().value)
-        elif tok.kind == "IDENT":
-            return self.parse_get()
-        elif tok.kind == "TYPE" and self.peek(1).value == "(":
-            return self.parse_typecast()
-        else:
-            fbusl_error(f"Unexpected token '{tok.value}'", tok.pos, self.file_path)
+        prec = None
+        if self.peek().kind == TokenType.qualifier:
+            prec = self.expect(TokenType.qualifier).value
 
-    def parse_get(self) -> Node:
-        node = Identifier(self.peek().pos, self.expect("IDENT").value)
-        while self.peek().kind == "SYMBOL" and self.peek().value in [".", "("]:
-            if self.peek().value == ".":
-                self.expect("SYMBOL", ".")
-                field = self.expect("IDENT").value
-                node = MethodIdentifier(node.pos, node, field)
-            elif self.peek().value == "(":
-                self.expect("SYMBOL", "(")
-                args = []
-                while self.peek().value != ")":
-                    if self.peek().value == ",":
-                        self.consume()
-                    args.append(Arg(node.pos, self.parse_expression()))
-                self.expect("SYMBOL", ")")
-                node = Call(node.pos, node.name, args)
+        node_type = self.parse_type()
+
+        return node_type, prec
+
+    def parse_identifier(self) -> ASTNode:
+        node = Identifier(self.consume().value, pos=self.get_current_pos())
+
+        while True:
+            tok = self.peek()
+
+            if tok.kind == TokenType.SYMBOL and tok.value == ".":
+                self.consume()
+                member_tok = self.expect(TokenType.IDENT)
+                node = MemberAccess(node, member_tok.value, pos=member_tok.pos)
+
+            elif tok.kind == TokenType.SYMBOL and tok.value == "[":
+                self.consume()
+                index_expr = self.parse_expression()
+                self.expect(TokenType.SYMBOL, "]")
+                node = ArrayAccess(node, index_expr, pos=self.get_current_pos())
+
+            elif tok.kind == TokenType.SYMBOL and tok.value == "(":
+                self.consume()
+                args = self.parse_call_args()
+                self.expect(TokenType.SYMBOL, ")")
+                node = FuncCall(node, args, pos=self.get_current_pos())
+
+            elif tok.kind == TokenType.OPERATOR and tok.value == "=":
+                self.consume()
+                expr = self.parse_expression()
+                node = Setter(node, expr, self.get_current_pos())
+
+            elif tok.kind == TokenType.SYMBOL and tok.value == ":":
+                self.parse_var_decl(node.value)
+
+            else:
+                break
+
         return node
 
-    def parse_field(self) -> StructField:
-        precision = None
-        if self.peek().kind == "PRECISION":
-            precision = self.expect('PRECISION').value
+    def parse_var_decl(self, name=None) -> ASTNode:
+        pos = self.get_current_pos()
 
-        name = self.expect('IDENT')
-        self.expect("SYMBOL", ":")
+        if name == None:
+            name = self.expect(TokenType.IDENT).value
 
-        type = self.parse_type()
+        node_type, qualifier = self.parse_type_and_qualifier()
 
-        return StructField(name.pos, Identifier(name.pos, name.value), type, precision)
+        value = None
+        if self.peek().kind == TokenType.OPERATOR and self.peek().value == "=":
+            self.consume()
+            value = self.parse_expression()
 
-    
+        return VarDecl(
+            name=name, var_type=node_type, value=value, qualifier=qualifier, pos=pos
+        )
 
-    def parse_buffer(self) -> Buffer:
-        self.expect('KEYWORD', 'buffer')
-        name = self.expect('IDENT')
-        self.expect('SYMBOL', ':')
-        self.expect("NEWLINE")
+    def parse_literal(self) -> ASTNode:
+        tok = self.consume()
+        if tok.kind == TokenType.INT:
+            return Literal(int(tok.value), pos=tok.pos)
+        elif tok.kind == TokenType.FLOAT:
+            return Literal(float(tok.value), pos=tok.pos)
+        elif tok.kind == TokenType.KEYWORD and tok.value in ["true", "false"]:
+            return Literal(tok.value == "true", pos=tok.pos)
+        else:
+            fbusl_error(f"Invalid literal: {tok.value}", tok.pos)
 
-        fields = []
-        while self.peek().kind != "DEDENT":
-            self.expect('INDENT')
-            field_name = self.expect('IDENT')
-            self.expect("SYMBOL", ":")
-            
-            field_type = self.parse_type()
-            
-            fields.append(BufferField(field_name.pos, Identifier(field_name.pos, field_name.value), field_type))
+    def parse_identifier_expr(self) -> ASTNode:
+        node = Identifier(self.consume().value)
 
-            self.expect("NEWLINE")
+        while True:
+            tok = self.peek()
 
-        self.expect("DEDENT")
+            if tok.kind == TokenType.SYMBOL and tok.value == ".":
+                self.consume()
+                member_tok = self.expect(TokenType.IDENT)
+                node = MemberAccess(node, member_tok.value)
 
+            elif tok.kind == TokenType.SYMBOL and tok.value == "[":
+                self.consume()
+                index_expr = self.parse_expression()
+                self.expect(TokenType.SYMBOL, "]")
+                node = ArrayAccess(node, index_expr)
 
+            elif tok.kind == TokenType.SYMBOL and tok.value == "(":
+                self.consume()
+                args = self.parse_call_args()
+                self.expect(TokenType.SYMBOL, ")")
+                node = FuncCall(node, args)
 
-        return Buffer(name.pos, Identifier(name.pos, name.value), fields)
+            else:
+                break
 
+        return node
 
-    def parse_struct(self) -> StructDecl:
-        self.expect('KEYWORD', 'struct')
-        name = self.expect('IDENT')
-        self.expect('SYMBOL', ":")
-        self.expect('NEWLINE')
-        self.expect('INDENT')
+    def parse_call_args(self) -> List[ASTNode]:
+        args = []
+        tok = self.peek()
+        if tok.kind == TokenType.SYMBOL and tok.value == ")":
+            return args
 
-        fields = []
-        while self.peek().kind != "DEDENT":
-            fields.append(self.parse_field())
-            if self.peek().kind == "NEWLINE":
-                self.expect('NEWLINE')
-        self.expect("DEDENT")
-        return StructDecl(name.pos, Identifier(name.pos, name.value), fields)
-    
-class GLSLParser:
-    """Parses GLSL into an AST."""
+        while True:
+            arg = self.parse_expression()
+            args.append(arg)
+            tok = self.peek()
+            if tok.kind == TokenType.SYMBOL and tok.value == ",":
+                self.consume()
+            else:
+                break
+        return args
+
+    def parse_expression(self, precedence=0) -> ASTNode:
+        left = self.parse_primary()
+
+        while True:
+            tok = self.peek()
+            if tok.kind != TokenType.OPERATOR:
+                break
+            op = tok.value
+            op_prec = self.get_operator_precedence(op)
+            if op_prec < precedence:
+                break
+            self.consume()
+            right = self.parse_expression(op_prec + 1)
+            left = BinOp(left, op, right)
+
+        return left
+
+    def parse_primary(self) -> ASTNode:
+        tok = self.peek()
+
+        if tok.kind == TokenType.IDENT:
+            return self.parse_identifier()
+
+        elif tok.kind in (TokenType.INT, TokenType.FLOAT, TokenType.BOOL):
+            return self.parse_literal()
+
+        elif tok.kind == TokenType.SYMBOL and tok.value == "(":
+            self.consume()  # consume "("
+            expr = self.parse_expression()
+            self.expect(TokenType.SYMBOL, ")")
+            return expr
+
+        elif tok.kind == TokenType.OPERATOR and tok.value in ("+", "-", "not"):
+            op = self.consume().value
+            operand = self.parse_primary()
+            return UnaryOp(op, operand, pos=tok.pos)
+
+        else:
+            fbusl_error(
+                f"Unexpected token in expression: {tok.kind} ({tok.value})", tok.pos
+            )
+
+    def get_operator_precedence(self, op: str) -> int:
+        PRECEDENCE = {
+            "*": 10,
+            "/": 10,
+            "%": 10,
+            "+": 9,
+            "-": 9,
+            "<<": 8,
+            ">>": 8,
+            "<": 7,
+            "<=": 7,
+            ">": 7,
+            ">=": 7,
+            "==": 6,
+            "!=": 6,
+            "&": 5,
+            "^": 4,
+            "|": 3,
+            "and": 2,
+            "or": 1,
+            "=": 0,
+        }
+        return PRECEDENCE.get(op, -1)

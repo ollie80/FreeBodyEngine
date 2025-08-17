@@ -1,8 +1,10 @@
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine.core.window import Window, Cursor
+from FreeBodyEngine import emit_event
+from FreeBodyEngine.core.window import Window, Cursor, WINDOW_RESIZE
 from FreeBodyEngine.core.window.win32cursor import build_cursor_from_pil
 from typing import TYPE_CHECKING, Union, Literal
 from FreeBodyEngine.core.service import Service
+from FreeBodyEngine.core.input import Key
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
@@ -38,7 +40,6 @@ class Win32Window(Window):
         super().__init__(size, title)
         self.window_type = 'win32'
 
-        # Register window class
         hInstance = win32api.GetModuleHandle()
         className = "Win32WindowClass"
         self._is_ready = False
@@ -54,8 +55,8 @@ class Win32Window(Window):
         self._window_class.lpszClassName = className
         self._atom = win32gui.RegisterClass(self._window_class)
         self._window_class.style = win32con.CS_OWNDC
+        
 
-        # Create the window
         self._window = win32gui.CreateWindow(
             self._atom,
             title, # title
@@ -64,22 +65,35 @@ class Win32Window(Window):
             0, 0, hInstance, None
         )
 
-        # Show the window
         win32gui.ShowWindow(self._window, win32con.SW_SHOWNORMAL)
         win32gui.UpdateWindow(self._window)
         self.hdc = win32gui.GetDC(self._window)
+    
+    
 
     def wnd_proc(self, hwnd, msg, wparam, lparam):
         if msg == win32con.WM_DESTROY:
             win32gui.PostQuitMessage(0)
             self.close()
             return 0
+        
         if msg == win32con.WM_PAINT:
             self._is_ready = True
+
+        if msg == win32con.WM_SIZE:
+            rect = win32gui.GetClientRect(hwnd)
+
+            width  = rect[2] - rect[0]
+            height = rect[3] - rect[1]
+            size = (width, height)
+            
+            emit_event(WINDOW_RESIZE, size)
+
         return win32gui.DefWindowProc(hwnd, msg, wparam, lparam)
 
     def _set_cursor(self, cursor: Win32Cursor):
         win32gui.SetCursor(cursor.handle)
+        
 
     def _create_cursor(self, image: 'Image'):
         return Win32Cursor(image)
@@ -94,6 +108,7 @@ class Win32Window(Window):
     
     @size.setter
     def size(self, new: tuple[int, int]):
+        
         rect = win32gui.GetWindowRect(self._window)
         
         win32gui.MoveWindow(self._window, rect[0], rect[1], *new, True)

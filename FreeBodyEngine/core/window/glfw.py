@@ -1,10 +1,11 @@
-from FreeBodyEngine.core.window import Window, Cursor
+from FreeBodyEngine.core.window import Window, Cursor, WINDOW_RESIZE
 from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING
-from FreeBodyEngine.core.input import Key
+from FreeBodyEngine.core.input import Key, KeyCallbackType
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine.core.camera import Camera
+from FreeBodyEngine import emit_event
 from FreeBodyEngine import get_flag, DEVMODE, error, get_main, get_service, get_time
 import numpy
 
@@ -13,6 +14,12 @@ import glfw
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
     from FreeBodyEngine.graphics.image import Image
+
+GLFW_KEY_CALLBACK_TYPE_MAP = {
+    glfw.PRESS: KeyCallbackType.PRESS,
+    glfw.RELEASE: KeyCallbackType.RELEASE,
+    glfw.REPEAT: KeyCallbackType.REPEAT
+}
 
 GLFW_CHARACTER_MAP = {
     Key.A: glfw.KEY_A,
@@ -135,8 +142,6 @@ GLFW_CHARACTER_MAP = {
     Key.NUMPAD_ENTER: glfw.KEY_KP_ENTER,
 }
 
-
-
 class GLFWWindow(Window):
     def __init__(self, size: tuple[int, int], title: str):
         super().__init__(size, title)
@@ -147,6 +152,8 @@ class GLFWWindow(Window):
             raise RuntimeError("GLFW failed to initialize")
         
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
+        glfw.window_hint(glfw.POSITION_X, 200)
+        glfw.window_hint(glfw.POSITION_Y, 200)
         glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
         glfw.window_hint(glfw.OPENGL_DEBUG_CONTEXT, get_flag(DEVMODE, False))
@@ -160,6 +167,12 @@ class GLFWWindow(Window):
         glfw.make_context_current(self._window)
         glfw.set_window_size_callback(self._window, self.resize)
 
+    def _key_callback(self, window, key, scancode, action, mods):
+        input_key = GLFW_CHARACTER_MAP[key]
+        key_type = GLFW_KEY_CALLBACK_TYPE_MAP[action]
+        
+        get_service('input')._key_callback(input_key, key_type)
+
     def set_title(self, new_title):
         glfw.set_window_title(self._window, new_title)
 
@@ -168,7 +181,7 @@ class GLFWWindow(Window):
         return glfw.get_window_size(self._window)
 
     def resize(self, window, width, height):
-        self._resize()
+        emit_event(WINDOW_RESIZE, (width, height))
 
     @size.setter
     def size(self, new: tuple[int, int]):

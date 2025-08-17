@@ -45,6 +45,14 @@ class Function:
     def __repr__(self):
         return "Function"
 
+class Struct:
+    def __init__(self, name: str, attributes: list[dict[str, Type]]):
+        self.name = Identifier(None, name)
+        self.attributes = attributes
+
+    def __repr__(self):
+        return "Struct"
+
 class FuncCall(Node):
     def __init__(self, pos, name: Identifier | str, args):
         super().__init__(pos)
@@ -93,8 +101,9 @@ class Scope:
         return name in self.symbols or (self.parent and name in self.parent)
 
 class SemanticAnalyser:
-    def __init__(self, tree: Tree, builtins: dict, file_path=None):
+    def __init__(self, tree: Tree, builtins: dict, shader_type, file_path=None):
         self.tree = tree
+        self.shader_type = shader_type
         self.global_scope = Scope(file_path=file_path)
         self.current_scope = self.global_scope
         self.functions: dict[str, Function] = {}
@@ -115,11 +124,14 @@ class SemanticAnalyser:
         
         float_type = Type(0, Identifier(0, "float"))
         int_type = Type(0, Identifier(0, "int"))
+
         self.functions['round'] = Function('round', Type(0, Identifier(0, float_type)), {"x": float_type})
+        self.functions['clamp'] = Function('clamp', Type(0, Identifier(0, float_type)), {"x": float_type})
         self.functions['texture'] = Function('texture', Type(0, Identifier(0, 'vec4')), {"sampler": Type(0, Identifier(0, 'sampler2D')), "sample_pos": Type(0, Identifier(0, 'vec2'))})
         
         self.global_scope.define(Output("VERTEX_POSITION", Type(0, Identifier(0, 'vec4'))))
-        self.global_scope.define(Output("INSTANCE_ID", Type(0, Identifier(0, 'int'))))
+        if self.shader_type == "vert":
+            self.global_scope.define(Output("INSTANCE_ID", Type(0, Identifier(0, 'int'))))
 
         # Vector structs
         vec2_type = Type(0, Identifier(0, 'vec2'))
@@ -160,7 +172,7 @@ class SemanticAnalyser:
             StructField(None, 'w', int_type, None)
         ])
 
-        # Matrices
+        # Matrices  
         self.structs['mat2'] = StructDecl(None, Type(0, Identifier(0, 'mat2')), [
             StructField(None, 'col0', vec2_type, None),
             StructField(None, 'col1', vec2_type, None)
@@ -181,9 +193,12 @@ class SemanticAnalyser:
         for node in self.tree.children:
             if isinstance(node, FuncDecl):
                 self.check_for_func(node)
+            if isinstance(node, StructDecl):
+                self.check_for_struct(node)
 
         for node in self.tree.children:
             self.analyse_node(node)
+
         return self.tree
 
     def check_for_func(self, node: FuncDecl):
@@ -191,6 +206,13 @@ class SemanticAnalyser:
         for param in node.params:
             params[param.name] = param.type
         self.functions[node.name.name] = Function(node.name, node.return_type, params)
+
+    def check_for_struct(self, node: StructDecl):
+        attributes = {}
+        for attr in node.methods:
+            attributes[attr.name.name] = attr.type
+        self.structs[node.name.name] = Struct(node.name, attributes)
+
 
     def analyse_node(self, node: Node):
         if isinstance(node, FuncDecl):
@@ -205,6 +227,7 @@ class SemanticAnalyser:
             self.analyse_expression(node)
         elif isinstance(node, Return):
             self.analyse_node(node.expr)
+
 
     def analyse_function(self, node: FuncDecl):
         function_scope = Scope(self.global_scope)
@@ -243,7 +266,7 @@ class SemanticAnalyser:
                 OutputDecl: Output,
             }.get(type(node), Var)
             var = var_class(node.name, node.type)
-
+            
         self.current_scope.define(var)
 
     def analyse_setter(self, node: Node):
@@ -294,7 +317,6 @@ class SemanticAnalyser:
                 fbusl_error(f"Operator '{node.op}' not supported between types '{left}' and '{right}'", node.pos, self.file_path)
 
     def get_node_type(self, node: Node)->Type:
-        print(node)
         if isinstance(node, Expression):
             return self.get_expression_type(node)
         elif isinstance(node, Return):
@@ -308,6 +330,23 @@ class SemanticAnalyser:
         elif isinstance(node, Identifier):
             var = self.current_scope.lookup(node.name, node.pos)
             return var.type
+        elif isinstance(node, Get):
+            if not node.array_access:
+                var = self.current_scope.lookup(node.name.name, node.pos)
+                return var.type
+            else:
+                var = self.current_scope.lookup(node.name.name, node.pos)
+                return var.type.base_type()
+        elif isinstance(node, MethodGet):
+            if not node.array_access:
+                struct = self.structs.get(node.struct_name)
+                return struct.methods.get(node.name.name)
+            
+            else:
+                struct = self.structs.get(node.struct_name)
+                return struct.methods.get(node.name.name).base_type()
+
+        
         elif isinstance(node, TypeCast):
             return node.type
         elif isinstance(node, TernaryExpression):
@@ -325,14 +364,18 @@ class SemanticAnalyser:
             fbusl_error(f"Cannot determine type of node {type(node).__name__}", getattr(node, 'pos', None), self.file_path)
 
 
-    def get_field_type(self, node: MethodIdentifier):
+    def get_field_type(self, node: MethodGet):
         struct_var = self.current_scope.lookup(node.struct, node.pos)
         struct_type_name = struct_var.type
+
         if struct_type_name not in self.structs:
             fbusl_error(f"'{struct_type_name}' is not a struct type", node.pos, self.file_path)
+        
         struct_def = self.structs[struct_type_name]
+        
         if node.method_name not in struct_def.fields:
             fbusl_error(f"Struct '{struct_type_name}' has no field '{node.method_name}'", node.pos, self.file_path)
+        
         return struct_def.fields[node.method_name]
 
     def get_expression_type(self, node: Expression):

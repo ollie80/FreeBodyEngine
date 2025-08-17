@@ -1,20 +1,19 @@
+@define
+test = 1+2
+test2 = test+3
+
 @uniform
-view: mat4 
-@uniform
-proj: mat4
-@uniform
+view: mat4
+proj: mat4 
 model: mat4 
 
 @input
 vertex: vec3
-@input
 uvs: vec2
-@input
 normals: vec3
 
-@output
+@output # test comment
 uv: vec2
-@output
 normal: vec3
 
 def main():
