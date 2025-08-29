@@ -5,7 +5,6 @@ from FreeBodyEngine.graphics import material
 from FreeBodyEngine.graphics import mesh
 from FreeBodyEngine.graphics import sprite
 from FreeBodyEngine.graphics import gl33
-from FreeBodyEngine.graphics import fbusl
 from FreeBodyEngine.graphics import pbr
 from FreeBodyEngine.graphics import pipeline
 from FreeBodyEngine.graphics import model
@@ -21,4 +20,4 @@ def get_renderer() -> type[renderer.Renderer]:
     
 
 
-__all__ = ["color", "mesh", "material", "renderer", "pipeline", "image", 'pbr', "gl33", 'sprite', 'fbusl', 'model']
+__all__ = ["color", "mesh", "material", "renderer", "pipeline", "image", 'pbr', "gl33", 'sprite', 'model']

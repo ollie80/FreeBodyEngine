@@ -1,7 +1,8 @@
-from FreeBodyEngine.graphics.fbusl.generator import Generator
-from FreeBodyEngine.graphics.fbusl.ast_nodes import *
-from FreeBodyEngine.graphics.fbusl.semantic import SemanticAnalyser 
+from fbusl.generator import Generator
+from fbusl.node import *
+from fbusl.semantic import SemanticAnalyser 
 from FreeBodyEngine.graphics.shader import Shader
+from FreeBodyEngine.graphics.gl33.generator import GL33Generator
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
 from FreeBodyEngine import warning
@@ -67,9 +68,8 @@ def compile_shader(source, shader_type):
 
 class GLShader(Shader):
     def __init__(self, vertex_source, fragment_source, injector):
-        
-        super().__init__(vertex_source, fragment_source, GLGenerator, injector)
-        self._shader = create_shader_program(self.vertex_source, self.fragment_source)
+        super().__init__(vertex_source, fragment_source, GL33Generator, injector)
+        self._shader = create_shader_program(self.fbusl_vertex_source, self.fbusl_fragment_source)
         self.uniforms = self._shader
         
         self.uniforms: dict[str, GLUniform] = {}
@@ -80,6 +80,9 @@ class GLShader(Shader):
         for name in self.uniforms:
             self.uniform_cache[name] = None
                 
+    def rebuild(self, injector = ...):
+        super().__init__(self.vertex_source, self.fragment_source, self.generator, injector)
+        self._shader = create_shader_program(self.fbusl_fragment_source, self.fbusl_vertex_source)
 
     def setup_uniforms(self):
         count = glGetProgramiv(self._shader, GL_ACTIVE_UNIFORMS)
@@ -274,8 +277,14 @@ class GLShader(Shader):
                     img = self.uniform_cache[name]
                     if img != None and isinstance(img, Image):
                         glUniform1i(self.uniforms[name].location, img.texture.use())
+                        rect = img.texture.uv_rect
                     if img != None and isinstance(img, Texture):
                         glUniform1i(self.uniforms[name].location, img.use())
+                        rect = img.uv_rect
+                    
+                    uv_rect = f"_ENGINE_{name}_uv_rect"
+                    if uv_rect in self.uniforms:
+                        glUniform4f(self.uniforms[uv_rect].location, rect[0], rect[1], rect[2], rect[3])
                 else:
                     images = self.uniform_cache[name]
                     locations = []
@@ -285,301 +294,6 @@ class GLShader(Shader):
                                 locations.append(img.texture.use())
                             if isinstance(img, Texture):
                                 locations.append(img.use())
+                            
                         glUniform1i(self.uniforms[name].location, locations)
                             
-
-        
-
-class GLGenerator(Generator):
-    """
-    GLSL implementation of the FBUSL code generator. 
-    """
-    def __init__(self, tree, analyser: SemanticAnalyser, buffer_index: int, shader_type):
-        self.tree: Tree = tree
-        self.analyser = analyser
-        self.shader_type = shader_type
-        self.precisions = {"high": "highp", "med": "mediump", "low": "lowp"}
-        self.default_precision = "high"
-        self.input_index = -1
-        self.output_index = -1
-        self.buffer_index = buffer_index
-        self.data = {"buffers": {}}
-
-    def generate(self, default_precision="high") -> str:
-        self.default_precision = default_precision
-        string = "#version 330 core\n"
-
-        for child in self.tree.children:
-            string += str(self.generate_node(child))
-        return string, self.data
-    
-    def generate_node(self, node: Node):
-        if isinstance(node, UniformDecl):
-            return self.generate_uniform(node)
-        
-        elif isinstance(node, (Get, MethodGet)):
-            return self.generate_get(node)
-
-        elif isinstance(node, And):
-            return self.generate_and(node)
-
-        elif isinstance(node, Or):
-            return self.generate_or(node)
-
-        elif isinstance(node, Not):
-            return self.generate_not(node)
-
-        elif isinstance(node, InputDecl):
-            return self.generate_input(node)
-        
-        elif isinstance(node, (Int, Float)):
-            return str(node.value)
-        
-        elif isinstance(node, OutputDecl):
-            return self.generate_output(node)
-        
-        elif isinstance(node, Define):
-            return self.generate_definition(node)
-        
-        elif isinstance(node, Expression):
-            return self.generate_expression(node)
-        
-        elif isinstance(node, Buffer):
-            return self.generate_buffer(node)
-
-        elif isinstance(node, FuncDecl):
-            return self.generate_function(node)
-        
-        elif isinstance(node, Set):
-            return self.generate_set(node)
-        
-        elif isinstance(node, Return):
-            return self.generate_return(node)
-        
-        elif isinstance(node, StructDecl):
-            return self.generate_struct(node)
-        
-        elif isinstance(node, VarDecl):
-            return self.generate_var(node)
-
-        elif isinstance(node, MethodIdentifier):
-            return self.generate_field_identifier(node)
-
-        elif isinstance(node, Identifier):
-            return self.generate_identifier(node)
-        
-        elif isinstance(node, (IfStatement, ElseStatement)):
-            return self.generate_if_statement(node)
-        
-        elif isinstance(node, TernaryExpression):
-            return self.generate_ternary_expression(node)
-        
-        elif isinstance(node, Condition):
-            return self.generate_condition(node)
-    
-        elif isinstance(node, TypeCast):
-            return self.generate_typecast(node)
-
-        elif isinstance(node, Call):
-            return self.generate_call(node)
-
-        elif isinstance(node, Type):
-            return self.generate_type(node)
-        
-        elif isinstance(node, str):
-            return node
-        
-        return None
-    
-    def generate_or(self, node: Or):
-        return f"({self.generate_node(node.left)} || {self.generate_node(node.right)})"
-
-    def generate_and(self, node: And):
-        return f"({self.generate_node(node.left)} && {self.generate_node(node.right)})"
-
-    def generate_not(self, node: Not):
-        return f"!{self.generate_node(node.node)}"
-    
-    def generate_get(self, node: Get | MethodGet):
-        if isinstance(node, Get):
-            if node.array_access:
-                return f"{self.generate_node(node.name)}[{self.generate_node(node.array_index)}]"
-            else:
-                return f"{self.generate_node(node.name)}"
-        else:
-            if node.array_access:
-                return f'{self.generate_node(node.struct_name)}.{self.generate_node(node.name)}[{self.generate_node(node.array_index)}]'
-            else:
-                return f'{self.generate_node(node.struct_name)}.{self.generate_node(node.name)}'
-            
-    
-    def generate_type(self, node: Type):
-        return f"{self.generate_node(node.name)}"
-
-    def generate_call(self, node: Call):
-        s = ""
-        for i, arg in enumerate(node.args):
-            s += self.generate_node(arg.val)
-            if i < len(node.args) - 1:
-                s += ', '
-        return f"{self.generate_node(node.name)}({s})"
-
-    def generate_identifier(self, node: Identifier):
-        if node.name == "VERTEX_POSITION":
-            s = "gl_Position"
-        elif node.name == "INSTANCE_ID" and self.shader_type == 'vert':
-            s = 'gl_InstanceID'
-        else:
-            s = node.name
-        
-        return f"{s}"
-    
-    def generate_field_identifier(self, node: MethodIdentifier):        
-        if node.struct:
-            return f"{self.generate_node(node.struct)}.{node.method_name}"
-        else:
-            return f"{self.generate_node(node.struct)}[{node.method_name}]"
-
-    def generate_var(self, node: VarDecl):
-        prec = f"{node.precision} " if node.precision else ""
-        array_access = ""
-        if node.type.length > 1:
-            array_access = f"[{node.type.length}]"
-        return f"{prec}{self.generate_node(node.type)} {self.generate_node(node.name)}{array_access} = {self.generate_node(node.val)}"
-
-    def generate_input(self, node: InputDecl) -> str:
-        self.input_index += 1
-        prec = f" {node.precision} " if node.precision else " "
-        array_access = ""
-        if node.type.length > 1:
-            array_access = f"[{node.type.length}]"
-        return f"\nlayout(location = {self.input_index}) {prec}in {self.generate_node(node.type)} {node.name.name}{array_access};\n"
-    
-    def generate_output(self, node: OutputDecl) -> str:
-        self.output_index += 1
-        prec = f" {node.precision} " if node.precision else " "
-        array_access = ""
-        if node.type.length > 1:
-            array_access = f"[{node.type.length}]"
-        return f"\nlayout(location = {self.output_index}) {prec}out {self.generate_node(node.type)} {node.name.name}{array_access};\n"
-    
-    def generate_buffer(self, node: Buffer):
-        s = ""
-        name = self.generate_node(node.name)
-        s += f"\nlayout(std140) uniform _ENGINE_{name}_BUFFER " + "{\n"
-        
-        for field in node.fields:
-            s += "  " + self.generate_buffer_field(field) + "\n" 
-        
-        s += "}" + f" {name};\n"
-
-        self.data['buffers'][name] = (self.buffer_index, f"_ENGINE_{name}_BUFFER")
-        self.buffer_index += 1
-        
-        return s
-
-    def generate_buffer_field(self, field: BufferField) -> str:
-        array_access = ""
-
-        if field.type.length > 1:
-            array_access = f"[{field.type.length}]"
-        return f"{self.generate_node(field.type)} {self.generate_node(field.name)}{array_access};"
-
-    def generate_uniform(self, node: UniformDecl) -> str:
-        prec = f" {node.precision} " if node.precision else " "
-        return f"\nuniform{prec}{self.generate_node(node.type)} {node.name.name};\n"
-    
-    def generate_definition(self, node: Define) -> str:
-        return f"#define {self.generate_node(node.name)} {self.generate_node(node.val)}\n"
-
-    def generate_param(self, node: Param) -> str:
-        return f"{self.generate_node(node.type)} {node.name}"
-
-    def generate_set(self, node: Set):
-        return f"{self.generate_node(node.ident)} = {self.generate_node(node.value)}"
-
-    def generate_return(self, node: Return):
-        return f"return {self.generate_node(node.expr)}"            
-    
-    def generate_if_statement(self, node: Union[IfStatement, ElseStatement]):
-        body = ""
-        for b_node in node.body:
-            body += f"    {self.generate_node(b_node)};\n"
-        
-        if isinstance(node, ElseIfStatement):
-            return f"else if ({self.generate_node(node.condition)})" + "{\n" + body + "    }"
-
-        elif isinstance(node, IfStatement):
-            return f"if ({self.generate_node(node.condition)})" + "{\n" + body + "    }"
-
-        else:
-            return "else {\n" + body + "    }"
-    
-    def generate_condition(self, node: Condition):
-        return f"{self.generate_node(node.left)} {node.comparison} {self.generate_node(node.right)}"
-
-    def generate_ternary_expression(self, node: TernaryExpression):
-        return f"{self.generate_node(node.condition)} ? {self.generate_node(node.left)} : {self.generate_node(node.right)}"
-
-    def generate_function(self, node: FuncDecl) -> str:
-        r = "\n"
-        params = ""
-        for i, param in enumerate(node.params):
-            params += f"{self.generate_node(param.type)} {self.generate_node(param.name)}"
-            if i < len(node.params) - 1:
-                params += ", "
-
-        return_type = self.generate_node(node.return_type) if node.return_type is not None else "void"
-        r += f"{return_type} {node.name.name}({params})" + " {\n"
-        
-        i = 0
-        for b_node in node.body:
-            if isinstance(b_node, (IfStatement, ElseIfStatement)):
-                if i < len(node.body) - 1:
-                    next = node.body[i+1]
-                else:
-                    next = None
-
-                if isinstance(next, (ElseIfStatement, ElseStatement)):
-                    r += f"    {self.generate_node(b_node)};\n"
-                else:
-                    r += f"    {self.generate_node(b_node)}\n"
-
-            else:
-                r += f"    {self.generate_node(b_node)};\n"
-
-        i+=1
-        r += "}"
-
-        return r
-
-    def generate_typecast(self, node: TypeCast):
-        return f"{self.generate_node(node.type)}({self.generate_node(node.target)})"
-
-    def generate_method(self, node: StructField):
-        prec = f"{self.precisions[node.precision]} " if node.precision else ""
-        array_access = ""
-        if node.type.length > 1:
-            array_access = f"[{node.type.length}]"
-        return f"   {prec}{self.generate_node(node.type)} {self.generate_node(node.name)}{array_access};"
-
-    def generate_struct(self, node: StructDecl) -> str:
-        r = "\n"
-        methods = ""
-        
-        for method in node.methods:
-            methods += f"{self.generate_method(method)}\n"
-        
-        r += f"struct {self.generate_node(node.name)}" + " {\n"
-        r += methods
-        r += "};\n"
-        
-        return r
-
-    def generate_expression(self, node: Expression) -> str:
-        r = ""
-        if isinstance(node, BinOp):
-            left = self.generate_node(node.left)
-            right = self.generate_node(node.right)
-            r += str(left) + str(node.op) + str(right)
-        return r

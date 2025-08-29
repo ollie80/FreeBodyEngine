@@ -1,5 +1,6 @@
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.math import Vector, Vector3
+from FreeBodyEngine.graphics.mesh import generate_quad
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -16,7 +17,7 @@ class Sprite:
         self.image = image
         self.material = material
         self.material.properties['albedo'] = self.image
-        self.quad = self.renderer.mesh_class.generate_quad()
+        self.quad = generate_quad()
         self.visisble = visisble
 
 class Sprite2D(Node2D):

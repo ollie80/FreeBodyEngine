@@ -1,8 +1,8 @@
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.graphics.shader import Shader
-from FreeBodyEngine.graphics.fbusl.injector import Injector
-from FreeBodyEngine.graphics.fbusl import fbusl_error
-from FreeBodyEngine.graphics.fbusl.ast_nodes import *
+from fbusl.injector import Injector
+from fbusl import fbusl_error
+from fbusl.node import *
 from FreeBodyEngine import get_main,get_service
 from FreeBodyEngine.graphics.image import Image
 from FreeBodyEngine.graphics.texture import Texture
@@ -113,7 +113,7 @@ class MaterialInjector(Injector):
 
 
 class Material:
-    def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = None):
+    def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = Injector()):
         self.data = data
         self.properties = self.parse_properties(property_definitions)
         self.property_definitions = property_definitions
@@ -121,10 +121,7 @@ class Material:
         shader = data.get('shader', {})
         frag_source = shader.get('frag','engine/shader/default_shader.fbfrag')
         vert_source = shader.get('vert', 'engine/shader/default_shader.fbvert')
-        
-        if injector == None:
-            injector = MaterialInjector(self)
-        
+
         self.shader: Shader = get_service('renderer').load_shader(get_service('files').load_data(vert_source), get_service('files').load_data(frag_source), injector) 
 
     def __getattribute__(self, name):
@@ -193,7 +190,6 @@ class Material:
 
                 self.shader.set_uniform(f"{material_property.capitalize()}_Texture", tex)
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", True)
-                self.shader.set_uniform("Albedo_UVRect", tex.uv_rect)
             else:
                 self.shader.set_uniform(f"{material_property.capitalize()}_Color", Color('#FF00FFFF'))
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)

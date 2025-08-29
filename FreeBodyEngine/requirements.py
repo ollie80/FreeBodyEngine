@@ -8,7 +8,9 @@ GLOBAL = [
     "sounddevice",
     "soundfile",
     "scipy",
-    'pillow'
+    'pillow',
+    'fbusl',
+    'numba'
 ]
 
 WINDOWS = [

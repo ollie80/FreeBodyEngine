@@ -54,6 +54,33 @@ def load_dlls():
 
     return dll_dir
 
+try:
+    import numba
+    HAS_NUMBA = True
+except ImportError:
+    HAS_NUMBA = False
+
+def fbjit(signature=None, *args, **kwargs):
+    if HAS_NUMBA:
+        return numba.jit(signature, **kwargs)
+    
+    else:
+        def decorator(func):
+            return func
+        
+        warning('Could not import numba.')
+        return decorator
+
+def fbnjit(*args, **kwargs):
+    if HAS_NUMBA:
+        return numba.njit(*args, **kwargs)
+    else:
+        def decorator(func):
+            return func
+        
+        warning('Could not import numba.')
+        return decorator
+
 def load_sprite(path: str):
     return get_service('files').load_sprite(path)
 

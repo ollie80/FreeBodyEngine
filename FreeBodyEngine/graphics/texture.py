@@ -1,3 +1,5 @@
+from FreeBodyEngine import get_flag, DEVMODE
+
 class Texture:
     """The texture object holds no real data, it just acts as a reference to the real texture in the manager."""
     def __init__(self, manager: 'TextureManager', id, uv_rect):
@@ -11,21 +13,40 @@ class Texture:
     def use(self):
         return self.manager._use_texture(self.id)
 
+class TextureStack:
+    def __init__(self, manager: 'TextureManager', textures: list[tuple[int, int]], id: int):
+        self.manager = manager
+        self.textures = textures
+        self.id = id
+
+    def use(self):
+        return self.manager._use_texture_stack(self.id)
+
 class TextureManager:
     def __init__(self):
-        self.dev_mode = True # dev mode enables hot reloading, release mode uses atlases
+        self.dev_mode = get_flag(DEVMODE, False) # dev mode enables hot reloading, release mode uses atlases
         self.standalone_textures = {}
+        self.texture_stacks: dict[str, ] = {}
         self.atlas_textures: dict[str, list[str, str]]= {} # {id, [graphicsID, fileID]}
         self.current_texture = None
 
     def _create_texture(self, internal_image) -> Texture:
         pass
 
-    def _create_standalone_texture(self, image_data):
+    def _create_standalone_texture(self, image_data: str):
         """Gets a standalone texture."""
         pass
 
+    def _create_standalone_texture_stack(self, image_data: list[str]) -> TextureStack:
+        pass
+    
+    def _create_texture_stack(self, rects: tuple[int, tuple[float, float, float, float]]) -> TextureStack:
+        pass
+
     def _get_raw_data(self, id, rect):
+        pass
+
+    def _use_texture_stack(self, id):
         pass
 
     def _use_texture(self, id):
@@ -34,7 +55,6 @@ class TextureManager:
 
     def _create_atlas_texture(self):
         """Gets a texture from an atlas."""
-        
 
     def _delete_texture(self):
         pass
