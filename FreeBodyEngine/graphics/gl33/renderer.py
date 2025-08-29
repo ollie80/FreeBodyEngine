@@ -4,7 +4,7 @@ from FreeBodyEngine.graphics.gl33 import GLImage, GLMesh, GLFramebuffer, context
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.gl33.shader import GLShader
 from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
-from FreeBodyEngine.graphics.fbusl.injector import Injector 
+from fbusl.injector import Injector 
 from FreeBodyEngine.graphics.texture import Texture
 from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine import DEVMODE, get_flag
@@ -67,7 +67,10 @@ class GL33Renderer(Renderer):
 
     def load_image(self, texture: "Texture"):
         return GLImage(texture)
-         
+             
+    def get_mesh_class(self) -> type[GLMesh]:
+        return GLMesh
+        
 
     def destroy(self):
         if self.main.winow.window_type == "win32":

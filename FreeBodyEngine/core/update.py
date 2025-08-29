@@ -1,8 +1,9 @@
 from FreeBodyEngine.core.time import Time
 from typing import Literal, Callable
+from FreeBodyEngine import get_flag, MAX_FPS, MAX_TPS
 
 class UpdateCoordinator:
-    def __init__(self, time: Time, max_fps: int = 60, max_tps:  int = 60):
+    def __init__(self, time: Time):
         self.time = time
         self._phases = {
             "early": [],
@@ -15,8 +16,8 @@ class UpdateCoordinator:
         self.update_accumulator = 0
         self.physics_accumulator = 0
         
-        self.physics_timestep = 1 / max_tps
-        self.update_timestep = 1 / max_fps
+        self.physics_timestep = 1 / get_flag(MAX_TPS, 69)
+        self.update_timestep = 1 / get_flag(MAX_FPS, 69)
 
     def register(self, phase: Literal["early", 'physics', "update", "draw", "late"], callback: Callable, priority: int=0):
         self._phases[phase].append((priority, callback))

@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine.graphics.fbusl.injector import Injector 
+from fbusl.injector import Injector 
 from FreeBodyEngine import register_event_callback, unregister_event_callback
 from FreeBodyEngine.core.window import WINDOW_RESIZE
 
@@ -24,8 +24,6 @@ if TYPE_CHECKING:
 class Renderer(Service):
     def __init__(self):
         super().__init__('renderer')
-        self.mesh_class = Mesh
-        self.image_class = Image
         self.texture_manager = TextureManager()
 
     def on_initialize(self):
@@ -33,7 +31,15 @@ class Renderer(Service):
 
     def on_destroy(self):
         unregister_event_callback(WINDOW_RESIZE, self.resize)
-    
+
+    @abstractmethod
+    def get_mesh_class(self) -> type[Mesh]:
+        pass
+
+    @abstractmethod
+    def get_image_class(self) -> type[Image]:
+        pass
+
     @abstractmethod
     def load_image(self, texture: 'Texture'):
         pass

@@ -22,23 +22,28 @@ DLL_DIRECTORY = None
 HEADLESS = "HEADLESS"
 DEVMODE = "DEVMODE"
 PROJECT_PATH = "PROJECT_PATH"
+PROFILE_LAUNCH = "PROFILE_LAUNCH"
+MAX_FPS = "MAX_FPS"
+MAX_TPS = "MAX_TPS"
 
+# events
+QUIT = "QUIT"
 
-def init():
-    """Initialise FreeBodyEngine"""
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    from FreeBodyEngine.utils import load_dlls
-    global DLL_DIRECTORY
-
-    DLL_DIRECTORY = load_dlls()
+PRE_FLAGS = {}
 
 def get_flag(key: str, default: any):
-    return get_main().flags.get(key, default)
+    return get_main().flags.get(key, default) if main_exists() else PRE_FLAGS.get(key, default)
     
 def set_flag(key: str, value: any):
-    get_main().flags.set(key, value)
+    if main_exists():
+        get_main().flags.set(key, value)
+    else:
+        print('adding here')
+        PRE_FLAGS[key] = value
+
+def _get_pre_flags():
+    global PRE_FLAGS
+    return PRE_FLAGS
 
 def register_service_update(phase: str, callback: Callable, priority: int = 0):
     get_main().updater.register(phase, callback, priority)
@@ -46,6 +51,8 @@ def register_service_update(phase: str, callback: Callable, priority: int = 0):
 def unregister_service_update(phase: str, callback: Callable):
     get_main().updater.unregister(phase, callback)
 
+def fbquit():
+    emit_event(QUIT)
 
 def get_time():
     return get_main().time.get_time()
@@ -80,6 +87,10 @@ def get_main(throw_error = True):
         if throw_error:
             raise RuntimeError("No main object has been created.")
     return _main_object
+
+def main_exists():
+    global _main_object
+    return _main_object != None
 
 def delta() -> float:
     """Get deltatime for the current frame in seconds."""
@@ -142,8 +153,20 @@ from FreeBodyEngine import utils
 from FreeBodyEngine.core.scene import add_scene, set_scene, remove_scene
 from FreeBodyEngine.core.window import create_cursor, set_cursor
 
+def init():
+    """Initialise FreeBodyEngine"""
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
 
+    from FreeBodyEngine.utils import load_dlls
+    global DLL_DIRECTORY
 
+    DLL_DIRECTORY = load_dlls()
+
+    main = core.main.Main()
+    register_event(QUIT)
+
+    return main
 
 
 __all__ = [
@@ -154,6 +177,7 @@ __all__ = [
             "load_image",
             'cooldown',
             'physics_cooldown',
+            "get_pre_flags",
             "load_shader",
             "load_sound",
             "load_sprite",

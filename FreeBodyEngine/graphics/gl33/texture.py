@@ -26,10 +26,9 @@ class GLTextureManager(TextureManager):
 
     def _atlas_exists(self, file_path):
         for atlas in self.atlas_textures: 
-            print(self.atlas_textures[atlas])
             if atlas[1] == file_path: # file path
                 return True
-        return False    
+        return False
         
     def _create_atlas_texture(self, atlas_img, file_path, atlas_data, name):
         """Gets a texture from an atlas."""
@@ -63,6 +62,11 @@ class GLTextureManager(TextureManager):
     def gen_id(self):
         return uuid.uuid4()
 
+    def _use_texture_stack(self, id):
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D_ARRAY, self.texture_stacks[id])
+        
+
     def _use_texture(self, id):
         """Binds the texture."""
         glActiveTexture(GL_TEXTURE0)
@@ -74,6 +78,7 @@ class GLTextureManager(TextureManager):
         elif id in self.atlas_textures:
             glBindTexture(GL_TEXTURE_2D, self.atlas_textures[id][0])
             self.current_texture = id
+        
         else:
             warning(f"Cannot bind texture with id '{id}' as it doesn't exsist.")
         

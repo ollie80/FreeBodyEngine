@@ -1,20 +1,37 @@
 
 @output
 albedo: vec4
-@output
 normal: vec4
-@output
 emmisive: vec4
-@output
-roughness: vec4
-@output
-metallic: vec4
+roughness: float
+metallic: float
+
+@uniform
+Albedo_Texture: texture
+Albedo_Color: vec4
+Albedo_useTexture: bool
+Normal_Texture: texture
+Normal_Color: vec4
+Normal_useTexture: bool
+Emmisive_Texture: texture
+Emmisive_Color: vec4
+Emmisive_useTexture: bool
+Roughness_Texture: texture
+Roughness_Color: float
+Roughness_useTexture: bool
+Metallic_Texture: texture
+Metallic_Color: float
+Metallic_useTexture: bool
+
 
 @input
 uv: vec2
-@input
 normals: vec3
 
 def main() -> void:
-    albedo = vec4(1.0, 0.0, 0.0, 1.0)
+    albedo = sample(Albedo_Texture, uv) if Albedo_useTexture else Albedo_Color
+    normal = sample(Normal_Texture, uv) if Normal_useTexture else Normal_Color
+    emmisive = sample(Emmisive_Texture, uv) if Emmisive_useTexture else Emmisive_Color
+    roughness = sample(Roughness_Texture, uv).x if Roughness_useTexture else Roughness_Color
+    metallic = sample(Metallic_Texture, uv).x if Metallic_useTexture else Metallic_Color
     

@@ -1,22 +1,21 @@
 @define
-test = 1+2
+test = False
 test2 = test+3
 
 @uniform
 view: mat4
 proj: mat4 
+tex: texture
 model: mat4 
 
 @input
 vertex: vec3
 uvs: vec2
-normals: vec3
 
-@output # test comment
+
+@output
 uv: vec2
-normal: vec3
 
 def main():
     uv = uvs
-    normal = normals 
     VERTEX_POSITION = proj * view * model * vec4(vertex.x, vertex.y, vertex.z, 1.0)

@@ -41,7 +41,6 @@ class Camera2D(Node2D, Camera):
         Node2D.__init__(self, position=position, rotation=rotation)
         Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
 
-    
     def on_initialize(self):
         self._update_projection_matrix()
         self._update_view_matrix()
@@ -81,11 +80,11 @@ class Camera2D(Node2D, Camera):
         scale_matrix = np.array([
             [self.zoom, 0.0, 0.0, 0.0],
             [0.0, self.zoom, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, self.zoom, 0.0],
             [0.0, 0.0, 0.0, 1.0],
         ], dtype=np.float32)
 
-        self.proj_matrix = np.dot(proj_matrix, scale_matrix)
+        self.proj_matrix = scale_matrix @ proj_matrix 
 
     def _get_view_mat(self):
         tx, ty = -self.world_transform.position.x, self.world_transform.position.y

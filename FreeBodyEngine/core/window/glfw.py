@@ -6,7 +6,7 @@ from FreeBodyEngine.core.input import Key, KeyCallbackType
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine.core.camera import Camera
 from FreeBodyEngine import emit_event
-from FreeBodyEngine import get_flag, DEVMODE, error, get_main, get_service, get_time
+from FreeBodyEngine import get_flag, DEVMODE, QUIT, error, get_main, get_service, get_time
 import numpy
 
 import glfw
@@ -217,6 +217,7 @@ class GLFWWindow(Window):
         glfw.set_window_should_close(self._window, True)
         glfw.destroy_window(self._window)
         glfw.terminate()
+        emit_event(QUIT)
 
     def draw(self):
         glfw.swap_buffers(self._window)

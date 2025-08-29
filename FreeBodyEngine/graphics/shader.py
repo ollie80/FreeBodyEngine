@@ -1,32 +1,28 @@
+import sys
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine.graphics.fbusl import compile
-from FreeBodyEngine.graphics.fbusl.injector import Injector
+from fbusl import compile, ShaderType
+from fbusl.injector import Injector
 
 import numpy as np
 
-def merge_dicts(d1, d2):
-    result = d1.copy()
-    for key, val in d2.items():
-        if key in result and isinstance(result[key], dict) and isinstance(val, dict):
-            result[key] = merge_dicts(result[key], val)
-        else:
-            result[key] = val
-    return result
-
-
 class Shader:
-    """
-    The shader object. Its purpose is to abstract shaders across different Graphics APIs. It does this by setting uniforms
-    """
     def __init__(self, vertex_source, fragment_source, generator, injector: type[Injector] = Injector()):        
         self.data = {}
-        self.vertex_source, vert_data = compile(vertex_source, generator, injector,  'vert', 0)
+        if injector == None:
+            injector = Injector()
         
-        buffer_index = len(vert_data['buffers'])
+        self.fbusl_vertex_source = compile(vertex_source, ShaderType.VERTEX, generator, injector)
+        self.fbusl_fragment_source = compile(fragment_source, ShaderType.FRAGMENT, generator, injector)
+        
+        self.fragment_source = fragment_source
+        self.vertex_source = vertex_source
+        
+        self.generator = generator
 
-        self.fragment_source, frag_data = compile(fragment_source, generator, injector, 'frag', buffer_index)
-        
-        self.data = merge_dicts(vert_data, frag_data)
+
+    @abstractmethod
+    def rebuild(self, injector: type[Injector] = Injector()):
+        pass
 
     @abstractmethod
     def set_uniform(self, name: str, value: any):

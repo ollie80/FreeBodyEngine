@@ -5,7 +5,7 @@ from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.graphics.pbr.material import PBRMaterial
 
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
-from FreeBodyEngine.core.tilemap import TilemapRenderer
+from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
 from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
 from FreeBodyEngine.graphics.debug import Debug2D
 from FreeBodyEngine.graphics.model.model import Model3D
@@ -65,5 +65,5 @@ class PBRPipeline(GraphicsPipeline):
         self.main_framebuffer.draw('albedo', window_size)
 
 
-    def create_material(self, data, injector=None):
+    def create_material(self, data, injector):
         return PBRMaterial(data, injector)
