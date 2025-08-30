@@ -11,6 +11,13 @@ import os
 import platform
 from pathlib import Path
 
+def get_platform():
+    sys_plat = sys.platform
+    if sys_plat in ['win32', 'darwin', 'linux']:
+        return sys_plat
+    # handle stuff like android, IOs, console
+
+
 def load_dlls():
     system = sys.platform
     arch = platform.machine()
@@ -110,3 +117,6 @@ def load_sprite(path: str):
 
 def load_model(path: str, model_name: str = None, scale=None):
     return get_service('files').load_model(path, model_name, scale)
+
+def load_texture_stack(paths: list[str]):
+    return get_service('files').load_texture_stack(paths)

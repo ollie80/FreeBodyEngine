@@ -4,10 +4,10 @@ image_id: flat int
 spritesheet_id: flat int
 
 @uniform 
-textures: textureArray
+textures: textureStack
 
 @output
 color: vec4 
 
 def main():
-    color = vec4(sample(textures, image_id, uv))
+    color = vec4(uv, 1.0, 1.0)

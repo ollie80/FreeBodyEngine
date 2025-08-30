@@ -167,6 +167,13 @@ class FileManager(Service):
         else:
             raise FileExistsError(f"No image at path '{path}'.")
 
+    def load_texture_stack(self, paths: list[str]):
+        if all(lambda x: self.file_exsists(x)):
+            if self.dev:
+                tex = get_service('renderer').texture_manager._create_standalone_texture_stack([open(self.get_file_path(path), 'rb') for path in paths])
+                return tex
+            else:
+                return
 
     def load_sprite(self, path: str):
         """
