@@ -82,9 +82,6 @@ class Tilemap(Node2D):
         '''Converts a tilemap position into the tile position in the chunk.'''
         return Vector(math.floor(position.x % self.chunk_size), math.floor(position.y % self.chunk_size))
 
-    def get_spritesheet_data(self):
-        return np.array([])
-
     def get_chunk(self, position: Vector, layer: str) -> Chunk:
         if self.chunk_exists(position, layer):
             return self.layers[layer].chunks[position]

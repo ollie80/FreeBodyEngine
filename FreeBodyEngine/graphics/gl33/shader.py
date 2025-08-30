@@ -296,4 +296,11 @@ class GLShader(Shader):
                                 locations.append(img.use())
                             
                         glUniform1i(self.uniforms[name].location, locations)
-                            
+            if self.uniforms[name].type == GL_SAMPLER_2D_ARRAY:
+                stack = self.uniform_cache[name]
+                if stack != None:
+                    glUniform1i(self.uniforms[name].location, stack.use())
+                
+                uv_rect = f"_ENGINE_{name}_uv_rect"
+                if uv_rect in self.uniforms:
+                    glUniform4fv(self.uniforms[uv_rect].location, len(stack.uv_rects), stack.uv_rects)

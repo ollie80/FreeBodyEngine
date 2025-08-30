@@ -77,8 +77,8 @@ class TilemapRenderer(Node2D):
             for chunk_pos in self.parent.layers[layer].chunks:
                 chunk = self.parent.layers[layer].chunks[chunk_pos]
 
-                vertices, indices = generate_chunk_mesh(chunk.tiles, self.parent.tile_size, self.parent.chunk_size)
-                mesh = get_service('renderer').get_mesh_class()(attributes={'vertices': (AttributeType.VEC4, vertices)}, indices=indices, usage=BufferUsage.DYNAMIC)
+                vertices, uvs, indices = generate_chunk_mesh(chunk.tiles, self.parent.tile_size, self.parent.chunk_size)
+                mesh = get_service('renderer').get_mesh_class()(attributes={'vertices': (AttributeType.VEC4, vertices), 'uvs': (AttributeType.VEC2, uvs)}, indices=indices, usage=BufferUsage.DYNAMIC)
                 self.material.shader.set_uniform('chunk_pos', (chunk.position.x, chunk.position.y))
                 get_service("renderer").draw_mesh(mesh, self.material, self.world_transform, camera)
 

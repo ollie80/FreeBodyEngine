@@ -1,4 +1,7 @@
 from FreeBodyEngine import get_flag, DEVMODE
+import numpy as np
+
+MAX_TEXTURE_STACK_SIZE = 64
 
 class Texture:
     """The texture object holds no real data, it just acts as a reference to the real texture in the manager."""
@@ -14,9 +17,9 @@ class Texture:
         return self.manager._use_texture(self.id)
 
 class TextureStack:
-    def __init__(self, manager: 'TextureManager', textures: list[tuple[int, int]], id: int):
+    def __init__(self, manager: 'TextureManager', id: int, uv_rects: list[tuple[int, int]]):
         self.manager = manager
-        self.textures = textures
+        self.uv_rects = np.array(uv_rects, dtype=np.float32).flatten()
         self.id = id
 
     def use(self):
@@ -29,9 +32,6 @@ class TextureManager:
         self.texture_stacks: dict[str, ] = {}
         self.atlas_textures: dict[str, list[str, str]]= {} # {id, [graphicsID, fileID]}
         self.current_texture = None
-
-    def _create_texture(self, internal_image) -> Texture:
-        pass
 
     def _create_standalone_texture(self, image_data: str):
         """Gets a standalone texture."""
