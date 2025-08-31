@@ -36,6 +36,9 @@ class Tilemap(Node2D):
     def add_spritesheet_type(self, name: str, type: type['TilemapSpritesheet']):
         self.spritesheet_types[name] = type
 
+    def get_tile_neighbors():
+        pass
+
     def create_spritesheet(self, data):
         """Creates a spritesheet and adds it the tilemaps spritesheets."""
         spritesheet_type = data.get('type', 'static')
