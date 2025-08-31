@@ -8,13 +8,13 @@ IMPLEMENTATIONS = {
         "source": f"""
 
 vec4 sample(sampler2DArray tex_array, int index, vec2 texcoords, vec4 uv_rect_array[{MAX_TEXTURE_STACK_SIZE}]) {{
-    vec3 uv = vec3(uv_rect_array[index].xy + texcoords * uv_rect_array[index].zw, index);
-    return texture(tex_array, uv);
+    vec3 _BUILTIN_FUNC_uv = vec3(uv_rect_array[index].xy + texcoords * uv_rect_array[index].zw, index);
+    return texture(tex_array, _BUILTIN_FUNC_uv);
 }}
 
 vec4 sample(sampler2D tex, vec2 texcoords, vec4 uv_rect) {{
-    vec2 uv = uv_rect.xy + texcoords * uv_rect.zw;
-    return texture(tex, uv);
+    vec2 _BUILTIN_FUNC_uv = uv_rect.xy + texcoords * uv_rect.zw;
+    return texture(tex, _BUILTIN_FUNC_uv);
 }}\n""",
         "call": {
             "$args[0].type$==texture": "sample($args[0]$, $args[1]$, _ENGINE_$args[0]$_uv_rect)",
@@ -45,12 +45,11 @@ class GL33Generator(fbusl.generator.Generator):
         return new_source
 
     def generate(self):
-        source = "#version 330 core\n"
+        source = "#version 330 core\n#extension GL_ARB_explicit_attrib_location : enable\n"
         source = self.inject_implementation(source, self.implementations)
 
         for node in self.tree:
             source += self.generate_node(node)
-        print(source)
         return source
 
     def generate_node(self, node):
@@ -120,11 +119,14 @@ class GL33Generator(fbusl.generator.Generator):
     def generate_inout(self, node):
         qualifier = getattr(node, "qualifier", "")
         storage = ""
+        layout = ""
 
         if isinstance(node, fbusl.node.Input):
+            layout = f"layout(location={self.input_index}) "
             self.input_index += 1
             storage = "in"
         elif isinstance(node, fbusl.node.Output):
+            layout = f"layout(location={self.output_index}) "
             self.output_index += 1
             storage = "out"
         elif isinstance(node, fbusl.node.Uniform):
@@ -141,7 +143,7 @@ class GL33Generator(fbusl.generator.Generator):
             elif type_name == "textureStack":
                 text += f"uniform vec4 _ENGINE_{node.name}_uv_rect[{MAX_TEXTURE_STACK_SIZE}];\n"
 
-        return f"{text}{qualifier + ' ' if qualifier else ''}{storage} {base_type} {decl};\n"
+        return f"{text}{layout}{qualifier + ' ' if qualifier else ''}{storage} {base_type} {decl};\n"
 
     def generate_define(self, node):
         return f"#define {node.name} {self.generate_node(node.value)}\n"
@@ -173,7 +175,6 @@ class GL33Generator(fbusl.generator.Generator):
         impl_data = self.implementations.get(node.name)
         args_strs = [self.generate_node(arg) for arg in node.args]
         arg_types = [self.get_type_name(getattr(arg, "type", None)) for arg in node.args]
-        print(arg_types)
         if impl_data and impl_data.get("kind") == "function":
             call_template = impl_data.get("call", {})
             for cond_expr, template in call_template.items():

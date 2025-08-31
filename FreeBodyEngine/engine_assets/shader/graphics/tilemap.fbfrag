@@ -3,11 +3,12 @@ uv: vec2
 image_id: flat int
 spritesheet_id: flat int
 
-@uniform 
+@uniform
 textures: textureStack
 
 @output
 color: vec4 
 
 def main():
+    
     color = vec4(uv, 1.0, 1.0)

@@ -94,7 +94,5 @@ class TilemapInjector(Injector):
         new = new.replace('_ENGINE_CHUNK_WORLD_SIZE', str(self.chunk_size * self.tile_size))
         new = new.replace('_ENGINE_TILE_SIZE', str(self.tile_size))
         new = new.replace('_ENGINE_MAX_SPRITESHEETS',  str(2))
-        new = new.replace('_ENGINE_MAX_SPRITESHEET_TEXTURES', str(2))
-        print(new)
         return new
 

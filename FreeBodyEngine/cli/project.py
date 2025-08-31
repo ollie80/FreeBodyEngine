@@ -49,7 +49,7 @@ class ProjectRegistry:
     def add_project(self, path: str, name: str):
         path = os.path.abspath(path)
         if any(p['path'] == path for p in self.projects):
-            return  # Already tracked
+            return  # already tracked
         proj_id = self._generate_id(name)
         self.projects.append({"id": proj_id, "name": name, "path": path})
         self._save()
