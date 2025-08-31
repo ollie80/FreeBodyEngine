@@ -137,7 +137,6 @@ class GLTFParser:
 
     def build_model(self, model_name: str, pipeline: GraphicsPipeline, renderer: Renderer, scale: tuple[int, int, int] = None) -> Model:
         if model_name is None:
-            print(self.gltf['meshes'])
             model_name = self.gltf['meshes'][0].get('name')
 
         model = self.gltf['meshes'][self.get_model_index(model_name)]

@@ -1,6 +1,6 @@
 @input
 vertex: vec4
-texcoord: vec2
+uv: vec2
 
 @uniform
 proj: mat4
@@ -9,12 +9,12 @@ model: mat4
 chunk_pos: vec2
 
 @output
-uv: vec2
+texcoord: vec2
 image_id: flat int
 spritesheet_id: flat int
 
 def main():
-    uv = texcoord
+    texcoord = uv
     image_id = int(round(vertex.z))
     spritesheet_id = int(round(vertex.w))
     chunk_world_pos: vec2 = chunk_pos * _ENGINE_CHUNK_WORLD_SIZE

@@ -38,7 +38,6 @@ def set_flag(key: str, value: any):
     if main_exists():
         get_main().flags.set(key, value)
     else:
-        print('adding here')
         PRE_FLAGS[key] = value
 
 def _get_pre_flags():

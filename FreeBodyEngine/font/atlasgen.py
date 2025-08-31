@@ -37,8 +37,4 @@ def generate_atlas(path_or_stream: str, size: int):
 
     return atlas, metadata
 
-if __name__ == "__main__":
-    FONT_PATH = os.path.abspath("./FreeBodyEngine/engine_assets/font/JetBrainsMono.ttf")
-    image, data = generate_atlas(FONT_PATH, 16)
-    print(data)
     
