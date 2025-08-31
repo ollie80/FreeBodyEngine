@@ -24,6 +24,28 @@ class Chunk:
         spritesheet_index = self.tiles[array_offset + 1]
         return Tile(position, image_id, spritesheet_index)
 
+    def _get_tile_neighbors(self, pos: tuple[int, int]):
+        for y in range(-1, 1):
+            for x in range(-1, 1):
+                neighbor_pos = (pos[0] + x, pos[1] + y)
+
+                if neighbor_pos[0] < 0:
+                    chunk = self.tilemap.get_chunk()
+                    
+                    
+                    
+                    continue 
+                
+                if neighbor_pos[0] > self.size:
+                    chunk = self.tilemap.get_chunk()
+                    
+                    
+                    continue 
+                
+
+    def get_tile_neighbors(self, position: Vector):
+        return self._get_tile_neighbors((position.x, position.y))
+
     def set_tile(self, position: Vector, image_id: int, spritesheet_index: int):
         array_offset = self._tile_index(position) * _NUM_TILE_VALS
         
