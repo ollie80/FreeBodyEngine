@@ -37,7 +37,8 @@ class ProjectRegistry:
     def project_exists(self, id: int):
         for project in self.projects:
             if project.get('id') == id:
-                return True
+                return True  
+            
         return False
 
     def get_project_config(self, id: str):

@@ -17,7 +17,6 @@ _main_object: 'Main' = None
 
 DLL_DIRECTORY = None
 
-
 # flag constants
 HEADLESS = "HEADLESS"
 DEVMODE = "DEVMODE"
@@ -25,6 +24,9 @@ PROJECT_PATH = "PROJECT_PATH"
 PROFILE_LAUNCH = "PROFILE_LAUNCH"
 MAX_FPS = "MAX_FPS"
 MAX_TPS = "MAX_TPS"
+ALLOW_DISK_WRITE = "ALLOW_DISK_WRITE"
+SUPRESS_WARNINGS = "SUPRESS_WARNINGS"
+SUPRESS_ERRORS = "SUPRESS_ERRORS"
 
 # events
 QUIT = "QUIT"
@@ -123,7 +125,7 @@ def physics_delta() -> float:
     return get_main().updater.physics_timestep
 
 def warning(msg):
-    """Raises a warning."""
+    """Raises an warning."""
     get_service('logger').warning(msg)
 
 def error(msg):
@@ -132,6 +134,7 @@ def error(msg):
 
 def _handle_signal(signal, frame):
     get_main().quit()
+
 
 def log(*msg):
     """Logs any number of messages to the console."""
@@ -147,7 +150,7 @@ from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.utils import load_image, load_material, load_sprite, load_shader, load_sound, load_data, load_toml, load_model
 from FreeBodyEngine import graphics
 from FreeBodyEngine import utils
-
+from FreeBodyEngine.utils import get_platform
 
 from FreeBodyEngine.core.scene import add_scene, set_scene, remove_scene
 from FreeBodyEngine.core.window import create_cursor, set_cursor
@@ -180,6 +183,7 @@ __all__ = [
             "load_shader",
             "load_sound",
             "load_sprite",
+            "get_platform",
             "core",
             "math",
             "graphics",
@@ -202,6 +206,3 @@ __all__ = [
             "service_exists",
             "_set_main"
 ]
-
-
-

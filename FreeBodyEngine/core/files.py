@@ -10,6 +10,7 @@ from FreeBodyEngine import get_main, warning, error, get_flag, get_service, DEVM
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.core.service import Service
+from FreeBodyEngine.utils import get_platform
 from FreeBodyEngine.graphics.model.gltf_parser import GLBParser, GLTFParser
 from FreeBodyEngine.graphics.model import Model
 
@@ -47,21 +48,22 @@ class FileManager(Service):
         path = get_flag(PROJECT_PATH, './')
         self.dev = get_flag(DEVMODE, False)
         
+
         if self.dev:
+            self.file_system = System()
             if os.path.exists(os.path.join(path, 'fbproject.toml')): 
                 build_settings = tomllib.loads(open(os.path.join(path, 'fbproject.toml')).read())
                 self.path = os.path.join(path, build_settings.get('assets', './assets'))
                 self.game_name = build_settings.get('name')
             
         else:
+            self.file_system = VirtualFileSystem()
             self.path = './assets'        
 
         self.engine_path = 'FreeBodyEngine'
     
         if not self.dev:
-            self.data: dict[str, str] = read_assets(os.path.join(self.path, "data.pak"))
-            self.images: dict[str, str] = read_assets(os.path.join(self.path, "images.pak"))
-        
+            self.asset_pack_path = abs_path('./assets.fbap')
             self.atlas_map = self.create_atlas_map()
 
          
@@ -168,7 +170,7 @@ class FileManager(Service):
             raise FileExistsError(f"No image at path '{path}'.")
 
     def load_texture_stack(self, paths: list[str]):
-        if all(lambda x: self.file_exsists(x)):
+        if all(self.file_exsists(x) for x in paths):
             if self.dev:
                 tex = get_service('renderer').texture_manager._create_standalone_texture_stack([open(self.get_file_path(path), 'rb') for path in paths])
                 return tex
@@ -216,3 +218,36 @@ class FileManager(Service):
 
             gltf_parser = GLTFParser(glb_parser.get_json(), glb_parser.get_binary_buffer())
             return gltf_parser.build_model(model_name, get_service('graphics'), get_service('renderer'))
+        
+
+def path_exsists(path: str, data: str):
+    """Write data to the file at the path."""
+    plat = get_platform()
+    if plat in ['darwing', 'win32', 'linux']:
+        return os.path.exists(path)
+
+def write(path: str, data: str):
+    """Writes data to the file at the path."""
+    if path_exsists(path):
+        plat = get_platform()
+        if plat in ['darwin', 'win32', 'linux']:
+            open(path, data)
+         
+def read_bytes(path: str, start=0, end=-1):
+    plat = get_platform()
+    if plat in ['darwin', 'win32', 'linux']:    
+        with open(path, 'rb') as f:
+            f.seek(start)
+            return f.read(end - start + 1) if end > -1 else f.read()
+
+def read_text(path: str, start=-1, end=-1):
+    plat = get_platform()
+    if plat in ['darwin', 'win32', 'linux']:
+        with open(path, 'r') as f:
+            f.seek(start)
+            return f.read(end - start + 1) if end > -1 else f.read()
+
+def abs_path(path: str):
+    plat = get_platform()
+    if plat in ['win32', 'linux', 'darwin']:
+        os.path.abspath(path)

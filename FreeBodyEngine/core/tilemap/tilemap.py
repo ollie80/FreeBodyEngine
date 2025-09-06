@@ -27,14 +27,17 @@ class Tilemap(Node2D):
         self.layers: dict[str, Layer] = {}
         self.chunk_size = chunk_size
         self.tile_size = tile_size
+        self.renderer = None
+        
         self._spritesheet_types: dict[str, type[TilemapSpritesheet]] = {'static': StaticSpritesheet}
         self.spritesheets: dict[str, TilemapSpritesheet] = {}
+
 
     def add_layer(self, name, chunks: dict[Vector, Chunk] = {}, visible = False):
         self.layers[name] = Layer(name, chunks, visible)
 
-    def add_spritesheet_type(self, name: str, type: type['TilemapSpritesheet']):
-        self.spritesheet_types[name] = type
+    def add_spritesheet_type(self, type: type['TilemapSpritesheet']):
+        self._spritesheet_types[type.get_name()] = type
 
     def get_tile_neighbors():
         pass
@@ -50,15 +53,19 @@ class Tilemap(Node2D):
         
         self.add_spritesheet(spritesheet_name, self._spritesheet_types[spritesheet_type](data))
 
-    def add_spritesheet(self, name: str, spritesheet: 'TilemapSpritesheet'):
-        if name in self._spritesheet_types:
-            warning(f'Cant add spritesheet "{name}" because it already exsists.')
-            return
-        
-        self.spritesheets[name] = spritesheet
+    def add_spritesheet(self, spritesheet_type: str, data: dict):
+        if not spritesheet_type in self._spritesheet_types:
+            warning(f"Spritesheet type '{spritesheet_type}' is not defined")
+        if self.renderer:
+            self.spritesheets['idk'] = self._spritesheet_types[spritesheet_type](data, self.renderer)
+        else:
+            warning('Could not add spritesheet, as no tilemap renderer has been created')
 
     def create_renderer(self):
-        self.add(TilemapRenderer(Vector(), 0, Vector(1, 1)))
+        self.renderer = TilemapRenderer(Vector(), 0, Vector(1, 1)) 
+        self.add(self.renderer)
+        self.add_spritesheet_type(StaticSpritesheet)
+
 
     def set_tile(self, position: Vector, image_id: int, spritesheet: str, layer: str):
         chunk = self.get_chunk(self.chunk_pos(position), layer)

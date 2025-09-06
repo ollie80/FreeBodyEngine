@@ -6,17 +6,17 @@ def abstractmethod(func):
         raise NotImplementedError(f"Method '{func.__name__}' is not implemented on '{cls_name}'.")
     return wrapper
 
-import sys
-import os
-import platform
-from pathlib import Path
-
 def get_platform():
     sys_plat = sys.platform
     if sys_plat in ['win32', 'darwin', 'linux']:
         return sys_plat
     # handle stuff like android, IOs, console
 
+
+import sys
+import os
+import platform
+from pathlib import Path
 
 def load_dlls():
     system = sys.platform

@@ -93,7 +93,6 @@ class GLTFParser:
         fmt_char = component_format[component_type]
         component_size = struct.calcsize(fmt_char)
 
-        total_size = count * num_components * component_size
         byte_stride = buffer_view.get("byteStride", num_components * component_size)
 
         values = []
@@ -106,7 +105,6 @@ class GLTFParser:
 
         return values
     
-
     def get_model_index(self, name: str):
         i = 0
         for model in self.gltf['meshes']:
@@ -146,12 +144,10 @@ class GLTFParser:
         textures = {}
         material_map = {}
 
-        # Load all textures
         for texture_index in range(len(self.gltf['images'])):
             data = self.get_image_data(texture_index)
             textures[texture_index] = renderer.texture_manager._create_standalone_texture(data)
 
-        # Load all materials
         for i, material in enumerate(self.gltf['materials']):
             data = {
                 'albedo': [0.0, 0.0, 0.0, 1.0],
@@ -170,12 +166,10 @@ class GLTFParser:
 
             materials[material.get('name', f'material_{i}')] = pipeline.create_material(data)
 
-        # Meshes
         for i, mesh in enumerate(model['primitives']):
             pos_accessor = mesh['attributes']['POSITION']
             positions = np.array(self.get_accessor_data(pos_accessor), np.float32)
 
-            # ✅ Apply scale here
             if scale:
                 positions *= np.array(scale, dtype=np.float32)
 
