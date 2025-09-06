@@ -7,7 +7,8 @@ from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
 from FreeBodyEngine import warning
 from FreeBodyEngine.graphics.gl33.image import Image
-from FreeBodyEngine.graphics.texture import Texture
+from FreeBodyEngine import get_time
+from FreeBodyEngine.graphics.texture import Texture, TextureStack
 from FreeBodyEngine.graphics.buffer import Buffer as DataBuffer
 from OpenGL.GL import *
 import numpy as np
@@ -79,6 +80,7 @@ class GLShader(Shader):
         
         for name in self.uniforms:
             self.uniform_cache[name] = None
+        
                 
     def rebuild(self, injector = ...):
         super().__init__(self.vertex_source, self.fragment_source, self.generator, injector)
@@ -159,10 +161,13 @@ class GLShader(Shader):
         elif gl_type == GL_SAMPLER_2D:
             if isinstance(val, (int, Image)):
                 return True
+        
+        elif gl_type == GL_SAMPLER_2D_ARRAY:
+            if isinstance(val, TextureStack):
+                return True
 
         fb_error(f'Cannot set uniform "{name}" of type "{GL_TYPE_NAMES.get(gl_type, "Unknown")}" to value of type "{type(val).__name__}"')
         return False
-
 
     def set_uniform(self, name: str, val: any):
         if name not in self.uniforms:
@@ -252,6 +257,10 @@ class GLShader(Shader):
             if not isinstance(val, Image):
                 glUniform1i(loc, val)
 
+        elif gl_type == GL_SAMPLER_2D_ARRAY:
+            if not isinstance(val, TextureStack):
+                glUniform4fv(loc, val)
+
     def set_buffer(self, name: str, buffer: DataBuffer):
         if name in self.data['buffers']:
 
@@ -270,6 +279,8 @@ class GLShader(Shader):
 
     def use(self):
         glUseProgram(self._shader)
+        if 'TIME' in self.uniforms:
+            glUniform1f(self.uniforms['TIME'].location, get_time())
 
         for name in self.uniforms: # reload texture slots
             if self.uniforms[name].type == GL_SAMPLER_2D:
@@ -301,6 +312,8 @@ class GLShader(Shader):
                 if stack != None:
                     glUniform1i(self.uniforms[name].location, stack.use())
                 
-                uv_rect = f"_ENGINE_{name}_uv_rect"
-                if uv_rect in self.uniforms:
-                    glUniform4fv(self.uniforms[uv_rect].location, len(stack.uv_rects), stack.uv_rects)
+                for i in range(len(stack.uv_rects)):
+                    uv_rect = f"_ENGINE_{name}_uv_rect[{i}]"
+                    if uv_rect in self.uniforms:
+                        loc = i * 4
+                        glUniform4f(self.uniforms[uv_rect].location, stack.uv_rects[0+loc], stack.uv_rects[1+loc], stack.uv_rects[2+loc], stack.uv_rects[3+loc])

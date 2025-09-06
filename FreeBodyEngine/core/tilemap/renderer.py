@@ -6,6 +6,9 @@ from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine import get_service
 from FreeBodyEngine.utils import fbnjit
 from fbusl.injector import Injector
+from FreeBodyEngine.graphics.texture import TextureStack
+from FreeBodyEngine.utils import load_texture_stack
+
 from typing import TYPE_CHECKING
 from FreeBodyEngine.graphics.mesh import AttributeType, BufferUsage
 import numpy as np
@@ -33,10 +36,10 @@ def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int)
     for y in range(tiles_y):
         for x in range(tiles_x):
             base = (y * tiles_x + x) * _NUM_TILE_VALS
-            image_id = chunk_data[base]
+            image_id = chunk_data[base] - 1
             sprite_id = chunk_data[base + 1]
             
-            if image_id == 0 and sprite_id == 0:
+            if image_id < 0 and sprite_id == 0:
                 continue
             
             x0, y0 = x * tile_size, y * tile_size
@@ -62,15 +65,31 @@ def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int)
     return vertices[:vtx_offset], uv_array[:uv_offset], indices[:idx_offset]
 
 
-
 class TilemapRenderer(Node2D):
     def __init__(self, position: Vector, rotation: float, scale: Vector):
         super().__init__(position, rotation, scale)
         self.parental_requirement = "Tilemap"
         self.parent: 'Tilemap'
-
+        self.texture_paths: list[str] = []
+        
     def on_initialize(self):
+        self.texture: TextureStack = None
         self.material = get_service('graphics').create_material({"shader": {"vert": "engine/shader/graphics/tilemap.fbvert", "frag": "engine/shader/graphics/tilemap.fbfrag"}}, TilemapInjector(self.parent.chunk_size, self.parent.tile_size))
+
+    def _add_textures(self, paths: list[str]):
+        new_textures = self.texture_paths + paths
+
+        self.texture = load_texture_stack(new_textures)
+        self.texture_paths = new_textures
+
+        path_map = {}
+        i = 1
+        for path in self.texture_paths:
+            if path in paths:
+                path_map[path] = i             
+            i+=1
+
+        return path_map
 
     def draw(self, camera):
         for layer in self.parent.layers:
@@ -80,6 +99,9 @@ class TilemapRenderer(Node2D):
                 vertices, uvs, indices = generate_chunk_mesh(chunk.tiles, self.parent.tile_size, self.parent.chunk_size)
                 mesh = get_service('renderer').get_mesh_class()(attributes={'vertices': (AttributeType.VEC4, vertices), 'uvs': (AttributeType.VEC2, uvs)}, indices=indices, usage=BufferUsage.DYNAMIC)
                 self.material.shader.set_uniform('chunk_pos', (chunk.position.x, chunk.position.y))
+                if self.texture:
+                    self.material.shader.set_uniform('textures', self.texture)
+
                 get_service("renderer").draw_mesh(mesh, self.material, self.world_transform, camera)
 
 
@@ -95,4 +117,3 @@ class TilemapInjector(Injector):
         new = new.replace('_ENGINE_TILE_SIZE', str(self.tile_size))
         new = new.replace('_ENGINE_MAX_SPRITESHEETS',  str(2))
         return new
-

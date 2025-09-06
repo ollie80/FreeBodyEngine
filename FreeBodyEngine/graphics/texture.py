@@ -28,8 +28,8 @@ class TextureStack:
 class TextureManager:
     def __init__(self):
         self.dev_mode = get_flag(DEVMODE, False) # dev mode enables hot reloading, release mode uses atlases
-        self.standalone_textures = {}
-        self.texture_stacks: dict[str, ] = {}
+        self.standalone_textures: dict[str, int] = {}
+        self.texture_stacks: dict[str, int] = {}
         self.atlas_textures: dict[str, list[str, str]]= {} # {id, [graphicsID, fileID]}
         self.current_texture = None
 
@@ -58,3 +58,4 @@ class TextureManager:
 
     def _delete_texture(self):
         pass
+    

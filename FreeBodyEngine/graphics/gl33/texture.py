@@ -47,7 +47,7 @@ class GLTextureManager(TextureManager):
         loaded_images = []
 
         for data in image_datas:
-            img = Image.open(io.BytesIO(data)).transpose(Image.Transpose.FLIP_TOP_BOTTOM).transpose(Image.Transpose.FLIP_LEFT_RIGHT).convert('RGBA')
+            img = Image.open(data).transpose(Image.Transpose.FLIP_TOP_BOTTOM).transpose(Image.Transpose.FLIP_LEFT_RIGHT).convert('RGBA')
             loaded_images.append(img)
             w, h = img.size
             if w > max_width:
@@ -59,7 +59,7 @@ class GLTextureManager(TextureManager):
             padded_img = Image.new('RGBA', (max_width, max_height), (0, 0, 0, 0))
             padded_img.paste(img, (0, 0))
             image_data = np.array(padded_img, dtype=np.uint8)
-            processed_data.append(image_data)
+            processed_data.append(image_data)  
 
         layers = len(image_datas)
         texture_id = glGenTextures(1)
@@ -94,7 +94,6 @@ class GLTextureManager(TextureManager):
 
         return TextureStack(self, texture_stack_id, uv_rects)
 
-
     def _create_atlas_texture(self, atlas_img, file_path, atlas_data, name):
         """Gets a texture from an atlas."""
         if not self._atlas_exists(file_path):
@@ -107,7 +106,7 @@ class GLTextureManager(TextureManager):
 
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
                         GL_RGBA, GL_UNSIGNED_BYTE, img_data)
-            glGenerateMipmap(GL_TEXTURE_2D);
+            glGenerateMipmap(GL_TEXTURE_2D)
 
             id = self.gen_id()
             self.atlas_textures[id] = [tex_id, file_path]
@@ -129,7 +128,7 @@ class GLTextureManager(TextureManager):
     def _use_texture_stack(self, id):
         glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D_ARRAY, self.texture_stacks[id])
-        
+        return 0
 
     def _use_texture(self, id):
         """Binds the texture."""
@@ -147,7 +146,6 @@ class GLTextureManager(TextureManager):
             warning(f"Cannot bind texture with id '{id}' as it doesn't exsist.")
         
         return 0
-
 
     def _delete_texture(self):
         pass

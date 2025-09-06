@@ -1,17 +1,18 @@
-import sys
-import subprocess
-import os
 from FreeBodyEngine.cli.project import ProjectRegistry
 from FreeBodyEngine.cli.fulcrum import fulcrum_handler
 from FreeBodyEngine.dev.run import main as run_project
 from FreeBodyEngine.cli.cpp import compile_handler
-import tomllib
-import json
-import platform
-from importlib.resources import files
-import shutil
 from FreeBodyEngine.build.builder import build
 from FreeBodyEngine.font.atlasgen import generate_atlas
+
+import tomllib
+import sys
+import os
+import json
+import shutil
+import platform
+
+from importlib.resources import files
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -111,7 +112,6 @@ class Command:
             for cmd in self.subcommands:
                 print(f"  {cmd.names[0]:10} - {cmd.help_text}")
 
-
 def build_handler(env, args):
     dev = False
     if "--dev" in args:
@@ -124,7 +124,6 @@ def build_handler(env, args):
     
     else:
         build(env.project_registry.get_project_path(args[0]), dev)
-            
 
 def run_handler(env, args):
     if len(args) == 0:
@@ -162,7 +161,7 @@ def create_sprite(env, args):
         return
     print(f"Creating sprite '{args[0]}' in environment path '{env.path}'")
 
-def init_handler(env, args):
+def init_handler(env: Environment, args):
     cwd = env.path
     project_file = os.path.join(cwd, "./fbproject.toml")
     if os.path.exists(project_file):
@@ -176,6 +175,9 @@ def init_handler(env, args):
             print(f'A project with the name "{project_name}" already exists.')
     
     env.reload_registry()
+    if env.project_registry.project_exists(id):
+        compile_handler(env, [id])
+
 
 def get_log_file(env):
     name = None
@@ -197,7 +199,6 @@ def get_log_file(env):
         base = os.getenv("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
 
     return os.path.join(base, name, "log.txt")
-
 
 def confirm():
     return input("Are you sure you want to do that? y/N: ").lower().strip() == 'y'
@@ -555,23 +556,19 @@ def cloc_handler(env, args):
             project_path = env.project_registry.get_project_path(arg)
             print(f"Counting lines for project '{env.project_registry.get_project_name(arg)}'")
 
-            # Add main file
             main_file = os.path.join(project_path, config.get('main_file'))
             if os.path.exists(main_file):
                 paths_to_check.append(main_file)
-
-            # Add code directory
             code_dir = os.path.join(project_path, config.get('code'))
+
             if os.path.isdir(code_dir):
                 paths_to_check.append(code_dir)
 
-            # Add assets directory
             assets_dir = os.path.join(project_path, config.get('assets'))
             if os.path.isdir(assets_dir):
                 paths_to_check.append(assets_dir)
 
         else:
-            # Arbitrary directory
             target_path = os.path.abspath(os.path.join(env.path, arg))
             if not os.path.exists(target_path):
                 print(f"Path '{target_path}' does not exist.")
@@ -584,17 +581,14 @@ def cloc_handler(env, args):
             project_path = env.project_registry.get_project_path(env.project_id)
             print(f"Counting lines for project '{env.project_registry.get_project_name(env.project_id)}'")
 
-            # Add main file
             main_file = os.path.join(project_path, config.get('main_file'))
             if os.path.exists(main_file):
                 paths_to_check.append(main_file)
 
-            # Add code directory
             code_dir = os.path.join(project_path, config.get('code'))
             if os.path.isdir(code_dir):
                 paths_to_check.append(code_dir)
 
-            # Add assets directory
             assets_dir = os.path.join(project_path, config.get('assets'))
             if os.path.isdir(assets_dir):
                 paths_to_check.append(assets_dir)
@@ -654,17 +648,14 @@ def cwoc_handler(env, args):
             project_path = env.project_registry.get_project_path(arg)
             print(f"Counting words for project '{env.project_registry.get_project_name(arg)}'")
 
-            # Add main file
             main_file = os.path.join(project_path, config.get('main_file'))
             if os.path.exists(main_file):
                 paths_to_check.append(main_file)
 
-            # Add code directory
             code_dir = os.path.join(project_path, config.get('code'))
             if os.path.isdir(code_dir):
                 paths_to_check.append(code_dir)
 
-            # Add assets directory
             assets_dir = os.path.join(project_path, config.get('assets'))
             if os.path.isdir(assets_dir):
                 paths_to_check.append(assets_dir)
@@ -682,17 +673,14 @@ def cwoc_handler(env, args):
             project_path = env.project_registry.get_project_path(env.project_id)
             print(f"Counting words for project '{env.project_registry.get_project_name(env.project_id)}'")
 
-            # Add main file
             main_file = os.path.join(project_path, config.get('main_file'))
             if os.path.exists(main_file):
                 paths_to_check.append(main_file)
 
-            # Add code directory
             code_dir = os.path.join(project_path, config.get('code'))
             if os.path.isdir(code_dir):
                 paths_to_check.append(code_dir)
 
-            # Add assets directory
             assets_dir = os.path.join(project_path, config.get('assets'))
             if os.path.isdir(assets_dir):
                 paths_to_check.append(assets_dir)
@@ -820,6 +808,7 @@ def create_font(env, args):
 
         asset_path = os.path.abspath(os.path.join(env.project_registry.get_project_path(project), conf.get('assets')))
         font_path = os.path.join(asset_path, relative_font_path)
+        
         if not os.path.exists(font_path):
             print(f"Font file '{relative_font_path}' does not exsist in directory the asset directory.")
             return
@@ -835,6 +824,7 @@ def create_font(env, args):
 
         image, data = generate_atlas(font_path, size)
         image.save(os.path.join(font_registry, font_name.removesuffix('.ttf') + ".png"))
+        
         with open(os.path.join(font_registry, font_name.removesuffix('.ttf') + ".json"), 'w') as f:
             json.dump(data, f)
 
@@ -842,7 +832,6 @@ def create_font(env, args):
 
     else:
         print(f"Project with ID {project} does not exist.")
-
 
 root_commands = [
     Command(["build", "b"], build_handler, help_text="Build the project"),

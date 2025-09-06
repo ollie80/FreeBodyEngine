@@ -70,7 +70,6 @@ class GL33Renderer(Renderer):
              
     def get_mesh_class(self) -> type[GLMesh]:
         return GLMesh
-        
 
     def destroy(self):
         if self.main.winow.window_type == "win32":
@@ -94,7 +93,6 @@ class GL33Renderer(Renderer):
 
         glBindVertexArray(mesh.vao)
         glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), instances)
-
 
         glBindVertexArray(0)
 

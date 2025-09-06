@@ -10,10 +10,9 @@ if TYPE_CHECKING:
 class GLImage(Image):
     def __init__(self, data: str):
         super().__init__(data)
-        
+
     def get_size(self):
         return self.texture.uv_rect
 
     def get_data(self):
         return self.texture.get_image_data()
-    

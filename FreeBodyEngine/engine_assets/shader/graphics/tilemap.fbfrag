@@ -10,5 +10,4 @@ textures: textureStack
 color: vec4 
 
 def main():
-    
-    color = vec4(uv, 1.0, 1.0)
+    color = vec4(sample(textures, image_id, uv))

@@ -1,10 +1,9 @@
-from FreeBodyEngine.graphics.texture import TextureStack
-from FreeBodyEngine.utils import load_texture_stack
 from FreeBodyEngine.utils import abstractmethod
 import numpy as np
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
+    from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
     from FreeBodyEngine.core.tilemap import Tilemap, Tile
 from enum import Enum, auto
 
@@ -17,8 +16,8 @@ class UpdateMode:
 
 
 class TilemapSpritesheet:
-    def __init__(self, paths: list[str], update_mode: UpdateMode = UpdateMode.never):
-        self.texture: TextureStack = load_texture_stack(paths)
+    def __init__(self, paths: list[str], renderer: 'TilemapRenderer', update_mode: UpdateMode = UpdateMode.never):        
+        self.path_map = renderer._add_textures(paths)
         self.update_mode = update_mode
 
     @classmethod
@@ -56,12 +55,43 @@ class TilemapSpritesheet:
         pass
 
 class StaticSpritesheet(TilemapSpritesheet):
-    def __init__(self, paths: list[str]):
-        super().__init__(paths, UpdateMode.once)
+    def __init__(self, data: dict[int, tuple[str, str]], renderer: "TilemapRenderer"):
+        self.data = data
+        super().__init__(self._extract_paths(), renderer, UpdateMode.once)
+
+    def _extract_paths(self):
+        paths = []
+        for i in self.data:
+            paths.append(self.data[i][1])
+        return paths
+
+    def get_image_id(self, key):
+        for i in self.data:
+            if self.data[i][0] == key:
+                return i
+        return -1
 
     @staticmethod
     def get_name():
         return "static_spritesheet"
     
     def get_image_index(self, tile, neighbors):
-        return tile.image_id
+        return self.path_map[self.data[tile.image_id][1]]
+    
+class AutoSpritesheet(TilemapSpritesheet):
+    def __init__(self, data: dict, renderer: "TilemapRenderer"):
+        super().__init__(data, renderer, UpdateMode.chunk)
+
+class AnimatedSpritesheet(TilemapSpritesheet):
+    def __init__(self, data: dict, renderer: "TilemapRenderer"):
+        super().__init__(data, renderer, UpdateMode.frame)
+
+    @staticmethod
+    def get_name():
+        return 'animated_spritesheet'
+    
+    def get_image_index(self, tile, neighbors):
+        super().get_image_index(tile, neighbors)
+        
+
+

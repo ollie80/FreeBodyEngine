@@ -8,7 +8,7 @@ IMPLEMENTATIONS = {
         "source": f"""
 
 vec4 sample(sampler2DArray tex_array, int index, vec2 texcoords, vec4 uv_rect_array[{MAX_TEXTURE_STACK_SIZE}]) {{
-    vec3 _BUILTIN_FUNC_uv = vec3(uv_rect_array[index].xy + texcoords * uv_rect_array[index].zw, index);
+    vec3 _BUILTIN_FUNC_uv = vec3(uv_rect_array[index].xy + texcoords * uv_rect_array[index].zw, float(index));
     return texture(tex_array, _BUILTIN_FUNC_uv);
 }}
 
@@ -23,6 +23,7 @@ vec4 sample(sampler2D tex, vec2 texcoords, vec4 uv_rect) {{
     },
     "VERTEX_POSITION": {"kind": "variable", "replace": "gl_Position"},
     "INSTANCE_ID": {"kind": "variable", "replace": "gl_InstanceID"},
+    "TIME": {'kind': "uniform", 'source': 'uniform float TIME;\n'},
     "texture": {"kind": "type", "replace": "sampler2D"},
     "textureStack": {"kind": "type", "replace": "sampler2DArray"}
 }
@@ -42,6 +43,10 @@ class GL33Generator(fbusl.generator.Generator):
         for impl_name, data in implementations.items():
             if data.get("kind") == "function":
                 new_source += data.get("source", "")
+            
+            if data.get('kind') == 'uniform':
+                new_source += data.get('source', "")
+    
         return new_source
 
     def generate(self):
@@ -79,9 +84,14 @@ class GL33Generator(fbusl.generator.Generator):
             return self.generate_condition(node)
         elif isinstance(node, fbusl.node.VarDecl):
             return self.generate_vardecl(node)
+        elif isinstance(node, fbusl.node.UnaryOp):
+            return self.generate_unary_op(node)
         elif isinstance(node, str):
             return node
         return ""
+
+    def generate_unary_op(self, node):
+        return f'{node.op}{self.generate_node(node.operand)}'
 
     def generate_inline_if(self, node):
         return f'{self.generate_node(node.condition)} ? {self.generate_node(node.then_expr)} : {self.generate_node(node.else_expr)}'
@@ -167,7 +177,7 @@ class GL33Generator(fbusl.generator.Generator):
             for p in node.params
         ]
         params_str = ", ".join(param_texts)
-        body_str = "\n".join(f"    {self.generate_node(b)};" for b in node.body)
+        body_str = "\n".join(f"    {self.generate_node(b).rstrip(';')};" for b in node.body)
         return_type = self.get_glsl_type(node.type)
         return f"{return_type} {node.name}({params_str}) {{\n{body_str}\n}}\n"
 
