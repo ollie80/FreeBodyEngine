@@ -1,4 +1,5 @@
 from typing import TYPE_CHECKING, Union
+from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine import (
     warning,
     get_main,
@@ -14,7 +15,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 
 KEY_PRESS = "ENGINE_key_press"
-KEY_REPEAT = "ENGINE_key_repeat"
+KEY_REPEAT = "ENGINE_key_repeat" 
 KEY_RELEASE = "ENGINE_key_release"
 
 if TYPE_CHECKING:
@@ -374,11 +375,11 @@ class Input(Service):
         self.gamepads = {}
 
     def on_initialize(self):
-        register_service_update("early", self.update)
+        register_service_update(UpdatePhase.EARLY, self.update)
         self.window = get_service("window")
 
     def on_destroy(self):
-        unregister_service_update("early", self.update)
+        unregister_service_update(UpdatePhase.EARLY, self.update)
 
     def set_actions(self, actions: dict[str, list[Action]]):
         self.actions = actions

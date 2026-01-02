@@ -1,15 +1,16 @@
-from dataclasses import dataclass
-from FreeBodyEngine.math import Vector
-from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.tilemap.spritesheet import TilemapSpritesheet, StaticSpritesheet
 from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
+from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS
 from FreeBodyEngine.core.tilemap.chunk import Chunk
 from FreeBodyEngine.core.tilemap.tile import Tile
-from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS
+from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine import warning, error
 from FreeBodyEngine.utils import fbnjit
-import numpy as np
+from FreeBodyEngine.math import Vector
+
 import math
+import numpy as np
+from dataclasses import dataclass
 
 @dataclass
 class Layer:
@@ -56,8 +57,14 @@ class Tilemap(Node2D):
     def add_spritesheet(self, spritesheet_type: str, data: dict):
         if not spritesheet_type in self._spritesheet_types:
             warning(f"Spritesheet type '{spritesheet_type}' is not defined")
+        
         if self.renderer:
-            self.spritesheets['idk'] = self._spritesheet_types[spritesheet_type](data, self.renderer)
+            name = data.get('name', None)
+            if name == None:
+                warning('Could not add spritesheet, a name was not defined in the provided data.')
+                return 
+            
+            self.spritesheets[name] = self._spritesheet_types[spritesheet_type](data, self.renderer)
         else:
             warning('Could not add spritesheet, as no tilemap renderer has been created')
 
@@ -65,7 +72,6 @@ class Tilemap(Node2D):
         self.renderer = TilemapRenderer(Vector(), 0, Vector(1, 1)) 
         self.add(self.renderer)
         self.add_spritesheet_type(StaticSpritesheet)
-
 
     def set_tile(self, position: Vector, image_id: int, spritesheet: str, layer: str):
         chunk = self.get_chunk(self.chunk_pos(position), layer)
@@ -107,4 +113,3 @@ class Tilemap(Node2D):
             layers[self.layers[layer].name] = self.layers[layer].chunks
         
         return str(layers)
-            

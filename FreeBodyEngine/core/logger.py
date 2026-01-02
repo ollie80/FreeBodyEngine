@@ -1,7 +1,7 @@
 from datetime import datetime
 from functools import wraps
 from FreeBodyEngine.core.service import Service
-from FreeBodyEngine import get_main, get_service, get_flag
+from FreeBodyEngine import get_main, SUPRESS_LOGS, SUPRESS_ERRORS, SUPRESS_WARNINGS, get_service, get_flag
 import os
 import inspect
 import json
@@ -20,16 +20,17 @@ def print_colored(*text: str, color='reset'):
     print(s)
 
 class Logger(Service):
-    def __init__(self, max_history_length=250):
+    def __init__(self, max_history_length=10000):
         super().__init__('logger')
+        self._clear_log()
         self.history: list[dict] = []
         self.max_history_length = max_history_length
         self.next_id = 1
         self.dependencies.append('files')
         self.supress = {
-            "ERROR": get_flag('SUPRESS_ERRORS', False),
-            "WARNING": get_flag('SUPRESS_WARNINGS', False),
-            "DEBUG": get_flag('SUPRESS_LOGS', False)
+            "ERROR": get_flag(SUPRESS_ERRORS, False),
+            "WARNING": get_flag(SUPRESS_WARNINGS, False),
+            "DEBUG": get_flag(SUPRESS_LOGS, False)
         }
 
     def _clear_log(self):
@@ -46,6 +47,7 @@ class Logger(Service):
 
     def _store_log(self, type_: str, msg: str):
         tb = None
+
         if type_ in ("ERROR", "WARNING"):
             tb = traceback.format_stack()[:-2]
 

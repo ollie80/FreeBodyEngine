@@ -15,7 +15,6 @@ class PBRPipeline(GraphicsPipeline):
         super().__init__()
         self.dependencies.append('scene_manager')
         
-
     def on_initialize(self):
         super().on_initialize()
         self.scene_manager = get_service('scene_manager')
@@ -37,33 +36,33 @@ class PBRPipeline(GraphicsPipeline):
     def draw(self):
         self.main_framebuffer.bind()
         camera = self.scene_manager.get_active().camera
-        self.renderer.clear(camera.background_color)
-        self.renderer.enable_depth_testing()
+        if camera:
+            self.renderer.clear(camera.background_color)
+            self.renderer.enable_depth_testing()
 
-        tilemaps: list[TilemapRenderer] = camera.scene.root.find_nodes_with_type('TilemapRenderer')
-        for tilemap in tilemaps:
-            tilemap.draw(camera)
+            tilemaps: list[TilemapRenderer] = camera.scene.root.find_nodes_with_type('TilemapRenderer')
+            for tilemap in tilemaps:
+                tilemap.draw(camera)
 
-        sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
-        for sprite in sprites:
-            self.renderer.draw_mesh(sprite._sprite.quad, sprite._sprite.material, sprite.world_transform, camera)
+            sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
+            for sprite in sprites:
+                self.renderer.draw_mesh(sprite._sprite.quad, sprite._sprite.material, sprite.world_transform, camera)
 
-        debugs: list[Debug2D] = camera.scene.root.find_nodes_with_type('Debug2D')
-        for debug in debugs:
-            self.renderer.draw_mesh(debug.mesh, debug.material, debug.world_transform, camera)
+            debugs: list[Debug2D] = camera.scene.root.find_nodes_with_type('Debug2D')
+            for debug in debugs:
+                self.renderer.draw_mesh(debug.mesh, debug.material, debug.world_transform, camera)
 
 
-        models: list[Model3D] = camera.scene.root.find_nodes_with_type('Model3D')
-        for model in models:    
-            self.renderer.draw_model(
-                model._model, model.world_transform, camera)
-            
-        self.renderer.disable_depth_testing()
+            models: list[Model3D] = camera.scene.root.find_nodes_with_type('Model3D')
+            for model in models:    
+                self.renderer.draw_model(
+                    model._model, model.world_transform, camera)
+                
+            self.renderer.disable_depth_testing()
 
-        self.main_framebuffer.unbind()
-        window_size = get_service('window').size
-        self.main_framebuffer.draw('albedo', window_size)
-
+            self.main_framebuffer.unbind()
+            window_size = get_service('window').size
+            self.main_framebuffer.draw('albedo', window_size)
 
     def create_material(self, data, injector):
         return PBRMaterial(data, injector)

@@ -1,0 +1,8 @@
+@input
+uv: vec2
+
+@output
+color: vec4
+
+def main() -> void:
+    color = vec4(0.0, 0.0, 0.0, 1.0)

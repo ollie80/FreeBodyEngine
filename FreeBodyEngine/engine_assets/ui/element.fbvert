@@ -1,0 +1,24 @@
+@input
+vertex: vec3
+normal: vec3 
+uvs: vec2
+
+@uniform
+layout: vec4
+
+@output
+uv: vec2
+
+def main() -> void:
+    uv = uvs
+    if VERTEX_INDEX == 0:
+        VERTEX_POSITION = vec2(layout[0], layout[1])
+
+    elif VERTEX_INDEX == 1:
+        VERTEX_POSITION = vec2(layout[0]+layout[2], layout[1])
+    
+    elif VERTEX_INDEX == 2:
+        VERTEX_POSITION = vec2(layout[0], layout[1] + layout[3])
+    
+    elif VERTEX_INDEX == 3:
+        VERTEX_POSITION = vec2(layout[0] + layout[2], layout[1] + layout[3])

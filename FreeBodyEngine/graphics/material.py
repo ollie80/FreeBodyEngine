@@ -18,19 +18,17 @@ from typing import Literal, TYPE_CHECKING
 if TYPE_CHECKING:
     from FreeBodyEngine.core.camera import Camera
 
-
 class PropertyType(Enum):
     
     FLOAT = auto()
     INT = auto()
-    
+
     COLOR_R = auto()
     COLOR_RG = auto()
     COLOR_RGB = auto()
     COLOR_RGBA = auto()
 
     TEXTURE = auto()
-
 
 class MaterialInjector(Injector):
     def __init__(self, material: 'Material'):
@@ -71,7 +69,7 @@ class MaterialInjector(Injector):
             tex_nodes = self.find_nodes('name', property.upper())
             if len(tex_nodes) == 0:
                 main.body.append(Set(0, Identifier(0, property), Identifier(0, property.upper())))
-            
+
             self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Texture'), Type(0, Identifier(0, 'sampler2D')), None))
             self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_Color'), Type(0, Identifier(0, 'vec4')), None))
             self.tree.children.insert(0, UniformDecl(0, Identifier(0, f'{property.capitalize()}_UVRect'), Type(0, Identifier(0, 'vec4')), None))
@@ -81,7 +79,7 @@ class MaterialInjector(Injector):
 
             for node in tex_nodes:
                 parent = self.find_parent(node)
-                custom_sample_pos = False 
+                custom_sample_pos = False
 
                 if isinstance(parent, Arg):
                     
@@ -107,10 +105,6 @@ class MaterialInjector(Injector):
                 ternary = TernaryExpression(node.pos, sample_call, color, use_tex)
 
                 self.replace_node(node, ternary)
-
-            
-
-
 
 class Material:
     def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = Injector()):
@@ -195,8 +189,9 @@ class Material:
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)
 
         self.shader.set_uniform('model', transform.model)
+
         self.shader.set_uniform('view', camera.view_matrix)
+        
         self.shader.set_uniform('proj', camera.proj_matrix)
         
         self.shader.use()
-        

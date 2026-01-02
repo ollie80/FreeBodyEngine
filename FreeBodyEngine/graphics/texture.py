@@ -58,4 +58,3 @@ class TextureManager:
 
     def _delete_texture(self):
         pass
-    

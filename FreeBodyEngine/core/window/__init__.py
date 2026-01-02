@@ -18,6 +18,7 @@ def get_window() -> type[Window]:
         from FreeBodyEngine.core.window.win32 import Win32Window
         return Win32Window
     
+    
     from FreeBodyEngine.core.window.glfw import GLFWWindow
     return GLFWWindow
     

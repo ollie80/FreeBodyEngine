@@ -1,4 +1,5 @@
 from FreeBodyEngine.utils import abstractmethod
+from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine import register_event, unregister_event, register_service_update, register_event_category, unregister_event_category, unregister_service_update, get_service, service_exists
 from typing import TYPE_CHECKING, Union, Literal
 from FreeBodyEngine.core.input import Key
@@ -13,27 +14,23 @@ from FreeBodyEngine.core.service import Service
 WINDOW_RESIZE = "ENGINE_window_resize"
 
 class Cursor:
-    """The generic cursor class. Abstracts cursor management to easily create cross-platform cursors."""
     pass
 
 class Window(Service):
-    """
-    The generic window class. Its purpose is to abstract window management.
-    """
     def __init__(self, size: tuple[int, int], title: str):
         super().__init__('window')
         self.window_type = None
 
     def on_initialize(self):
-        register_service_update('early', self.update)
-        register_service_update('late', self.draw)
+        register_service_update(UpdatePhase.EARLY, self.update)
+        register_service_update(UpdatePhase.LATE, self.draw)
 
         register_event_category('window')
         register_event(WINDOW_RESIZE, 'window')
 
     def on_destroy(self):
-        unregister_service_update('early', self.update)
-        unregister_service_update('late', self.draw)
+        unregister_service_update(UpdatePhase.EARLY, self.update)
+        unregister_service_update(UpdatePhase.LATE, self.draw)
 
         unregister_event_category('window')
         unregister_event(WINDOW_RESIZE)
@@ -68,7 +65,6 @@ class Window(Service):
 
     @abstractmethod
     def _create_cursor(self, image: 'Image'):
-        """Creates cross-platform cursor objects."""
         pass
 
     @abstractmethod

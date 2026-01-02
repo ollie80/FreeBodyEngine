@@ -14,9 +14,9 @@ def fulcrum_editor(stdscr, filepath):
             text_lines = f.read().splitlines()
         if not text_lines:
             text_lines = [""]
-
+ 
     cursor_y, cursor_x = 0, 0
-    scroll_offset = 0 
+    scroll_offset = 0
 
     def save_file():
         try:
@@ -54,8 +54,10 @@ def fulcrum_editor(stdscr, filepath):
 
         if key == 3:  #ctrl+C
             break
+
         elif key == 19:  #ctrl+S 
             status = save_file()
+        
         elif key in (curses.KEY_ENTER, 10, 13):
             current_line = text_lines[cursor_y]
             text_lines[cursor_y] = current_line[:cursor_x]
@@ -74,24 +76,29 @@ def fulcrum_editor(stdscr, filepath):
                 del text_lines[cursor_y]
                 cursor_y -= 1
                 cursor_x = prev_line_len
+
         elif key == curses.KEY_UP and cursor_y > 0:
             cursor_y -= 1
             cursor_x = min(cursor_x, len(text_lines[cursor_y]))
+
         elif key == curses.KEY_DOWN and cursor_y < len(text_lines) - 1:
             cursor_y += 1
             cursor_x = min(cursor_x, len(text_lines[cursor_y]))
+        
         elif key == curses.KEY_LEFT:
             if cursor_x > 0:
                 cursor_x -= 1
             elif cursor_y > 0:
                 cursor_y -= 1
                 cursor_x = len(text_lines[cursor_y])
+
         elif key == curses.KEY_RIGHT:
             if cursor_x < len(text_lines[cursor_y]):
                 cursor_x += 1
             elif cursor_y < len(text_lines) - 1:
                 cursor_y += 1
                 cursor_x = 0
+        
         elif 32 <= key <= 126:
             line = text_lines[cursor_y]
             text_lines[cursor_y] = line[:cursor_x] + chr(key) + line[cursor_x:]

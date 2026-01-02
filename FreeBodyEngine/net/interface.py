@@ -6,6 +6,8 @@ from enum import Enum, auto
 RELIABLE_BIT = 1 << 0
 ORDERED_BIT = 1 << 1
 
+BYTE_ORDER = 'big'
+
 LOCAL = "127.0.0.1"
 
 class PacketType(Enum):
@@ -78,8 +80,9 @@ class OrderedBuffer:
         return released
 
 NetworkAddress = tuple[str, int]    
-
+"""Contains the host and port."""
 class NetworkInterface:
+    """A basic UDP networking interface that inmplements TCP features to allow for both speed and reliability"""
     def __init__(self, port=7433, host=LOCAL, max_packet_size=4096, reliable_resend_threshold=0.3, sequence_duplicate_threshold=64):
         self.port = port
         self.host = host
@@ -107,7 +110,6 @@ class NetworkInterface:
             self.last_sequences[address] = SequenceHandler(self.sequence_duplicate_threshold)
 
         return self.last_sequences[address].is_duplicate(seq)
-
         
     def send_data_packet(self, channel: int, address, payload: bytes, reliable: bool = False, ordered: bool = False):
         seq = self.seq_counter & 0xFFFF
@@ -119,7 +121,7 @@ class NetworkInterface:
         if ordered:
             flags |= ORDERED_BIT
 
-        header = PacketType.DATA.value.to_bytes(1, 'big') + channel.to_bytes(1, 'big') + flags.to_bytes(1, 'big') + seq.to_bytes(2, 'big') + len(payload).to_bytes(2, 'big')
+        header = PacketType.DATA.value.to_bytes(1, BYTE_ORDER) + channel.to_bytes(1, BYTE_ORDER) + flags.to_bytes(1, BYTE_ORDER) + seq.to_bytes(2, BYTE_ORDER) + len(payload).to_bytes(2, BYTE_ORDER)
 
         packet = header + payload
         self.send_packet(packet, address)
@@ -130,13 +132,14 @@ class NetworkInterface:
         return seq
 
     def send_ack_packet(self, channel: int, address, seq: int):
-        packet = PacketType.ACK.value.to_bytes(1, 'big') + channel.to_bytes(1, 'big') + seq.to_bytes(2, 'big')
+        packet = PacketType.ACK.value.to_bytes(1, BYTE_ORDER) + channel.to_bytes(1, BYTE_ORDER) + seq.to_bytes(2, BYTE_ORDER)
 
         self.send_packet(packet, address)
 
     def send_packet(self, packet, address):
         try:
             self.socket.sendto(packet, address)
+        
         except ConnectionResetError:
             # this is just windows being dumb, UDP doesnt have connections THATS THE WHOLE FUCKING POINT!!!! I HATE WINDOWS AHHHHHHHHHHH
             pass
@@ -144,14 +147,17 @@ class NetworkInterface:
     def recieve_packet(self):
         try:
             return self.socket.recvfrom(self.max_packet_size)
+        
         except ConnectionResetError:
             return None, None
+
 
     def check_ordered_packet(self, packet: DataPacket, address: NetworkAddress):
         if address not in self.ordered_buffers:
             self.ordered_buffers[address] = OrderedBuffer()
 
         return self.ordered_buffers[address].check_packet(packet)
+
 
     def poll_data(self):
         while True:
@@ -171,9 +177,9 @@ class NetworkInterface:
 
                 channel_id = data[0]
                 flags = data[1]
-                seq = int.from_bytes(data[2:4], 'big')
+                seq = int.from_bytes(data[2:4], BYTE_ORDER)
 
-                length = int.from_bytes(data[4:6], 'big')
+                length = int.from_bytes(data[4:6], BYTE_ORDER)
 
                 payload = data[6:6+length]
                 
@@ -199,10 +205,11 @@ class NetworkInterface:
                 data = packet[0:]
                     
                 channel_id = data[0]
-                seq = int.from_bytes(data[1:], 'big')
+                seq = int.from_bytes(data[1:], BYTE_ORDER)
                 del self.pending_reliable[seq]
 
                 self.packets.append(ACKPacket(channel_id, seq))
+
 
     def process_reliable_packets(self):
         now = time.time()
@@ -215,6 +222,7 @@ class NetworkInterface:
         for seq, packet, address in to_resend:
             self.send_packet(packet, address)
             self.pending_reliable[seq] = (packet, now, address)
+
 
     def update(self):
         self.poll_data()

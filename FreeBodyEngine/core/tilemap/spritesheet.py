@@ -5,19 +5,22 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
     from FreeBodyEngine.core.tilemap import Tilemap, Tile
+
 from enum import Enum, auto
 
 class UpdateMode:
     """Determines when the 'get_image_index' function will be called. Frame means every its called every frame. Chunk means its called on every chunk update. Once is only called once per tile. Never means it will never be called, and the image id will be used instead."""
-    frame = auto()
-    chunk = auto()
-    once = auto()
-    never = auto()
+    FRAME = auto()
+    CHUNK = auto()
+    ONCE = auto()
+    NEVER = auto()
 
 
 class TilemapSpritesheet:
-    def __init__(self, paths: list[str], renderer: 'TilemapRenderer', update_mode: UpdateMode = UpdateMode.never):        
-        self.path_map = renderer._add_textures(paths)
+    def __init__(self, data: dict[str, any], renderer: 'TilemapRenderer', update_mode: UpdateMode = UpdateMode.NEVER):
+        
+        self.data = data        
+        self.path_map = renderer._add_textures(self._extract_paths(data))
         self.update_mode = update_mode
 
     @classmethod
@@ -40,10 +43,17 @@ class TilemapSpritesheet:
         :param tile: The tile that the image index is being gotten for.
         :type tile: Tile
 
-        :param neighbors: The 8 neighbors of the given tile, ordered in the clockwise direction stating in the top left. Includes nieghbors in nearby chunks.
+        :param neighbors: The 8 neighbors of the given tile, ordered in the clockwise direction stating in the top left. Includes neighbors in nearby chunks.
         :type neighbors: tuple[Tile, Tile, Tile, Tile, Tile, Tile, Tile, Tile]
 
         :rtype: int
+        """
+        pass
+
+    @abstractmethod    
+    def _extract_paths(self, data: dict[str, any]):
+        """
+        Used to extract paths from the data provided to the spritesheet.
         """
         pass
 
@@ -55,20 +65,25 @@ class TilemapSpritesheet:
         pass
 
 class StaticSpritesheet(TilemapSpritesheet):
-    def __init__(self, data: dict[int, tuple[str, str]], renderer: "TilemapRenderer"):
+    def __init__(self, data: dict[str, any], renderer: "TilemapRenderer"):
         self.data = data
-        super().__init__(self._extract_paths(), renderer, UpdateMode.once)
 
-    def _extract_paths(self):
+        super().__init__(self.data, renderer, UpdateMode.ONCE)
+        
+    def _extract_paths(self, data: dict[str, any]):
+        path_data: list[tuple[str, str]] = data['paths']
         paths = []
-        for i in self.data:
-            paths.append(self.data[i][1])
+
+        for i in range(len(path_data)):
+            paths.append(path_data[i][1])
+        
         return paths
 
     def get_image_id(self, key):
         for i in self.data:
             if self.data[i][0] == key:
                 return i
+        
         return -1
 
     @staticmethod
@@ -80,11 +95,11 @@ class StaticSpritesheet(TilemapSpritesheet):
     
 class AutoSpritesheet(TilemapSpritesheet):
     def __init__(self, data: dict, renderer: "TilemapRenderer"):
-        super().__init__(data, renderer, UpdateMode.chunk)
+        super().__init__(data, renderer, UpdateMode.CHUNK)
 
 class AnimatedSpritesheet(TilemapSpritesheet):
     def __init__(self, data: dict, renderer: "TilemapRenderer"):
-        super().__init__(data, renderer, UpdateMode.frame)
+        super().__init__(data, renderer, UpdateMode.FRAME)
 
     @staticmethod
     def get_name():
@@ -92,6 +107,3 @@ class AnimatedSpritesheet(TilemapSpritesheet):
     
     def get_image_index(self, tile, neighbors):
         super().get_image_index(tile, neighbors)
-        
-
-

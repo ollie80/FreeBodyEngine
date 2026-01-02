@@ -28,7 +28,7 @@ class Sprite2D(Node2D):
     def on_draw(self):
         self._sprite.draw()
 
-
 class Sprite3D(Node2D):
     def __init__(self, image: 'Image'):
         pass
+

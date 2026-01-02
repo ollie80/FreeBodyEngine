@@ -108,7 +108,8 @@ class Color:
         return len(self.float_normalized_a)
 
     def __str__(self):
-        return str(self.hexa)
+        return str(self.hex)
     
     def __repr__(self):
         return str(self)
+    

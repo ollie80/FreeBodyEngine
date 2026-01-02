@@ -1,4 +1,5 @@
 from FreeBodyEngine.core.service import Service
+from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine import get_service, register_service_update, unregister_service_update, register_event_callback, unregister_event_callback
 from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.graphics.renderer import Renderer
@@ -11,13 +12,13 @@ class GraphicsPipeline(Service):
         self.dependencies.append('renderer')
 
     def on_initialize(self):
-        register_service_update('draw', self.draw)
+        register_service_update(UpdatePhase.DRAW, self.draw)
         self.renderer = get_service('renderer')
         self.renderer: Renderer
         register_event_callback(WINDOW_RESIZE, self.resize)
     
     def on_destroy(self):
-        unregister_service_update('draw', self.draw)
+        unregister_service_update(UpdatePhase.DRAW, self.draw)
         unregister_event_callback(WINDOW_RESIZE, self.resize)
 
     @abstractmethod

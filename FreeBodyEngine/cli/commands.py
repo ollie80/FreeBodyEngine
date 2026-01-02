@@ -4,6 +4,7 @@ from FreeBodyEngine.dev.run import main as run_project
 from FreeBodyEngine.cli.cpp import compile_handler
 from FreeBodyEngine.build.builder import build
 from FreeBodyEngine.font.atlasgen import generate_atlas
+from FreeBodyEngine.cli.cowsay import cowsay
 
 import tomllib
 import sys
@@ -268,7 +269,7 @@ def log_traceback_handler(env, args):
 
     log_id = int(args[0])
     log_file = get_json_log_file(env)
-
+    print(log_file)
     if not os.path.exists(log_file):
         print("No log file found.")
         return
@@ -279,6 +280,7 @@ def log_traceback_handler(env, args):
                 entry = json.loads(line)
                 if entry["id"] == log_id:
                     tb = entry.get("traceback")
+                    
                     if tb:
                         if isinstance(tb, list):
                             tb_text = "\n".join(tb)
@@ -841,8 +843,7 @@ root_commands = [
     Command(['project', "p"], subcommands=[
         Command(['list', "l"], list_projects, help_text="List all projects in the registry."),
         Command(['delete', "d"], delete_project, help_text="Deletes a project."),
-        Command(['get', "g"], get_project, help_text="Gets the project information."),
-        Command(['lines'], lines_project, help_text="Gets the lines of a project.")
+        Command(['get', "g"], get_project, help_text="Gets the project information.")
     ], help_text="Commands to work with the FB Project system."),
     Command(["create", "c"], subcommands=[
         Command(["sprite", "s"], create_sprite, help_text="Create a new sprite."),
@@ -864,23 +865,29 @@ root_commands = [
     Command(["compile_scripts", 'cs'], compile_handler, help_text='Compiles CPP scripts.'),
     Command(["cloc"], cloc_handler, help_text="Counts the lines of code in the current directory or specified project."),
     Command(["cwoc"], cwoc_handler, help_text="Counts the words of code in the current directory or specified project."),
-    Command(['traceback', 'tb'], log_traceback_handler, help_text="Print the traceback for a log entry by ID.")
+    Command(['traceback', 'tb'], log_traceback_handler, help_text="Print the traceback for a log entry by ID."),
+    Command(['cowsay'], cowsay.cowsay_handler, help_text="A python port of the GNU/Linux CLI tool. Taken from https://github.com/VaasuDevanS/cowsay-python.")
 ]
 
-
-def dispatch(args, commands, env=None, path=[]):
+def dispatch(args: list[str], commands, env=None, path=[]):
     if not args:
         print("No command provided.\n")
         help_handler(env, [])
         return
+    
+    if args[0] in ['fb', 'freebody']:
+        del args[0]
+        if len(args) == 0:
+            args = ["help"]
 
     cmd_name = args[0]
-
+    
     for cmd in commands:
         if cmd.matches(cmd_name):
             if len(args) > 1 and args[1] in ("--help", "-h"):
                 cmd.print_help(path)
                 return
+
 
             if cmd.subcommands and len(args) > 1:
                 dispatch(args[1:], cmd.subcommands, env, path + [cmd.names[0]])

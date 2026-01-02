@@ -75,8 +75,10 @@ class GL33Renderer(Renderer):
         if self.main.winow.window_type == "win32":
             WGL.wglMakeCurrent(self.window.hdc, None)
         WGL.wglDeleteContext(self.context)
-    def create_framebuffer(self, width, height, attachments, **kwargs):
-        return GLFramebuffer(width, height, attachments, **kwargs)
+
+    @property
+    def create_framebuffer(self):
+        return GLFramebuffer
 
     def clear(self, color: 'Color'):
         glClearColor(*color.float_normalized_a)
@@ -94,11 +96,10 @@ class GL33Renderer(Renderer):
         glBindVertexArray(mesh.vao)
         glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), instances)
 
-        glBindVertexArray(0)
+        glBindVertexArray(0) 
 
     def enable_depth_testing(self):
         glEnable(GL_DEPTH_TEST)
-
 
     def disable_depth_testing(self):
         glDisable(GL_DEPTH_TEST)
@@ -121,7 +122,7 @@ class GL33Renderer(Renderer):
 
         glBindVertexArray(0)
 
-    def draw_line(self, start, end, width, color: 'Color'):
+    def draw_line(self, start: tuple[int, int], end: tuple[int, int], width, color: 'Color'):
         glLineWidth(width)
         line_vertices = np.array([
             -start[0], start[1],
