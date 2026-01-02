@@ -51,8 +51,6 @@ class GLBParser:
     def get_binary_buffer(self):
         return self.bin_chunk
 
-
-
 class GLTFParser:
     def __init__(self, gltf_dict, bin_data):
         self.gltf = gltf_dict

@@ -1,8 +1,8 @@
 import time
 from FreeBodyEngine import delta, physics_delta, warning, get_main, register_service_update, unregister_service_update, get_service, service_exists
 from functools import wraps
+from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine.core.service import Service
-
 
 class Time:
     def __init__(self):
@@ -52,8 +52,7 @@ class Time:
         self._last_time = current_time
         self.frame_count += 1
 
-        
-        if self.delta_time > 0.05:
+        if self.delta_time > 0.07:
             warning(f'Delta time spike: {self.delta_time}')
 
 class CooldownManager(Service):
@@ -63,8 +62,8 @@ class CooldownManager(Service):
         self.physics_cooldowns = {}
 
     def on_initialize(self):
-        register_service_update('update', self.update)
-        register_service_update('physics', self.physics_update)
+        register_service_update(UpdatePhase.UPDATE, self.update)
+        register_service_update(UpdatePhase.PHYSICS, self.physics_update)
 
     def update(self):
         for cooldown in self.cooldowns:
@@ -75,8 +74,8 @@ class CooldownManager(Service):
             self.physics_cooldowns[cooldown] = self.physics_cooldowns[cooldown] - physics_delta()
 
     def on_destroy(self):
-        unregister_service_update('update', self.update)
-        unregister_service_update('physics', self.physics_update)
+        unregister_service_update(UpdatePhase.UPDATE, self.update)
+        unregister_service_update(UpdatePhase.PHYSICS, self.physics_update)
 
 def cooldown(seconds: float):
     """Decorator to add a cooldown to functions."""

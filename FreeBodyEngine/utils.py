@@ -1,4 +1,5 @@
 from FreeBodyEngine import get_main, warning, get_flag, get_service
+from typing import Literal, overload
 
 def abstractmethod(func):
     def wrapper(*args, **kwargs):
@@ -6,12 +7,11 @@ def abstractmethod(func):
         raise NotImplementedError(f"Method '{func.__name__}' is not implemented on '{cls_name}'.")
     return wrapper
 
-def get_platform():
+def get_platform() -> Literal['win32','darwin','linux']:
     sys_plat = sys.platform
     if sys_plat in ['win32', 'darwin', 'linux']:
         return sys_plat
     # handle stuff like android, IOs, console
-
 
 import sys
 import os
@@ -97,17 +97,14 @@ def load_data(path: str):
 def load_toml(path: str):
     return get_service('files').load_toml(path)
 
-
 def load_image(path: str):
     return get_service('files').load_image(path)
 
 def load_material(path: str):
     return get_service('files').load_material(path)
 
-
 def load_sound(path: str):
     return get_main().files.load_sound(path)
-
 
 def load_shader(path: str):
     return get_service('files').load_shader(path)
@@ -120,3 +117,33 @@ def load_model(path: str, model_name: str = None, scale=None):
 
 def load_texture_stack(paths: list[str]):
     return get_service('files').load_texture_stack(paths)
+
+
+from FreeBodyEngine.core.node import Node
+from FreeBodyEngine.ui.element import UIElement
+
+@overload
+def add(node: 'Node'):
+    """
+    Add a node to the current scene.
+    """
+    pass
+
+@overload
+def add(element: UIElement):
+    """
+    Add a ui element to the root node in the ui manager.
+    """
+    pass
+
+def add(obj: any):
+    """
+    Adds a object to the correct service. e.g. giving a Node2D object would add it to the current scene in the scene manager service.
+    """
+    if isinstance(obj, Node):
+        get_service('scene').get_active().add(obj)
+    
+    elif isinstance(obj, UIElement):
+        get_service('ui').add(obj)
+
+        

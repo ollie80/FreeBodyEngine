@@ -1,4 +1,3 @@
-
 @output
 albedo: vec4
 normal: vec4

@@ -23,6 +23,7 @@ vec4 sample(sampler2D tex, vec2 texcoords, vec4 uv_rect) {{
     },
     "VERTEX_POSITION": {"kind": "variable", "replace": "gl_Position"},
     "INSTANCE_ID": {"kind": "variable", "replace": "gl_InstanceID"},
+    "VERTEX_INDEX": {"kind": "variable", "replace": "gl_VertexID"},
     "TIME": {'kind': "uniform", 'source': 'uniform float TIME;\n'},
     "texture": {"kind": "type", "replace": "sampler2D"},
     "textureStack": {"kind": "type", "replace": "sampler2DArray"}

@@ -3,18 +3,27 @@ from FreeBodyEngine.math import Vector, Vector3
 from dataclasses import dataclass
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.graphics.texture import Texture, TextureStack
+from FreeBodyEngine.core.timer import Timer
+import numpy as np
+from FreeBodyEngine import delta
+import random
+
 
 @dataclass
 class ParticleSettings:
     """
     The information that controlls the attributes of particle. Attributes with minimum and maximum values will be given a value between the max and min.
-    
+
     :param velocity_min: The minimum initial velocity.
     :type velocity_min: Vector
     :param velocity_max: The maximum initial velocity.
     :type velocity_max: Vector
     :param lifetime: The time a particle will last for. A value of -1 will make it last forever.
     :type lifetime: float
+    :param spawn_cooldown: The cooldown between particle spawns.
+    :type spawn_cooldown: float
+    :param max_particles: The maximum amount of particles that can exist at any time.
+    :type max_particles: int
     :param acceleration_min: The minimum acceleration.
     :type acceleration_min: Vector
     :param acceleration_max: The maximum acceleration.
@@ -30,7 +39,10 @@ class ParticleSettings:
     velocity_max: Vector = Vector(1, 1)
 
     lifetime: float = -1.0
-
+    spawn_cooldown: float = 0.1
+    
+    max_particles: int = 100
+    
     acceleration_min: Vector = Vector()
     acceleration_max: Vector = Vector(1, 1)
 
@@ -38,24 +50,82 @@ class ParticleSettings:
     texture: Texture = None
     texture_stack: TextureStack = None
 
-
-@dataclass
-class Particle:
-    def __init__(self):
-        velocity: Vector
-        acceleration: Vector
-
-        lifetime: float
-
-        useTexture: bool = False
-        useTextureStack: bool = False
-        useColor: bool = False
+PARTICLE_DTYPE = np.dtype(
+    [
+        ("pos", np.float32, (2,)),
+        ("vel", np.float32, (2,)),
+        ("lifetime", np.float32),
+        ("active", np.bool_),
+    ]
+)
 
 class ParticleEmmiter(Node2D):
-    def __init__(self, position: Vector = Vector(), rotation: float = 1, scale: Vector = Vector(), particle_settings: ParticleSettings = ParticleSettings()):
+    def __init__(
+        self,
+        position: Vector = Vector(),
+        rotation: float = 1,
+        scale: Vector = Vector(),
+        particle_settings: ParticleSettings = ParticleSettings()
+    ):
         super().__init__(position, rotation, scale)
         self.particle_settings: ParticleSettings = particle_settings
-        self.particles = []
-
-    def spawn(self):
+        self.particles = np.zeros(particle_settings.max_particles, dtype=PARTICLE_DTYPE)
         
+        self.spawn_timer = Timer(self.particle_settings.spawn_cooldown)
+        self.spawn_timer.activate()
+
+        self.active = np.zeros(self.particle_settings.max_particles, dtype=bool)
+        self.free_list = list(range(self.particle_settings.max_particles))
+
+        self._active = True
+
+    def activate(self):
+        self._active = True
+
+    def deactivate(self):
+        self._active = False
+
+    def _spawn(self):
+        self.particles
+        if not self.free_list:
+            return None
+        
+        idx = self.free_list.pop()
+        self.particles['pos'][idx] = [self.world_transform.position.x, self.world_transform.position.y]
+        
+        vx = random.uniform(self.particle_settings.velocity_min.x,self.particle_settings.velocity_max.x)
+        vy = random.uniform(self.particle_settings.velocity_min.y, self.particle_settings.velocity_max.y)
+        self.particles['vel'][idx] = [vx, vy]
+
+        self.particles['lifetime'][idx] = self.particle_settings.lifetime
+        self.particle['active'][idx] = True
+        return idx
+
+    def on_update(self):
+        if self._active:
+            self.spawn_timer.update()
+
+            if self.spawn_timer.complete:
+                self._spawn()
+                self.spawn_timer.activate()
+
+            
+            self.particles['lifetime'][self.particles['active']] -= delta()
+
+            alive_mask = self.particles['active']
+            alive = self.particles[alive_mask]
+
+            accel_x = random.uniform(self.particle_settings.acceleration_min.x, self.particle_settings.acceleration_max.x)
+            accel_y = random.uniform(self.particle_settings.acceleration_min.y, self.particle_settings.acceleration_max.y)
+
+            alive['vel'][0] += accel_x
+            alive['vel'][1] += accel_y
+
+            alive['pos'][0] += alive['vel'][0]
+            alive['pos'][1] += alive['vel'][1]
+
+            dead = np.where((self.particles['lifetime'] <= 0) & self.particles['active'])[0]
+
+            if dead.size > 0:
+                self.particles['active'][dead] = False
+                self.free_list.extend(dead.tolist())

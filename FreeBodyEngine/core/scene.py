@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 
 from FreeBodyEngine.core.node import RootNode, Node
 from FreeBodyEngine.core.camera import Camera2D
+from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine.core.service import Service
 from FreeBodyEngine import register_service_update, unregister_service_update, get_service
 
@@ -27,12 +28,12 @@ class SceneManager(Service):
         self.active_scene: str | None = None
 
     def on_initialize(self):
-        register_service_update('update', self.update)
-        register_service_update('physics', self.physics_update)
+        register_service_update(UpdatePhase.UPDATE, self.update)
+        register_service_update(UpdatePhase.PHYSICS, self.physics_update)
 
     def on_destroy(self):
-        unregister_service_update('update', self.update)
-        unregister_service_update('physics', self.physics_update)
+        unregister_service_update(UpdatePhase.UPDATE, self.update)
+        unregister_service_update(UpdatePhase.PHYSICS, self.physics_update)
 
     def get_active(self) -> 'Scene':
         return self.scenes.get(self.active_scene, None)

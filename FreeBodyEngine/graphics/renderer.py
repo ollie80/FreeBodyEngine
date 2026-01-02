@@ -4,6 +4,9 @@ from fbusl.injector import Injector
 from FreeBodyEngine import register_event_callback, unregister_event_callback
 from FreeBodyEngine.core.window import WINDOW_RESIZE
 
+from dataclasses import dataclass
+
+
 from FreeBodyEngine.graphics.image import Image
 from FreeBodyEngine.graphics.buffer import Buffer
 from FreeBodyEngine.graphics.mesh import Mesh
@@ -12,23 +15,36 @@ from FreeBodyEngine.graphics.texture import TextureManager, Texture
 import numpy as np
 from FreeBodyEngine.core.service import Service
 
+
 if TYPE_CHECKING:
     from FreeBodyEngine.core.main import Main
     from FreeBodyEngine.graphics.material import Material
     from FreeBodyEngine.graphics.color import Color
-    from FreeBodyEngine.core.camera import Camera2D
+    from FreeBodyEngine.core.camera import Camera2D, Camera
     from FreeBodyEngine.graphics.model.model import Model
     from FreeBodyEngine.math import Vector, Transform
 
+
+@dataclass
+class Call:
+    mesh: 'Mesh' 
+    transform: 'Transform'
+    material: 'Material'
+    use_camera: bool
+    camera: 'Camera'
+    is_instanced: bool
+    instances: int
 
 class Renderer(Service):
     def __init__(self):
         super().__init__('renderer')
         self.texture_manager = TextureManager()
+        self.calls: list[Call] = []
+        
 
     def on_initialize(self):
         register_event_callback(WINDOW_RESIZE, self.resize)
-
+    
     def on_destroy(self):
         unregister_event_callback(WINDOW_RESIZE, self.resize)
 
@@ -64,8 +80,9 @@ class Renderer(Service):
     def get_max_buffer_size(self) -> int:
         pass
 
+    @property
     @abstractmethod
-    def create_framebuffer(self, width: int, height: int, attachments: dict[str, tuple[AttachmentFormat, AttachmentType]], **kwargs) -> Framebuffer:
+    def create_framebuffer(self) -> type[Framebuffer]:
         pass
 
     @abstractmethod
@@ -95,12 +112,12 @@ class Renderer(Service):
         pass
 
     @abstractmethod
-    def draw_mesh_instanced(self, mesh: 'Mesh', instances: int, material: 'Material', transform: 'Transform', camera: 'Camera2D'):
-        pass
+    def draw_mesh_instanced(self, mesh: 'Mesh', instances: int, material: 'Material', transform: 'Transform', camera: 'Camera'|None):
+        self.calls.append(Call(mesh, transform, material, False if camera == None else True, camera, True, instances))
 
     @abstractmethod
-    def draw_mesh(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera2D'):
-        pass
+    def draw_mesh(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera'|None):
+        self.calls.append(Call(mesh, transform, material, False if camera == None else True, camera, False, 0))
 
     def draw_model(self, model: 'Model', transform: 'Transform', camera: 'Camera2D'):
         for mesh_name in model.meshes:
@@ -110,7 +127,7 @@ class Renderer(Service):
             material = model.materials[material_name]
             
             self.draw_mesh(mesh, material, transform, camera)
-
+    
     @abstractmethod
     def draw_circle(self, radius: float, position: tuple[float, float], color: 'Color'):
         """

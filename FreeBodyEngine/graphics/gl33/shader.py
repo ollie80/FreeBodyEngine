@@ -66,7 +66,6 @@ def compile_shader(source, shader_type):
 
     return shader
 
-
 class GLShader(Shader):
     def __init__(self, vertex_source, fragment_source, injector):
         super().__init__(vertex_source, fragment_source, GL33Generator, injector)
@@ -110,7 +109,6 @@ class GLShader(Shader):
 
             elif isinstance(obj, Vector3) and length == 3:
                 return True
-
 
         if gl_type == GL_INT:
             if isinstance(val, int):
@@ -181,7 +179,6 @@ class GLShader(Shader):
         else:
             if np.array_equal(val, cached_val):
                 return
-
 
         self.uniform_cache[name] = val
 
@@ -289,13 +286,16 @@ class GLShader(Shader):
                     if img != None and isinstance(img, Image):
                         glUniform1i(self.uniforms[name].location, img.texture.use())
                         rect = img.texture.uv_rect
-                    if img != None and isinstance(img, Texture):
+                        
+                    elif img != None and isinstance(img, Texture):
                         glUniform1i(self.uniforms[name].location, img.use())
                         rect = img.uv_rect
                     
-                    uv_rect = f"_ENGINE_{name}_uv_rect"
-                    if uv_rect in self.uniforms:
-                        glUniform4f(self.uniforms[uv_rect].location, rect[0], rect[1], rect[2], rect[3])
+                    if img != None:
+                        uv_rect = f"_ENGINE_{name}_uv_rect"
+                        if uv_rect in self.uniforms:
+                            
+                            glUniform4f(self.uniforms[uv_rect].location, rect[0], rect[1], rect[2], rect[3])
                 else:
                     images = self.uniform_cache[name]
                     locations = []
@@ -307,13 +307,14 @@ class GLShader(Shader):
                                 locations.append(img.use())
                             
                         glUniform1i(self.uniforms[name].location, locations)
+            
             if self.uniforms[name].type == GL_SAMPLER_2D_ARRAY:
                 stack = self.uniform_cache[name]
                 if stack != None:
                     glUniform1i(self.uniforms[name].location, stack.use())
-                
-                for i in range(len(stack.uv_rects)):
-                    uv_rect = f"_ENGINE_{name}_uv_rect[{i}]"
-                    if uv_rect in self.uniforms:
-                        loc = i * 4
-                        glUniform4f(self.uniforms[uv_rect].location, stack.uv_rects[0+loc], stack.uv_rects[1+loc], stack.uv_rects[2+loc], stack.uv_rects[3+loc])
+                    
+                    for i in range(len(stack.uv_rects)):
+                        uv_rect = f"_ENGINE_{name}_uv_rect[{i}]"
+                        if uv_rect in self.uniforms:
+                            loc = i * 4
+                            glUniform4f(self.uniforms[uv_rect].location, stack.uv_rects[0+loc], stack.uv_rects[1+loc], stack.uv_rects[2+loc], stack.uv_rects[3+loc])

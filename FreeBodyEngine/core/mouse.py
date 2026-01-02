@@ -1,6 +1,7 @@
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.core.service import Service
+from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine import register_service_update, unregister_service_update
 
 class Mouse(Service):
@@ -19,10 +20,10 @@ class Mouse(Service):
         self.double_click_threshold = 0.4 
     
     def on_initialize(self):
-        register_service_update('early', self.update)
+        register_service_update(UpdatePhase.EARLY, self.update)
 
     def on_destroy(self):
-        unregister_service_update('early', self.update)
+        unregister_service_update(UpdatePhase.EARLY, self.update)
 
     @abstractmethod
     def lock_position(self):

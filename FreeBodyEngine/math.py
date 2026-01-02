@@ -12,10 +12,7 @@ class GenericVector:
     x: float
     y: float
 
-
-
 VECTOR_LIKE = Union[GenericVector, float, Sequence[float]]
-
 
 def simplify_fraction(numerator, denominator):
     if denominator == 0:
@@ -25,20 +22,17 @@ def simplify_fraction(numerator, denominator):
     simplified_numerator = numerator // gcd
     simplified_denominator = denominator // gcd
 
-    # Ensure denominator is positive
     if simplified_denominator < 0:
         simplified_numerator *= -1
         simplified_denominator *= -1
 
     return simplified_numerator, simplified_denominator
 
-
 def bezier_point(curve, t):
     """De Casteljau's algorithm to evaluate a Bezier curve."""
     while len(curve) > 1:
         curve = [(1 - t) * curve[i] + t * curve[i + 1] for i in range(len(curve) - 1)]
-    return curve[0]  # The final point is the evaluated point at t
-
+    return curve[0]
 
 def vector_towards(start: 'Vector', to: 'Vector', magnitude):
     relx = to.x - start.x
@@ -47,10 +41,8 @@ def vector_towards(start: 'Vector', to: 'Vector', magnitude):
 
     return Vector((magnitude) * math.cos(angle), (magnitude) * math.sin(angle))
 
-
 def is_even(x):
     return x % 2 == 0
-
 
 def clamp(min, value, max):
     if value < min:
@@ -59,10 +51,8 @@ def clamp(min, value, max):
         return max
     return value
 
-
 def clamp_vector(min, value, max):
     return Vector(clamp(min.x, value.x, max.x), clamp(min.y, value.y, max.y))
-
 
 def vector_is_close(value1, value2, max):
     if math.isclose(value1.x, value2.x, abs_tol=max) and math.isclose(
@@ -72,14 +62,12 @@ def vector_is_close(value1, value2, max):
 
     return False
 
-
 def gaussian_random(rng: numpy.random.RandomState, mean=0, standard_deveation=1):
     u = 1 - rng.random()
     v = rng.random()
     z = math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * v)
 
     return z * standard_deveation + mean
-
 
 class GenericRotation:
     pass
@@ -174,6 +162,9 @@ class Transform:
             return Transform(self.position * other.position,
                             self.rotation + other.rotation,
                             self.scale * other.scale)
+        elif isinstance(other, Vector):
+            return Transform(self.position * other, self.rotation * other.magnitude, self.scale * other)
+
         raise TypeError("Transform can only be multiplied by a scalar or another Transform")
 
     def __imul__(self, other):
@@ -187,6 +178,12 @@ class Transform:
             self.rotation += other.rotation
             self.scale *= other.scale
             return self
+        elif isinstance(other, Vector):
+            self.position *= other
+            self.rotation *= other.magnitude
+            self.scale *= other
+            return self
+
         raise TypeError("Transform can only be multiplied by a scalar or another Transform")
 
     def __truediv__(self, other):
@@ -196,8 +193,11 @@ class Transform:
                             self.scale / other)
         elif isinstance(other, Transform):
             return Transform(self.position / other.position,
-                            self.rotation - other.rotation,
+                            self.rotation / other.rotation,
                             self.scale / other.scale)
+        elif isinstance(other, Vector):
+            return Transform(self.position / other, self.rotation / other.magnitude, self.scale / other)
+
         raise TypeError("Transform can only be divided by a scalar or another Transform")
 
     def __itruediv__(self, other):
@@ -211,7 +211,14 @@ class Transform:
             self.rotation -= other.rotation
             self.scale /= other.scale
             return self
-        raise TypeError("Transform can only be divided by a scalar or another Transform")
+        
+        elif isinstance(other, Vector):
+            self.position /= other
+            self.rotation /= other.magnitude
+            self.scale /= other
+            return self
+
+        raise TypeError("Transform can only be divided by a scalar, vector or another Transform")
 
     def to_matrix(self):
         cos_r = math.cos(math.radians(self.rotation))
@@ -243,7 +250,7 @@ class Transform:
         sx = math.hypot(mat[0, 0], mat[1, 0])
         sy = math.hypot(mat[0, 1], mat[1, 1])
 
-        # Prevent division by zero
+        # Prevent division by Z
         if sx == 0 or sy == 0:
             raise ValueError("Cannot extract rotation from zero scale")
 
@@ -416,6 +423,22 @@ class Vector(GenericVector):
     def from_angle(self, angle: float) -> 'Vector':
         return Vector(math.cos(angle), math.sin(angle))
 
+    def __getitem__(self, index):
+        if index == 0:
+            return self.x
+        elif index == 1:
+            return self.y
+        else:
+            raise IndexError("Vector index out of range")
+
+    def __setitem__(self, index, value):
+        if index == 0:
+            self.x = value
+        elif index == 1:
+            self.y = value
+        else:
+            raise IndexError("Vector index out of range")
+
     def copy(self) -> 'Vector':
         return Vector(self.x, self.y)
 
@@ -541,6 +564,26 @@ class Vector3:
         else:
             self.x, self.y, self.z = float(x), float(y), float(z)
 
+    def __getitem__(self, index) -> int:
+        if index == 0:
+            return self.x
+        elif index == 1:
+            return self.y
+        elif index == 2:
+            return self.z
+        else:
+            raise IndexError("Vector3 index out of range")
+
+    def __setitem__(self, index, value):
+        if index == 0:
+            self.x = value
+        elif index == 1:
+            self.y = value
+        elif index == 2:
+            self.z = value
+        else:
+            raise IndexError("Vector3 index out of range")
+
     def copy(self):
         return Vector3(self.x, self.y, self.z)
 
@@ -577,23 +620,18 @@ class Vector3:
     def __iter__(self):
         return iter((self.x, self.y, self.z))
 
-
 class Curve(ABC):
-    """The generic curve function."""
     @abstractmethod
     def get_value(self, x):
         pass
-
 
 class Linear(Curve):
     def get_value(self, x):
         return min(1, x)
 
-
 class EaseInOut(Curve):
     def get_value(self, x):
         return min(1, (x * x) * (3 - (2 * x)))
-
 
 class EaseInOutExpo(Curve):
     def get_value(self, x: float) -> float:
@@ -605,11 +643,9 @@ class EaseInOutExpo(Curve):
             1,
         )
 
-
 class EaseInOutSin(Curve):
     def get_value(self, x):
         return min(1, math.sin(x * 1.5))
-
 
 class EaseInOutCircular(Curve):
     def get_value(self, x):
@@ -619,11 +655,9 @@ class EaseInOutCircular(Curve):
             else (math.sqrt(1 - (-2 * x + 2) ** 2) + 1) / 2
         )
 
-
 class EaseOutSin(Curve):
     def get_value(self, x):
         return min(math.sin((0.5 * x) * math.pi), 1)
-
 
 class BounceOut(Curve):
     def get_value(self, x):
@@ -637,5 +671,3 @@ class BounceOut(Curve):
             if x < 2.5 / d1
             else n1 * (x - 2.625 / d1) * (x - 2.625 / d1) + 0.984375
         )
-
-

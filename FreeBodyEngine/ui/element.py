@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import uuid
 from enum import Enum
+from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.math import Curve, Linear
 from FreeBodyEngine import warning, delta
 import re
@@ -20,9 +21,11 @@ class GenericElement:
     def remove(self, element: 'UIElement') -> None:
         self._remove(element.id)
 
-    def _update(self):
+    def _draw(self):
         pass
 
+    def _update(self):
+        pass
 
 class RootElement(GenericElement):
     def __init__(self, width: int, height: int, styles={}):
@@ -68,12 +71,11 @@ class RootElement(GenericElement):
             else:  # horizontal
                 child_offset_x += child._layout.width + gap
 
-
 class ElementStates(Enum):
     NORMAL = "normal"
     CLICKED = "clicked"
     HOVER = "hover"
-    SELECTED = 'selected'
+    FOCUSED = 'selected'
 
 @dataclass
 class Layout:
@@ -91,8 +93,7 @@ class UIElement(GenericElement):
         self.id = uuid.uuid4()
         self.animations: list[UIAnimation] = []
 
-        self._layout = Layout((0, 0), (0, 0))
-
+        self._layout = Layout(0, 0, 0, 0)
 
     def _initialize(self, parent: GenericElement):
         self.parent = parent
@@ -261,6 +262,7 @@ class UIAnimation:
             end_nums, end_parts = self._extract_numbers(end)
             non_numeric_start = [p for p in start_parts if not re.fullmatch(r'-?\d+\.?\d*', p)]
             non_numeric_end = [p for p in end_parts if not re.fullmatch(r'-?\d+\.?\d*', p)]
+            
             if non_numeric_start != non_numeric_end:
                 warning("Non-numeric parts of start/end string do not match")
                 self.remove()
@@ -279,8 +281,13 @@ class UIAnimation:
     def _interpolate(self, start, end, t: float):
         if isinstance(start, (int, float)):
             return start + (end - start) * t
+        
         elif isinstance(start, (tuple, list)):
             return type(start)(self._interpolate(s, e, t) for s, e in zip(start, end))
+        
+        elif isinstance(start, Color):
+            return 
+
         elif isinstance(start, str):
             interpolated_nums = [s + (e - s) * t for s, e in zip(self.start_nums, self.end_nums)]
             result = []
@@ -303,14 +310,19 @@ class UIAnimation:
 
         self.elapsed += delta_time
         t = min(self.elapsed / self.duration, 1.0)
+        
         t = self.curve(t)
 
         new_value = self._interpolate(self.start_value, self.end_value, t)
+        
         self.element._set_style(self.style, new_value)
 
         if self.elapsed >= self.duration:
+            
             self.finished = True
+            
             if self in self.element.animations:
+            
                 self.remove()
 
     def remove(self):

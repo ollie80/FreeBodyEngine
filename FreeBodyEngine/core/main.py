@@ -2,8 +2,9 @@ import sys
 from FreeBodyEngine.core.update import UpdateCoordinator
 from FreeBodyEngine.core.service import ServiceLocator
 from FreeBodyEngine.core.flags import GlobalFlags
+from FreeBodyEngine.core.profiler import Profiler
 from FreeBodyEngine.core.time import Time
-from FreeBodyEngine import _get_pre_flags, register_event_callback, QUIT, PROFILE_LAUNCH, get_flag
+from FreeBodyEngine import _get_pre_flags, register_event_callback, QUIT, PROFILER, get_flag
 import cProfile
 import pstats
 
@@ -23,20 +24,27 @@ class Main:
         
         register_event_callback(QUIT, self.quit)
 
+
     def quit(self):
         self.running = False
 
     def run(self):
-        profile = get_flag(PROFILE_LAUNCH, False)
-        if profile:
-            profiler = cProfile.Profile()
-            profiler.enable()
+        if get_flag(PROFILER, False):
+            profiler = Profiler() 
 
         while self.running:
+            
             self.time.update()
+            
+            if get_flag(PROFILER, False):
+            
+                profiler.start()
+            
             self.updater.update()
 
-        if profile:
-            profiler.disable()
-            stats = pstats.Stats(profiler)
-            stats.sort_stats('cumtime').print_stats("FreeBodyEngine", 20)
+            if get_flag(PROFILER, False):
+            
+                profiler.stop()
+
+        if get_flag(PROFILER, False):
+            profiler.close()

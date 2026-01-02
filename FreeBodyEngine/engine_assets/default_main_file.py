@@ -1,19 +1,9 @@
 import FreeBodyEngine as fb
 import sys
 
-class colors: # stolen from some nerd on stack overflow 
-    HEADER = '\033[95m' 
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
 def register_default_services():
     # registers services that provide basic engine functionality
+    fb.register_service(fb.core.event.EventManager())
     fb.register_service(fb.core.files.FileManager())
     fb.register_service(fb.core.logger.Logger())
     fb.register_service(fb.core.time.CooldownManager())
@@ -22,20 +12,20 @@ def register_default_services():
     fb.register_service(fb.graphics.get_renderer()())
     fb.register_service(fb.graphics.pbr.pipeline.PBRPipeline())
 
-    action_source = fb.load_toml('actions.toml')
+    if fb.core.files.path_exsists('actions.toml'):
+        action_source = fb.load_toml('actions.toml')
+    else:
+        action_source = {}
+
     actions = fb.core.input.Input.parse_actions(action_source)
 
     fb.register_service(fb.core.input.Input(actions))
     fb.register_service(fb.get_service('window').create_mouse())
 
-if __name__ == "__main__":
-
-    fb.init()
-    main = fb.core.main.Main(max_fps=120)
-
+if __name__ == "__main__":    
     #set flags
     for arg in sys.argv:
-        if arg == ("--headless") or arg == "-H": 
+        if arg == ("--headless") or arg == "-H":
             fb.set_flag(fb.HEADLESS, True)
             fb.core.logger.print_colored("Headless mode set to true.", color="green")
 
@@ -52,8 +42,10 @@ if __name__ == "__main__":
 
             fb.set_flag(fb.PROJECT_PATH, val)
 
-    register_default_services()
-    
+    main = fb.init()
+
+    register_default_services()    
+
     scene = fb.core.scene.Scene('game')
     fb.add_scene(scene)
     fb.set_scene('game')
