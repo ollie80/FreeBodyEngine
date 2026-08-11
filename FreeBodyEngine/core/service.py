@@ -11,7 +11,7 @@ class ServiceLocator:
             self.services[service.name] = service
             service.on_initialize()
         else:
-            warning(f'Dependencies not meant on service "{service.name}"')
+            warning(f'Dependencies not met on service "{service.name}"')
 
 
     def _get(self, name: str):

@@ -40,18 +40,6 @@ def read_assets(path):
             assets[name] = data
     return assets
 
-
-class FileStream:
-    def write(self, data: bytes):
-        """
-        Writes bytes to the IO stream.
-        """
-        pass
-
-    def read(self, ) -> bytes:
-        """Reads bytes from the IO stream."""
-        pass
-
 class FileSystem:
     @abstractmethod
     def read(self, path: str, start:int=0, end:int=-1) -> bytes:

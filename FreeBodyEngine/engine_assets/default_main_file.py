@@ -1,6 +1,8 @@
 import FreeBodyEngine as fb
 import sys
 
+"""This is the default main file for a FreeBodyEngine project. It has only the basic features to take in important args and run an example game. THIS IS MEANT TO BE CHANGED!"""
+
 def register_default_services():
     # registers services that provide basic engine functionality
     fb.register_service(fb.core.event.EventManager())
@@ -45,6 +47,7 @@ if __name__ == "__main__":
     main = fb.init()
 
     register_default_services()    
+    
 
     scene = fb.core.scene.Scene('game')
     fb.add_scene(scene)

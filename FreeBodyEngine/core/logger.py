@@ -2,6 +2,7 @@ from datetime import datetime
 from functools import wraps
 from FreeBodyEngine.core.service import Service
 from FreeBodyEngine import get_main, SUPRESS_LOGS, SUPRESS_ERRORS, SUPRESS_WARNINGS, get_service, get_flag
+from FreeBodyEngine.core.files import FileResource 
 import os
 import inspect
 import json
@@ -22,52 +23,48 @@ def print_colored(*text: str, color='reset'):
 class Logger(Service):
     def __init__(self, max_history_length=10000):
         super().__init__('logger')
-        self._clear_log()
         self.history: list[dict] = []
         self.max_history_length = max_history_length
         self.next_id = 1
-        self.dependencies.append('files')
         self.supress = {
             "ERROR": get_flag(SUPRESS_ERRORS, False),
             "WARNING": get_flag(SUPRESS_WARNINGS, False),
             "DEBUG": get_flag(SUPRESS_LOGS, False)
         }
+        self.log_file = None
 
-    def _clear_log(self):
-        path = get_service('files').get_save_location()
-        os.makedirs(path, exist_ok=True)
-        open(os.path.join(path, "log.jsonl"), 'w')
 
     def _write_json_log(self, log_entry: dict):
-        path = get_service('files').get_save_location()
-
-        os.makedirs(path, exist_ok=True)
-        with open(os.path.join(path, "log.jsonl"), 'a', encoding='utf-8') as f:
-            f.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+        self.log_file.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
     def _store_log(self, type_: str, msg: str):
-        tb = None
+        if get_service('files') != None:
+            if self.log_file == None:
+                self.log_file: FileResource = get_service('files').get_file('user://log.jsonl')
+                self.log_file.clear()
 
-        if type_ in ("ERROR", "WARNING"):
-            tb = traceback.format_stack()[:-2]
+            tb = None
 
-        log_entry = {
-            "id": self.next_id,
-            "timestamp": get_timestamp(),
-            "type": type_,
-            "message": msg,
-            "traceback": tb
-        }
+            if type_ in ("ERROR", "WARNING"):
+                tb = traceback.format_stack()[:-2]
 
-        self.history.append(log_entry)
-        self._write_json_log(log_entry)
+            log_entry = {
+                "id": self.next_id,
+                "timestamp": get_timestamp(),
+                "type": type_,
+                "message": msg,
+                "traceback": tb
+            }
 
-        if len(self.history) > self.max_history_length:
-            self.history.pop(0)
+            self.history.append(log_entry)
+            self._write_json_log(log_entry)
 
-        
-        self.next_id += 1
-        return log_entry["id"]
+            if len(self.history) > self.max_history_length:
+                self.history.pop(0)
+
+            
+            self.next_id += 1
+            return log_entry["id"]
 
     def log(self, *msg, color: str = "reset"):
         if not self.supress["DEBUG"]:

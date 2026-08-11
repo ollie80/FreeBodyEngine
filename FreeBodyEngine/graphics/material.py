@@ -116,7 +116,7 @@ class Material:
         frag_source = shader.get('frag','engine/shader/default_shader.fbfrag')
         vert_source = shader.get('vert', 'engine/shader/default_shader.fbvert')
 
-        self.shader: Shader = get_service('renderer').load_shader(get_service('files').load_data(vert_source), get_service('files').load_data(frag_source), injector) 
+        self.shader: Shader = get_service('renderer').load_shader(get_service('files').get_file(vert_source), get_service('files').get_file(frag_source), injector) 
 
     def __getattribute__(self, name):
         if name not in ('data', 'properties'):
@@ -169,7 +169,7 @@ class Material:
                     warning(f"Couldn't parse material color value, '{property}' only contained {len(val)} values, minimum of 3 is required.")
 
     
-    def use(self, transform: 'Transform', camera: 'Camera'):
+    def use(self):
         for material_property in self.properties:
 
             val = self.properties[material_property]
@@ -188,10 +188,4 @@ class Material:
                 self.shader.set_uniform(f"{material_property.capitalize()}_Color", Color('#FF00FFFF'))
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)
 
-        self.shader.set_uniform('model', transform.model)
-
-        self.shader.set_uniform('view', camera.view_matrix)
-        
-        self.shader.set_uniform('proj', camera.proj_matrix)
-        
         self.shader.use()

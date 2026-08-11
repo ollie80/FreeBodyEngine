@@ -67,10 +67,9 @@ ESCAPES = {
 }
  
 def cowsay_handler(env, args):
-    print(args)
 
-    # the_cow = get_cow(cow) if cowfile is None else cowfile
-    # cow_ops = COW_OPTIONS.get(preset, Option(eyes=eyes, tongue=tongue))
-    # thought_ops = THOUGHT_OPTIONS['cowsay']
-    # return build_cow(message, the_cow, cow_ops, thought_ops, width, wrap_text)
+    the_cow = get_cow(cow) if cowfile is None else cowfile
+    cow_ops = COW_OPTIONS.get(preset, Option(eyes=eyes, tongue=tongue))
+    thought_ops = THOUGHT_OPTIONS['cowsay']
+    return build_cow(message, the_cow, cow_ops, thought_ops, width, wrap_text)
 

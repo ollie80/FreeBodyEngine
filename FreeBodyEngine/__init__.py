@@ -14,11 +14,14 @@ _main_object: 'Main' = None
 
 DLL_DIRECTORY = None
 
+DEFAULT_NAME = "FREEBODY_PROJECT"
+
 # flag constants
 HEADLESS = "HEADLESS"
 DEVMODE = "DEVMODE"
 PROJECT_PATH = "PROJECT_PATH"
 PROFILER = "PROFILER"
+NAME = "NAME"
 
 MAX_FPS = "MAX_FPS"
 MAX_TPS = "MAX_TPS"
@@ -157,7 +160,7 @@ from FreeBodyEngine import ui
 from FreeBodyEngine.core.time import cooldown, physics_cooldown
 from FreeBodyEngine.core.input import get_action_pressed, get_action_released, get_action_strength, get_action_vector
 from FreeBodyEngine.core.mouse import Mouse
-from FreeBodyEngine.utils import load_image, add, load_material, load_sprite, load_shader, load_sound, load_data, load_toml, load_model
+from FreeBodyEngine.utils import add
 from FreeBodyEngine import graphics
 from FreeBodyEngine import utils
 from FreeBodyEngine.utils import get_platform
@@ -175,6 +178,12 @@ def init():
 
     DLL_DIRECTORY = load_dlls()
 
+    print(get_flag(DEVMODE, False))
+
+    if get_flag(DEVMODE, False):
+        from FreeBodyEngine.core.dev import find_project
+        find_project()
+
     main = core.main.Main()
     register_event(QUIT)
 
@@ -190,7 +199,6 @@ __all__ = [
             'physics_cooldown',
             "_get_pre_flags",
             "load_shader",
-            "UpdatePhase",
             "load_sound",
             "load_sprite",
             'add',

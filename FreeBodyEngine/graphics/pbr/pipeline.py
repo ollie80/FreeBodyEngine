@@ -10,6 +10,11 @@ from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
 from FreeBodyEngine.graphics.debug import Debug2D
 from FreeBodyEngine.graphics.model.model import Model3D
 
+from FreeBodyEngine.math import Transform
+from FreeBodyEngine.core.camera import Camera
+from FreeBodyEngine.graphics.mesh import Mesh
+from FreeBodyEngine.graphics.material import Material
+
 class PBRPipeline(GraphicsPipeline):
     def __init__(self):
         super().__init__()
@@ -30,6 +35,20 @@ class PBRPipeline(GraphicsPipeline):
         }, transparent = True
         )
         
+    def draw_world_mesh(self, mesh: Mesh, material: Material, transform: Transform, camera: Camera):
+        material['model'] = transform.model
+        material['proj'] = camera.proj_matrix
+        material['view'] = camera.view_matrix
+        
+        self.renderer.draw_mesh(mesh, material)
+
+    def draw_world_mesh_instanced(self, mesh: Mesh, material: Material, transform: Transform, camera: Camera, instances: int = 1):
+        material['model'] = transform.model
+        material['view'] = camera.view_matrix
+        material['proj'] = camera.proj_matrix        
+
+        self.renderer.draw_mesh_instanced(mesh, instances, material)
+
     def resize(self, size: tuple[int, int]):
         self.main_framebuffer.resize(size)
 
@@ -42,11 +61,11 @@ class PBRPipeline(GraphicsPipeline):
 
             tilemaps: list[TilemapRenderer] = camera.scene.root.find_nodes_with_type('TilemapRenderer')
             for tilemap in tilemaps:
-                tilemap.draw(camera)
+                tilemap(camera)
 
             sprites: list[Sprite2D] = camera.scene.root.find_nodes_with_type('Sprite2D')
             for sprite in sprites:
-                self.renderer.draw_mesh(sprite._sprite.quad, sprite._sprite.material, sprite.world_transform, camera)
+                self.draw_world_mesh(sprite._sprite.quad, sprite._sprite.material, sprite.world_transform, camera)
 
             debugs: list[Debug2D] = camera.scene.root.find_nodes_with_type('Debug2D')
             for debug in debugs:

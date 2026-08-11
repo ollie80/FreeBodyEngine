@@ -6,6 +6,7 @@ from FreeBodyEngine.graphics.renderer import Renderer
 from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.core.window import WINDOW_RESIZE
 
+
 class GraphicsPipeline(Service):
     def __init__(self):
         super().__init__('graphics')
@@ -20,6 +21,7 @@ class GraphicsPipeline(Service):
     def on_destroy(self):
         unregister_service_update(UpdatePhase.DRAW, self.draw)
         unregister_event_callback(WINDOW_RESIZE, self.resize)
+
 
     @abstractmethod
     def create_material(self, data) -> Material:

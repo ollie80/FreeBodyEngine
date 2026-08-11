@@ -88,37 +88,6 @@ def fbnjit(*args, **kwargs):
         warning('Could not import numba.')
         return decorator
 
-def load_sprite(path: str):
-    return get_service('files').load_sprite(path)
-
-def load_data(path: str):
-    return get_service('files').load_data(path)
-
-def load_toml(path: str):
-    return get_service('files').load_toml(path)
-
-def load_image(path: str):
-    return get_service('files').load_image(path)
-
-def load_material(path: str):
-    return get_service('files').load_material(path)
-
-def load_sound(path: str):
-    return get_main().files.load_sound(path)
-
-def load_shader(path: str):
-    return get_service('files').load_shader(path)
-
-def load_sprite(path: str):
-    return get_service('files').load_sprite(path)
-
-def load_model(path: str, model_name: str = None, scale=None):
-    return get_service('files').load_model(path, model_name, scale)
-
-def load_texture_stack(paths: list[str]):
-    return get_service('files').load_texture_stack(paths)
-
-
 from FreeBodyEngine.core.node import Node
 from FreeBodyEngine.ui.element import UIElement
 
@@ -145,5 +114,3 @@ def add(obj: any):
     
     elif isinstance(obj, UIElement):
         get_service('ui').add(obj)
-
-        
