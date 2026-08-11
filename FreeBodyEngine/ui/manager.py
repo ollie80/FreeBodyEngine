@@ -14,7 +14,7 @@ class UIManager(Service):
     def on_initialize(self):
         register_event_callback(WINDOW_RESIZE, self.resize)
         register_service_update(UpdatePhase.DRAW, self.draw, 1000)
-
+        
     def on_destroy(self):
         unregister_event_callback(WINDOW_RESIZE, self.resize)
         unregister_service_update(UpdatePhase.DRAW, self.draw)

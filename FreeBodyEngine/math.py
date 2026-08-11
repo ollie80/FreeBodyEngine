@@ -235,7 +235,7 @@ class Transform:
     def compose_with(self, parent_transform: 'Transform') -> 'Transform':
         parent_mat = parent_transform.to_matrix()
         local_mat = self.to_matrix()
-        result_mat = parent_mat @ local_mat
+        result_matx = parent_mat @ local_mat
         return Transform.from_matrix(result_mat)
 
     @classmethod

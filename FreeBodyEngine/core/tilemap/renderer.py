@@ -7,7 +7,6 @@ from FreeBodyEngine import get_service
 from FreeBodyEngine.utils import fbnjit
 from fbusl.injector import Injector
 from FreeBodyEngine.graphics.texture import TextureStack
-from FreeBodyEngine.utils import load_texture_stack
 
 from typing import TYPE_CHECKING
 from FreeBodyEngine.graphics.mesh import AttributeType, BufferUsage

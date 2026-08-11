@@ -112,12 +112,12 @@ class Renderer(Service):
         pass
 
     @abstractmethod
-    def draw_mesh_instanced(self, mesh: 'Mesh', instances: int, material: 'Material', transform: 'Transform', camera: 'Camera'|None):
-        self.calls.append(Call(mesh, transform, material, False if camera == None else True, camera, True, instances))
+    def draw_mesh_instanced(self, mesh: 'Mesh', instances: int, material: 'Material'):
+        pass
 
     @abstractmethod
-    def draw_mesh(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera'|None):
-        self.calls.append(Call(mesh, transform, material, False if camera == None else True, camera, False, 0))
+    def draw_mesh(self, mesh: 'Mesh', material: 'Material'):
+        pass
 
     def draw_model(self, model: 'Model', transform: 'Transform', camera: 'Camera2D'):
         for mesh_name in model.meshes:

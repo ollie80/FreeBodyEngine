@@ -16,6 +16,7 @@ from FreeBodyEngine.core import input
 from FreeBodyEngine.core import collider
 from FreeBodyEngine.core.collider import Collider2D, CollisionShape, CircleCollisionShape, RectangleCollisionShape
 from FreeBodyEngine.core import physics
+from FreeBodyEngine.core import dev
 from FreeBodyEngine.core import event
 
-__all__ = ["files", "state", "main", "event", "camera", 'window', "tilemap", "time", "collider", "Collider2D", "CircleCollisionShape", "RectangleCollisionShape", "CollisionShape", "scene", "input", "timer", "node", "physics", "logger"]
+__all__ = ["files", "state", "main", "event", "dev", "camera", 'window', "tilemap", "time", "collider", "Collider2D", "CircleCollisionShape", "RectangleCollisionShape", "CollisionShape", "scene", "input", "timer", "node", "physics", "logger"]

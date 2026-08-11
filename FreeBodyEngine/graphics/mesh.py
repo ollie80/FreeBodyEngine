@@ -3,7 +3,6 @@ from FreeBodyEngine import get_service, warning
 import numpy as np
 from enum import Enum, auto
 
-
 class AttributeType(Enum):
     FLOAT = auto()
     VEC2 = auto()
@@ -33,12 +32,10 @@ class IndexType(Enum):
     UINT16 = auto()
     UINT32 = auto()
 
-
 class BufferUsage(Enum):
     STATIC = auto()
     DYNAMIC = auto()
     STREAM = auto()
-
 
 class Mesh:
     def __init__(

@@ -45,4 +45,3 @@ class Shader:
 
     def __setitem__(self, name, value):
         self.set_uniform(name, value)
-

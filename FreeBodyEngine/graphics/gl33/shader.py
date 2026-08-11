@@ -128,7 +128,6 @@ class GLShader(Shader):
         elif gl_type == GL_BOOL:
             return isinstance(val, bool)
                 
-
         elif gl_type == GL_FLOAT:
             return isinstance(val, (float, int))
 

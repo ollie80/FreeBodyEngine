@@ -14,7 +14,7 @@ class Main:
         pre_flags = _get_pre_flags()
 
         _set_main(self)
-        
+
         self.flags = GlobalFlags(pre_flags)
         self.time = Time()
         self.updater = UpdateCoordinator(self.time)

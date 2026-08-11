@@ -17,16 +17,23 @@ def get_renderer() -> type[renderer.Renderer]:
     platform = get_platform()
 
     if platform == "win32":
+        #check capabilities
+        
         #DX12
+        
+        # or gl44
+        
         pass
     elif platform == 'linux':
+        
         #gl44
+
         pass
     elif platform == 'darwin':
         #metal
         pass
 
-    # gl33 is made to support pretty much every device, it may actually run on a smart fridge (eat shit pirate)
+    # gl33 is made to support pretty much every device, it might actually run on a smart fridge (eat shit pirate)
     from FreeBodyEngine.graphics.gl33.renderer import GL33Renderer
     return GL33Renderer
     

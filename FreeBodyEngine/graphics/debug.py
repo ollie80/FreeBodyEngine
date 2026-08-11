@@ -1,7 +1,6 @@
 """Visual debuging nodes."""
 
 from FreeBodyEngine import get_service
-from FreeBodyEngine.utils import load_material
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.graphics.mesh import Mesh
 from FreeBodyEngine.graphics.renderer import Renderer

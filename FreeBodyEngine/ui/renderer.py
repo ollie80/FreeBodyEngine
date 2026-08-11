@@ -1,6 +1,5 @@
 from FreeBodyEngine.core.service import Service
 from FreeBodyEngine import register_service_update, unregister_service_update, get_service
-from FreeBodyEngine.utils import load_material
 from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine.graphics.mesh import generate_quad
 from FreeBodyEngine.math import Transform, Vector
