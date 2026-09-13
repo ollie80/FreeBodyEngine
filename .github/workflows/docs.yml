@@ -1,0 +1,67 @@
+name: Check docs build
+
+# Docs are actually deployed by a systemd timer on the project's own Pi
+# (freebody-docs-deploy.timer, /opt/freebody-docs/deploy.sh) pulling
+# origin/main directly and dropping the built site into Caddy's webroot -
+# see nodes/pi in freebody-infra for the reverse proxy / TLS side of that.
+# This workflow is CI only: it catches a broken build (bad docstring
+# cross-reference, mkdocs.yml typo, ...) at push time instead of letting it
+# silently fail on the Pi's next pull.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "scripts/gen_ref_pages.py"
+      - "FreeBodyEngine/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "scripts/gen_ref_pages.py"
+      - "FreeBodyEngine/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install docs dependencies
+        run: pip install -r requirements-docs.txt
+
+      - name: Verify no compromised doc-tooling packages
+        # See the comment block at the top of requirements-docs.txt: several
+        # doc-tooling packages had a supply-chain compromise (impersonating
+        # MkDocs, printing fake "migrate away" warnings) discovered and
+        # pinned around 2026-09-13. requirements-docs.txt's exact pins
+        # should already prevent this, but this is a second, independent
+        # gate that fails the build outright if either compromised package
+        # shows up in the resolved environment *for any reason*.
+        run: |
+          if pip list --format=freeze | grep -iE "^(properdocs|griffelib)=="; then
+            echo "::error::A compromised doc-tooling package is present in the resolved environment - see requirements-docs.txt for details. Refusing to build."
+            exit 1
+          fi
+
+      - name: Build site
+        # Deliberately does NOT `pip install .` first - mkdocstrings'
+        # python handler (griffe) does pure static AST analysis over
+        # `paths: [.]` in mkdocs.yml, not a runtime import, so the engine's
+        # own runtime dependencies (PyOpenGL, pywayland, ...) - several of
+        # which don't even build on a plain CI runner or the project's
+        # headless Pi without extra system packages - are never needed just
+        # to build the docs. Verified locally: the build succeeds with
+        # FreeBodyEngine *not* installed at all.
+        run: mkdocs build --strict

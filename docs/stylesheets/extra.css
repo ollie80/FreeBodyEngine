@@ -1,0 +1,187 @@
+/* ============================================================
+   FreeBodyEngine docs theme - a green-phosphor terminal look,
+   lifted directly from this project's own kitty/waybar configs
+   (~/.config/kitty/kitty.conf, ~/.config/waybar/style.css):
+   near-black background, mint-green text, a brighter green
+   accent for active/hover states, and waybar's own glow effect
+   reused for the active nav/tab item. Self-hosted FreeMono (see
+   fonts/NOTICE.md) rather than a Google Font - this engine's own
+   default UI font too.
+   ============================================================ */
+
+@font-face {
+  font-family: "FreeMono";
+  src: url("../fonts/FreeMono.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "FreeMono";
+  src: url("../fonts/FreeMonoBold.otf") format("opentype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "FreeMono";
+  src: url("../fonts/FreeMonoOblique.otf") format("opentype");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "FreeMono";
+  src: url("../fonts/FreeMonoBoldOblique.otf") format("opentype");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root, [data-md-color-scheme="slate"] {
+  --fb-bg:        #060e08;
+  --fb-bg-alt:    #0c1a0f;
+  --fb-border:    #174d2c;
+  --fb-border-2:  #245f3a;
+  --fb-muted:     #3d8f5c;
+  --fb-fg:        #8effc8;
+  --fb-fg-bright: #d4fff0;
+  --fb-accent:    #5df0a2;
+  --fb-accent-2:  #1cb56a;
+  --fb-glow: rgba(93, 240, 162, 0.35);
+
+  --md-default-bg-color: var(--fb-bg);
+  --md-default-fg-color: var(--fb-fg);
+  --md-default-fg-color--light: var(--fb-muted);
+  --md-default-fg-color--lighter: var(--fb-border-2);
+  --md-default-fg-color--lightest: var(--fb-border);
+
+  /* header/tabs background + the text/icon color drawn on top of it */
+  --md-primary-fg-color: var(--fb-bg);
+  --md-primary-bg-color: var(--fb-fg);
+  --md-primary-fg-color--light: var(--fb-bg);
+  --md-primary-fg-color--dark: var(--fb-bg);
+
+  --md-accent-fg-color: var(--fb-accent);
+  --md-accent-fg-color--transparent: rgba(93, 240, 162, 0.12);
+  --md-accent-bg-color: var(--fb-bg);
+
+  --md-typeset-color: var(--fb-fg);
+  --md-typeset-a-color: var(--fb-accent);
+
+  --md-code-bg-color: var(--fb-bg-alt);
+  --md-code-fg-color: var(--fb-fg);
+  --md-code-hl-color: var(--fb-accent);
+
+  --md-footer-bg-color: var(--fb-bg);
+  --md-footer-bg-color--dark: #030603;
+  --md-footer-fg-color: var(--fb-fg);
+  --md-footer-fg-color--light: var(--fb-muted);
+}
+
+/* FreeMono everywhere - no separate display/body/code font split */
+body, input,
+.md-typeset, .md-header, .md-tabs, .md-footer, .md-nav, .md-search {
+  font-family: "FreeMono", "Terminess Nerd Font Mono", ui-monospace, monospace;
+}
+.md-typeset h1, .md-typeset h2, .md-typeset h3, .md-typeset h4 {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+/* "blocky 90s" = sharp corners, hairline borders, no shadows/gradients -
+   waybar's own stylesheet does the exact same `border-radius: 0` reset. */
+.md-header, .md-tabs, .md-footer, .md-nav, .md-search__form, .md-search__output,
+.md-typeset table, .md-typeset code, .md-typeset pre, .md-typeset .admonition,
+.md-typeset details, .md-button, .md-nav__link, .md-clipboard, .md-tooltip {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.md-header {
+  border-bottom: 1px solid var(--fb-border);
+}
+
+.md-tabs {
+  border-bottom: 1px solid var(--fb-border);
+  background-color: var(--fb-bg);
+}
+
+.md-footer {
+  border-top: 1px solid var(--fb-border);
+}
+
+.md-footer-meta {
+  background-color: var(--fb-bg) !important;
+}
+
+.md-search__form {
+  border: 1px solid var(--fb-border);
+  background-color: var(--fb-bg-alt);
+}
+
+.md-search__output {
+  border: 1px solid var(--fb-border);
+}
+
+.md-nav__link:focus,
+.md-nav__link:hover {
+  color: var(--fb-fg-bright);
+}
+
+.md-typeset a {
+  text-decoration: none;
+  border-bottom: 1px solid var(--fb-border-2);
+}
+.md-typeset a:hover {
+  color: var(--fb-fg-bright);
+  border-bottom-color: var(--fb-accent);
+  text-shadow: 0 0 6px var(--fb-glow);
+}
+
+/* waybar's active-workspace glow (box-shadow: 0 0 5px/10px accent),
+   reused verbatim for the active nav/tab item */
+.md-tabs__link--active,
+.md-nav__link[aria-current="page"] {
+  color: var(--fb-fg-bright) !important;
+  box-shadow: inset 0 -2px var(--fb-accent), 0 0 5px var(--fb-glow), 0 0 10px rgba(93, 240, 162, 0.15) !important;
+}
+
+.md-typeset pre > code, .md-typeset code {
+  border: 1px solid var(--fb-border);
+  background-color: var(--fb-bg-alt);
+}
+
+.md-typeset .admonition, .md-typeset details {
+  border: 1px solid var(--fb-border-2);
+  border-left-width: 4px;
+}
+.md-typeset .admonition-title, .md-typeset summary {
+  background-color: var(--fb-bg-alt);
+}
+
+.md-typeset table:not([class]) {
+  border: 1px solid var(--fb-border);
+}
+.md-typeset table:not([class]) th {
+  background-color: var(--fb-bg-alt);
+  color: var(--fb-fg-bright);
+}
+.md-typeset table:not([class]) th,
+.md-typeset table:not([class]) td {
+  border-color: var(--fb-border);
+}
+
+.md-search__input {
+  caret-color: var(--fb-accent);
+}
+
+::selection {
+  background: var(--fb-accent);
+  color: var(--fb-bg);
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--fb-bg); }
+::-webkit-scrollbar-thumb { background: var(--fb-border-2); border: 2px solid var(--fb-bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--fb-accent); }

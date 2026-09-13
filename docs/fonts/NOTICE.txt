@@ -1,0 +1,11 @@
+# Font attribution
+
+`FreeMono*.otf` in this directory are from the **GNU FreeFont** project
+(<https://www.gnu.org/software/freefont/>), licensed under the GNU General
+Public License v3+ with the font embedding exception, which explicitly
+permits embedding/self-hosting these fonts on a website without the site's
+own content becoming subject to the GPL.
+
+Files are unmodified copies of the upstream Regular/Bold/Oblique/BoldOblique
+faces, self-hosted here (rather than linked from a third party) so the docs
+site has no external font-loading dependency.
