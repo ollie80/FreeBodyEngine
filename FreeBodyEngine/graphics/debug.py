@@ -2,7 +2,8 @@
 
 from FreeBodyEngine import get_service
 from FreeBodyEngine.core.node import Node2D
-from FreeBodyEngine.graphics.mesh import Mesh
+from FreeBodyEngine.core.files.loader import load_file
+from FreeBodyEngine.graphics.mesh import Mesh, generate_circle, generate_quad
 from FreeBodyEngine.graphics.renderer import Renderer
 
 class Debug2D(Node2D):
@@ -13,8 +14,9 @@ class Debug2D(Node2D):
 
 class RectangleColliderDebug(Debug2D):
     def __init__(self):
-        super().__init__(get_service('renderer').mesh_class.generate_quad(), load_material('engine/debug/debug.fbmat'))
+        super().__init__(generate_quad(), load_file('engine://debug/debug.fbmat'))
 
 class CircleColliderDebug(Debug2D):
     def __init__(self):
-        super().__init__(get_service('renderer').mesh_class.generate_circle(0.5), load_material('engine/debug/debug.fbmat'))
+        super().__init__(generate_circle(0.5), load_file('engine://debug/debug.fbmat'))
+

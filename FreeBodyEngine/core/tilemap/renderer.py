@@ -7,6 +7,8 @@ from FreeBodyEngine import get_service
 from FreeBodyEngine.utils import fbnjit
 from fbusl.injector import Injector
 from FreeBodyEngine.graphics.texture import TextureStack
+from FreeBodyEngine.core.files.loader import load_file
+from FreeBodyEngine.core.files import TEXTURE_STACK_FILE
 
 from typing import TYPE_CHECKING
 from FreeBodyEngine.graphics.mesh import AttributeType, BufferUsage
@@ -19,7 +21,25 @@ if TYPE_CHECKING:
 chunk_mesh_sig = types.Tuple((types.float32[:, :], types.float32[:, :], types.uint32[:]))(types.uint8[:], types.int32, types.int32)
 
 @fbnjit(chunk_mesh_sig, cache=True)
-def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int):        
+def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int):
+    """Builds a quad mesh for one chunk from its flat tile data, skipping
+    empty tiles (`image_id < 0 and sprite_id == 0`) entirely so they cost
+    nothing to draw.
+
+    Each tile's vertices carry its `image_id`/`sprite_id` (not a UV) in the
+    3rd/4th vertex components - the actual texture lookup happens in the
+    tilemap shader, which is why `uv_array` only ever holds the fixed
+    `(0,0)-(1,1)` quad corners.
+
+    Args:
+        chunk_data: The chunk's flat per-tile value array (see `Chunk.tiles`).
+        tile_size: Size of a tile in world units.
+        chunk_size: Width/height of the chunk in tiles.
+
+    Returns:
+        `(vertices, uv_array, indices)`, each trimmed to just the tiles
+        actually emitted.
+    """
     tiles_x = chunk_size
     tiles_y = chunk_size
     num_tiles = tiles_x * tiles_y
@@ -65,20 +85,31 @@ def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int)
 
 
 class TilemapRenderer(Node2D):
+    """Draws a `Tilemap`'s chunks. Must be a direct child of a `Tilemap`
+    node (see `parental_requirement`) - created and attached automatically
+    by `Tilemap.create_renderer`, not meant to be added directly."""
+
     def __init__(self, position: Vector, rotation: float, scale: Vector):
+        """Args:
+            position: Local position, relative to the parent `Tilemap`.
+            rotation: Local rotation, relative to the parent `Tilemap`.
+            scale: Local scale, relative to the parent `Tilemap`.
+        """
         super().__init__(position, rotation, scale)
         self.parental_requirement = "Tilemap"
         self.parent: 'Tilemap'
         self.texture_paths: list[str] = []
-        
+
     def on_initialize(self):
+        """Creates the tilemap material, generating its shader source with
+        this tilemap's chunk/tile sizes baked in via `TilemapInjector`."""
         self.texture: TextureStack = None
-        self.material = get_service('graphics').create_material({"shader": {"vert": "engine/shader/graphics/tilemap.fbvert", "frag": "engine/shader/graphics/tilemap.fbfrag"}}, TilemapInjector(self.parent.chunk_size, self.parent.tile_size))
+        self.material = get_service('graphics').create_material({"shader": {"vert": "engine://shader/graphics/tilemap.fbvert", "frag": "engine://shader/graphics/tilemap.fbfrag"}}, TilemapInjector(self.parent.chunk_size, self.parent.tile_size))
 
     def _add_textures(self, paths: list[str]):
         new_textures = self.texture_paths + paths
 
-        self.texture = load_texture_stack(new_textures)
+        self.texture = load_file(new_textures, TEXTURE_STACK_FILE)
         self.texture_paths = new_textures
 
         path_map = {}
@@ -91,25 +122,41 @@ class TilemapRenderer(Node2D):
         return path_map
 
     def draw(self, camera):
+        """Draws every visible chunk of every layer on the parent tilemap,
+        one draw call per chunk - the chunk's mesh is rebuilt from its raw
+        tile data every call rather than cached."""
         for layer in self.parent.layers:
             for chunk_pos in self.parent.layers[layer].chunks:
                 chunk = self.parent.layers[layer].chunks[chunk_pos]
-
                 vertices, uvs, indices = generate_chunk_mesh(chunk.tiles, self.parent.tile_size, self.parent.chunk_size)
                 mesh = get_service('renderer').get_mesh_class()(attributes={'vertices': (AttributeType.VEC4, vertices), 'uvs': (AttributeType.VEC2, uvs)}, indices=indices, usage=BufferUsage.DYNAMIC)
-                self.material.shader.set_uniform('chunk_pos', (chunk.position.x, chunk.position.y))
+                self.material.shader['chunk_pos'] = (chunk.position.x, chunk.position.y)
+                self.material.shader['proj'] = camera.proj_matrix
+                self.material.shader['view'] = camera.view_matrix
+                self.material.shader['model'] = self.parent.transform.model
+                
                 if self.texture:
                     self.material.shader.set_uniform('textures', self.texture)
 
-                get_service("renderer").draw_mesh(mesh, self.material, self.world_transform, camera)
+                get_service("renderer").draw_mesh(mesh, self.material)
 
 
 class TilemapInjector(Injector):
+    """Bakes a tilemap's chunk/tile sizes as literal constants into the
+    tilemap shader source, since the shader has no other way to know a
+    given tilemap's fixed dimensions."""
+
     def __init__(self, chunk_size, tile_size):
+        """Args:
+            chunk_size: Width/height of a chunk, in tiles.
+            tile_size: Size of a tile, in world units.
+        """
         self.chunk_size = chunk_size
         self.tile_size = tile_size
 
     def source_inject(self, source):
+        """Replaces the `_ENGINE_*` placeholder tokens in `source` with this
+        tilemap's actual chunk/tile sizes."""
         new = source
         new = new.replace('_ENGINE_CHUNK_SIZE', str(self.chunk_size))
         new = new.replace('_ENGINE_CHUNK_WORLD_SIZE', str(self.chunk_size * self.tile_size))

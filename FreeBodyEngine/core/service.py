@@ -1,7 +1,12 @@
 from FreeBodyEngine import warning, service_exists
 
 class ServiceLocator:
+    """Tracks every registered `Service` by name - the backing store behind
+    `FreeBodyEngine.register_service`/`get_service`/etc. Normally reached
+    only through those module-level functions rather than used directly."""
+
     def __init__(self):
+        """Starts with no services registered."""
         self.services: dict[str, Service] = {}
 
     def _register(self, service: 'Service'):
@@ -26,7 +31,13 @@ class ServiceLocator:
 
 
 class Service:
+    """Base class for engine services (registered with
+    `FreeBodyEngine.register_service`). Subclasses declare `self.dependencies`
+    (other service names that must already be registered before this one
+    can be) and may override `on_initialize`/`on_destroy` for setup/teardown."""
+
     def __init__(self, name: str):
+        """Names this service `name`, with no dependencies declared yet."""
         self.name = name
         self.dependencies = []
         

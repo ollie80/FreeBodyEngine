@@ -10,7 +10,8 @@ GLOBAL = [
     "scipy",
     'pillow',
     'fbusl',
-    'numba'
+    'numba',
+    'pybind11',
 ]
 
 WINDOWS = [
@@ -18,7 +19,7 @@ WINDOWS = [
     "windows-curses"
 ]
 
-LINUX = ["pywayland", "python-xlib"]
+LINUX = ["pywayland", "python-xlib", "evdev", "cffi", "xkbcommon"]
 
 DARWIN = ["pyobjc"]
 

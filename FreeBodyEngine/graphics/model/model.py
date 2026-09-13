@@ -4,15 +4,24 @@ from FreeBodyEngine.graphics.material import Material
 from FreeBodyEngine.math import Vector3
 
 class Model:
+    """A loaded, renderer-agnostic 3D model: a set of named Meshes, each
+    mapped by name to the name of the Material it should draw with -
+    resolved this way rather than storing a direct Mesh->Material reference
+    so multiple meshes can cheaply share one Material instance."""
     def __init__(self, meshes: dict[str, Mesh], material_map: dict[str, str], materials: dict[str, Material]):
+        """Stores the given meshes/material map/materials directly - see
+        the class docstring."""
         self.meshes: dict[str, Mesh] = meshes
         self.material_map: dict[str, str] = material_map
         self.materials: dict[str, Material] = materials
-        
+
         self.animations = None
         self.skeleton = None
 
     def to_data(self) -> dict:
+        """Meant to serialize this Model to a plain dict for from_data() to
+        reconstruct later. Not yet implemented (a stub - always returns
+        None)."""
         pass
 
     @classmethod
@@ -21,7 +30,9 @@ class Model:
         pass
 
 class Model3D(Node3D):
+    """A scene node that positions and draws a Model."""
     def __init__(self, model: Model, position: Vector3 = Vector3(), rotation: Vector3 = Vector3(), scale: Vector3 = Vector3(1, 1, 1)):
+        """Wraps `model` at the given transform."""
         super().__init__(position, rotation, scale)
 
         self._model = model

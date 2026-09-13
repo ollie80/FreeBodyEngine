@@ -14,6 +14,9 @@ class GenericNode:
     Base class of the Node Tree Node. 
     """
     def __init__(self):
+        """Builds `inheritance_hierarchy` (the class's MRO, base-first, as
+        class name strings) up front so `inherits_from` can do plain string
+        lookups instead of walking the MRO on every call."""
         self.inheritance_hierarchy = [cls.__name__ for cls in self.__class__.__mro__ if cls != object]
         self.inheritance_hierarchy.reverse()
         self.scene: 'Scene'
@@ -22,6 +25,7 @@ class GenericNode:
         self.id = 0
 
     def remove(self, *ids):
+        """Removes the children with the given ids."""
         for id in ids:
             if id in self.children.keys():
                 del self.children[ids]
@@ -36,6 +40,8 @@ class GenericNode:
             self.children[node.id] = node
     
     def find_nodes_with_type(self, type: str) -> list['Node']:
+        """Recursively collects every node in this subtree (self included)
+        whose `inheritance_hierarchy` contains `type`."""
         found = []
         if self.inherits_from(type):
             found.append(self)
@@ -44,11 +50,15 @@ class GenericNode:
         return found
 
     def update(self):
+        """Runs `on_update` on this node, then recursively updates every
+        child."""
         self.on_update()
         for node in self.children:
             self.children[node].update()
 
     def inherits_from(self, *type: str) -> bool:
+        """Returns whether this node's class or any of its base classes
+        matches one of the given class name(s)."""
         for t in type:
             inherits = t in self.inheritance_hierarchy
             if inherits:
@@ -91,9 +101,13 @@ class GenericNode:
         log(tree_str) 
 
     def on_update(self):
+        """Called every frame during `update`; override to add per-frame
+        behavior. No-op by default."""
         pass
 
     def kill(self):
+        """Removes this node from the tree. No-op by default - `Node`
+        overrides this to actually detach from its parent."""
         pass
 
     def __repr__(self):
@@ -104,11 +118,15 @@ class RootNode(GenericNode):
     A root node object.
     """
     def __init__(self, scene: 'Scene'):
+        """A root node is considered initialized as soon as it's built,
+        unlike a regular `Node` which only initializes once attached to a
+        parent - a root has no parent to attach to."""
         super().__init__()
         self.is_initialized = True
         self.scene: 'Scene' = scene
 
     def kill(self):
+        """Refuses to kill the root node, logging a warning instead."""
         warning("Cannot kill a root node.")
 
     
@@ -117,6 +135,9 @@ class Node(GenericNode):
     The Node class.
     """
     def __init__(self):
+        """A freshly-constructed `Node` is not yet part of the tree -
+        `is_initialized` stays False, and `scene`/`parent` are unset, until
+        it's added to another node via `add()` and `_initialize()` runs."""
         super().__init__()
         self.is_initialized = False
         self.parent: GenericNode
@@ -147,6 +168,9 @@ class Node(GenericNode):
         self.on_initialize()
 
     def on_initialize(self):
+        """Called once this node has been attached to its parent and
+        `self.scene`/`self.parent` are set; override to add setup logic
+        that depends on the tree. No-op by default."""
         pass
 
     def kill(self):
@@ -157,27 +181,47 @@ class Node(GenericNode):
             self.parent.remove(self.id)
         self.on_kill()
 
-    
+
     def on_event_loop(self, event):
-        pass
-    
-    def on_kill(self):
+        """Hook meant for handling input/window events; not currently
+        invoked by anything in the engine. No-op by default."""
         pass
 
-    def on_draw(self): 
+    def on_kill(self):
+        """Called after this node has been removed from its parent by
+        `kill`; override to add teardown logic. No-op by default."""
+        pass
+
+    def on_draw(self):
+        """Hook meant for custom per-node draw logic (overridden by e.g.
+        `Sprite2D`), but not currently called by the tree traversal or the
+        renderer - rendering instead goes through `find_nodes_with_type`
+        elsewhere. No-op by default."""
         pass
 
     def on_post_update(self):
+        """Hook meant to run once every node's update has finished for the
+        frame; not currently invoked by anything in the engine. No-op by
+        default."""
         pass
 
     def on_pre_update(self):
+        """Hook meant to run before any node's update runs for the frame;
+        not currently invoked by anything in the engine. No-op by
+        default."""
         pass
 
     def on_update(self):
+        """Called every frame during `update`; override to add per-frame
+        behavior. No-op by default."""
         pass
 
 class Node2D(Node):
+    """A `Node` with a 2D `Transform`, requiring a `Node2D` (or root)
+    parent so `world_transform` can compose up the tree."""
     def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1)):
+        """Sets `parental_requirement` to `"Node2D"`, so `_initialize`
+        warns if this node ends up under a non-`Node2D` parent."""
         super().__init__()
         self.parental_requirement = "Node2D"
 
@@ -185,13 +229,21 @@ class Node2D(Node):
 
     @property
     def world_transform(self):
+        """This node's transform composed with its ancestors', giving its
+        transform in world space rather than parent-local space. Falls
+        back to the local transform unchanged if the parent isn't a
+        `Node2D` (e.g. it's the scene's `RootNode`)."""
         if self.parent.inherits_from('Node2D'):
             return self.transform.compose_with(self.parent.world_transform)
         else:
             return self.transform
 
 class Node3D(Node):
+    """A `Node` with a 3D `Transform3`, requiring a `Node3D` (or root)
+    parent so `world_transform` can compose up the tree."""
     def __init__(self, position: Vector3 = Vector3(), rotation: Vector3 = Vector3(), scale: Vector3 = Vector3(1, 1, 1)):
+        """Sets `parental_requirement` to `"Node3D"`, so `_initialize`
+        warns if this node ends up under a non-`Node3D` parent."""
         super().__init__()
         self.parental_requirement = "Node3D"
 
@@ -199,6 +251,10 @@ class Node3D(Node):
 
     @property
     def world_transform(self):
+        """This node's transform composed with its ancestors', giving its
+        transform in world space rather than parent-local space. Falls
+        back to the local transform unchanged if the parent isn't a
+        `Node3D` (e.g. it's the scene's `RootNode`)."""
         if self.parent.inherits_from('Node3D'):
             return self.transform.compose_with(self.parent.world_transform)
         else:

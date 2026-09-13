@@ -146,7 +146,15 @@ SDL_KEY_MAP = {
 
 
 class HeadlessWindow(Window):
+    """Window backend used in headless mode - creates an SDL window with the dummy video driver, so nothing is ever shown.
+
+    Exists to give the renderer a real SDL/OpenGL-capable surface to target
+    (e.g. for automated tests or server-side rendering) without needing an
+    actual display; unlike the raw offscreen context in glfw.py, this is
+    still a full Window service (registered, drawable, has a window_type).
+    """
     def __init__(self, size: tuple[int, int], title="FreeBodyEngine"):
+        """Forces SDL's "dummy" video driver, then initializes SDL and creates a hidden window of `size`."""
         super().__init__(size, title)
         self.window_type = 'headless'
         self._size = size
@@ -171,13 +179,16 @@ class HeadlessWindow(Window):
             error("Failed to create SDL window")
 
     def create_mouse(self):
+        """Always returns None - headless mode has no real input device, so there is no Mouse to create."""
         return None
 
     def set_title(self, new_title):
+        """No-op - a headless window is never shown, so it has no visible title to set."""
         pass
 
     @property
     def size(self) -> tuple[int, int]:
+        """The window's size, in pixels, as reported by SDL."""
         w = sdl2.c_int()
         h = sdl2.c_int()
         sdl2.SDL_GetWindowSize(self._window, w, h)
@@ -185,10 +196,12 @@ class HeadlessWindow(Window):
 
     @size.setter
     def size(self, new: tuple[int, int]):
+        """Resizes the SDL window to `new` (width, height), in pixels."""
         sdl2.SDL_SetWindowSize(self._window, new[0], new[1])
 
     @property
     def position(self) -> tuple[int, int]:
+        """The window's position, in pixels, as reported by SDL."""
         x = sdl2.c_int()
         y = sdl2.c_int()
         sdl2.SDL_GetWindowPosition(self._window, x, y)
@@ -196,9 +209,11 @@ class HeadlessWindow(Window):
 
     @position.setter
     def position(self, new: tuple[int, int]):
+        """Moves the SDL window to `new` (x, y), in pixels."""
         sdl2.SDL_SetWindowPosition(self._window, new[0], new[1])
 
     def is_ready(self) -> bool:
+        """True until the window has been told to close."""
         return not self._should_close
 
     def _get_key_down(self, key: Key):
@@ -217,14 +232,17 @@ class HeadlessWindow(Window):
         pass
 
     def close(self):
+        """Destroys the SDL window and shuts down SDL."""
         self._should_close = True
         sdl2.SDL_DestroyWindow(self._window)
         sdl2.SDL_Quit()
 
     def draw(self):
+        """No-op - there is nothing to present to in headless mode."""
         pass
 
     def update(self):
+        """Pumps SDL's event queue for this frame, quitting the engine on SDL_QUIT."""
         events = sdl2.SDL_Event()
         while sdl2.SDL_PollEvent(events):
             if events.type == sdl2.SDL_QUIT:

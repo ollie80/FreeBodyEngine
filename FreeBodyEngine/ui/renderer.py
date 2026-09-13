@@ -1,54 +1,134 @@
 from FreeBodyEngine.core.service import Service
-from FreeBodyEngine import register_service_update, unregister_service_update, get_service
+from FreeBodyEngine import register_service_update, unregister_service_update, get_service, warning
 from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine.graphics.mesh import generate_quad
 from FreeBodyEngine.math import Transform, Vector
 from FreeBodyEngine.core.camera import Camera, CAMERA_PROJECTION
 from FreeBodyEngine.graphics.color import Color
-
+from FreeBodyEngine.core.files import load_file
 import numpy as np
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from FreeBodyEngine.ui import UIManager
+    from FreeBodyEngine.ui.element import UIElement
     from FreeBodyEngine.graphics.material import Material
 
-UI_DRAW_PRIORITY = 9999999
-
-class UICamera(Camera):
-    def __init__(self):
-        super().__init__(CAMERA_PROJECTION.ORTHOGRAPHIC,  Color('#ffffff00'), 1)
-
-    def handle_window_resize(self, size: tuple[int, int]):
-        self.view_matrix = np.array([0,0,0,0,
-                                     0,0,0,0,
-                                     0,0,0,0,
-                                     0,0,0,0])
-
 class UIRenderer(Service):
+    """Engine service that draws the UI tree owned by the `ui` service (`UIManager`)."""
+
     def __init__(self):
+        """Loads the shared background quad mesh/material used to draw every element."""
         super().__init__('ui_renderer')
         self.dependencies.append('ui')
 
         self.quad = generate_quad()
-        self.material: 'Material' = load_material('engine/ui/element.fbmat')
 
-        self.camera = UICamera()
+        self.material: 'Material' = load_file('engine://ui/element.fbmat')
+
+        # Keyed by the raw `image` style path - a background image (e.g. an
+        # avatar) is loaded once and reused every frame/every element that
+        # references the same path, the same way resolve_font() caches
+        # fonts. Goes through load_file() so plain sprite .png assets that
+        # already live in the shared sprite atlas are looked up there
+        # instead of duplicated as a second standalone texture.
+        self._image_cache: dict[str, any] = {}
 
     def on_initialize(self):
-        register_service_update(UpdatePhase.DRAW, self.draw, UI_DRAW_PRIORITY)
+        """Registers the draw callback and grabs a reference to the `ui` service's tree."""
+        register_service_update(UpdatePhase.DRAW, self.draw)
         self.ui: 'UIManager' = get_service('ui')
 
     def on_destroy(self):
+        """Unregisters the draw callback registered in `on_initialize`."""
         unregister_service_update(UpdatePhase.DRAW, self.draw)
 
     def draw(self):
-        empty_transform = Transform(Vector(), 0, Vector())
+        """Draws every top-level element of the UI tree (and, recursively, their children)."""
+        for element in self.ui.root.children.values():
+            self._draw_element(element)
 
-        for id in self.ui.root.children:
-            element = self.ui.root.children[id]
+    def _draw_element(self, element: 'UIElement'):
+        """Draws one element's background/text, then recurses into its own
+        children - UIElement.calculate_layout() already computes correct
+        layouts for arbitrarily nested trees (see ui/element.py), but until
+        now this only ever drew direct children of the root, so nothing
+        composed of nested elements (an avatar + bubble inside a message
+        row, say) ever actually rendered past its top-level container."""
+        styles = element.get_current_styles()
 
-            self.material.shader.set_uniform('layout', (element._layout.x, element._layout.y, element._layout.width, element._layout.height))
+        self._draw_background(element, styles)
+        self._draw_text(element, styles)
 
-            get_service('renderer').draw_mesh(self.quad, self.material, empty_transform, self.camera)
+        for child in element.children.values():
+            self._draw_element(child)
+
+    @staticmethod
+    def _to_vec4(value) -> tuple:
+        """border_radius/border_width are single numbers in the common
+        case (one radius/thickness for every corner/edge) but the shader
+        takes a vec4 (per-corner radius in top_left/top_right/bottom_right/
+        bottom_left order, matching CSS) so asymmetric shapes - like an
+        Instagram-style bubble with one flattened corner on its "tail"
+        side - are just a 4-tuple instead of a new style."""
+        if isinstance(value, (tuple, list)):
+            if len(value) == 4:
+                return tuple(float(v) for v in value)
+            warning(f'Expected 4 values for a per-corner/per-edge style, got {value!r}.')
+            return (0.0, 0.0, 0.0, 0.0)
+        return (float(value),) * 4
+
+    def _resolve_image(self, path: str):
+        cached = self._image_cache.get(path)
+        if cached is not None:
+            return cached
+
+        texture = load_file(path)
+        if texture is not None:
+            self._image_cache[path] = texture
+        return texture
+
+    def _draw_background(self, element: 'UIElement', styles: dict):
+        width, height = element._layout.width, element._layout.height
+        if width <= 0 or height <= 0:
+            return
+
+        shader = self.material.shader
+        shader.set_uniform('window_size', (self.ui.root.width, self.ui.root.height))
+        shader.set_uniform('rect', (element._layout.x, element._layout.y, width, height))
+        shader.set_uniform('size', (float(width), float(height)))
+        shader.set_uniform('border_radius', self._to_vec4(styles.get('border_radius', 0)))
+        shader.set_uniform('border_width', self._to_vec4(styles.get('border_width', 0)))
+        shader.set_uniform('border_color', styles.get('border_color', (0.0, 0.0, 0.0, 1.0)))
+        shader.set_uniform('base_color', styles.get('base_color', (1.0, 1.0, 1.0, 1.0)))
+
+        image_path = styles.get('image')
+        texture = self._resolve_image(image_path) if image_path else None
+        shader.set_uniform('use_texture', texture is not None)
+        if texture is not None:
+            shader.set_uniform('background_texture', texture)
+
+        get_service('renderer').draw_mesh(self.quad, self.material)
+
+    def _draw_text(self, element: 'UIElement', styles: dict):
+        text = styles.get('text')
+        font_path = styles.get('font')
+        if not text or not font_path:
+            return
+
+        from FreeBodyEngine.core.files.loaders.font import resolve_font  # lazy - avoids a ui <-> core.files import cycle (utils.py imports ui.element early during core.files' own init)
+        font = resolve_font(font_path, weight=styles.get('font_weight', 'regular'))
+        if font is None:
+            return
+
+        font_size = styles.get('font_size', 24)
+        pad = styles.get('padding', 0)
+        pad_left = styles.get('padding_left', pad)
+        pad_top = styles.get('padding_top', pad)
+
+        get_service('text_renderer').draw_text(
+            font, text,
+            element._layout.x + pad_left, element._layout.y + pad_top + font_size,
+            font_size, styles.get('text_color', (1.0, 1.0, 1.0, 1.0)),
+        )

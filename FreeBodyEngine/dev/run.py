@@ -19,7 +19,7 @@ def main(path='./'):
         main_script = os.path.join(path, build_config['main_file'])
         run_flags.append("--name="+build_config["name"])
 
-        subprocess.run(["python", main_script, *run_flags, *flags])
+        subprocess.run([sys.executable, main_script, *run_flags, *flags])
 
     except KeyboardInterrupt:
         pass

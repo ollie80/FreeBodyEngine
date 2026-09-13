@@ -8,12 +8,19 @@ from enum import Enum, auto
 from FreeBodyEngine import get_service
 
 class CAMERA_PROJECTION(Enum):
+    """The two projection modes a `Camera` can use to build its projection
+    matrix."""
     PERSPECTIVE = auto()
     ORTHOGRAPHIC = auto()
 
 
 class Camera:
+    """Mixin holding the projection/background/matrix state shared by
+    `Camera2D` and `Camera3D` - always used alongside a `Node2D`/`Node3D`
+    base (see those classes), never on its own."""
     def __init__(self, projection: CAMERA_PROJECTION, background_color: Color, zoom: float):
+        """Stores the camera's settings and sets `view_matrix`/`proj_matrix`
+        to identity until the first matrix update runs."""
         self.zoom = zoom
         self.background_color = background_color
         self.projection = projection
@@ -37,11 +44,16 @@ class Camera2D(Node2D, Camera):
     :type background_color: Color
     """
 
-    def __init__(self, position: 'Vector' = Vector(), zoom: float = 250, rotation: float = 0, projection=CAMERA_PROJECTION.ORTHOGRAPHIC, background_color: Color = Color("#324848")):
+    def __init__(self, position: 'Vector' = Vector(), zoom: float = 250, rotation: float = 0, projection=CAMERA_PROJECTION.ORTHOGRAPHIC, background_color: Color = Color("#060e08")):
+        """Initializes both the `Node2D` and `Camera` halves of this
+        object, since `Camera2D` doesn't use a single cooperative
+        `super().__init__()` chain."""
         Node2D.__init__(self, position=position, rotation=rotation)
         Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
 
     def on_initialize(self):
+        """Builds the initial projection and view matrices once the camera
+        is attached to the scene tree (and so has a `world_transform`)."""
         self._update_projection_matrix()
         self._update_view_matrix()
 
@@ -145,16 +157,25 @@ class Camera2D(Node2D, Camera):
         self.view_matrix = np.dot(translation_matrix, rotation_matrix)
 
     def update(self):
+        """Updates the node tree as usual, then rebuilds both matrices
+        every frame so the camera tracks window resizes and its own
+        movement/rotation/zoom without needing an explicit invalidation."""
         super().update()
         self._update_projection_matrix()
         self._update_view_matrix()
 
 class Camera3D(Node3D, Camera):
+    """A 3D counterpart to `Camera2D`."""
     def __init__(self, position: 'Vector' = Vector3(), rotation: 'Vector' = Vector3(), zoom: float = 1.0, projection=CAMERA_PROJECTION.PERSPECTIVE, background_color: Color = Color("#324848")):
+        """Initializes both the `Node3D` and `Camera` halves of this
+        object, since `Camera3D` doesn't use a single cooperative
+        `super().__init__()` chain."""
         Node3D.__init__(self, position=position, rotation=rotation)
         Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
 
     def on_initialize(self):
+        """Builds the initial projection and view matrices once the camera
+        is attached to the scene tree (and so has a `world_transform`)."""
         self._update_projection_matrix()
         self._update_view_matrix()
 
@@ -226,6 +247,9 @@ class Camera3D(Node3D, Camera):
         self.view_matrix = np.linalg.inv(camera_world_matrix)
 
     def update(self):
+        """Updates the node tree as usual, then rebuilds both matrices
+        every frame so the camera tracks window resizes and its own
+        movement/rotation/zoom without needing an explicit invalidation."""
         super().update()
         self._update_projection_matrix()
         self._update_view_matrix()

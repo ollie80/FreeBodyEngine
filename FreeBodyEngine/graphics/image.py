@@ -10,10 +10,14 @@ if TYPE_CHECKING:
     from FreeBodyEngine.graphics.texture import Texture
 
 class Image:
-    def __init__(self, texture: 'Texture'):        
+    """Backend-agnostic wrapper around a Texture that exposes its pixel data
+    as a plain image, rather than as something sampled by a shader."""
+    def __init__(self, texture: 'Texture'):
+        """Stores the `texture` this Image wraps."""
         self.texture = texture
 #        self._image: PIL.Image.Image = PIL.Image.open(io.BytesIO(texture.get_image_data())).transpose(PIL.Image.Transpose.FLIP_TOP_BOTTOM)
 
     @abstractmethod
     def get_data(self):
+        """Returns this image's raw pixel data."""
         pass

@@ -1,3 +1,6 @@
+albedo = "#FFFFFFFF"
+
 [shader]
-vert = "engine/shader/default_shader.fbvert"
-frag = "engine/shader/default_shader.fbfrag"
+vert = "engine://shader/default_shader.fbvert"
+frag = "engine://shader/default_shader.fbfrag"
+

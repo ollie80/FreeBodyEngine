@@ -4,6 +4,8 @@ normal: vec4
 emmisive: vec4
 roughness: float
 metallic: float
+gWorldPos: vec4
+gWorldNormal: vec4
 
 @uniform
 Albedo_Texture: texture
@@ -25,12 +27,23 @@ Metallic_useTexture: bool
 
 @input
 uv: vec2
-normals: vec3
+worldPos: vec4
+worldNormal: vec4
 
 def main() -> void:
-    albedo = sample(Albedo_Texture, uv) if Albedo_useTexture else Albedo_Color
+    albedo = sample(Albedo_Texture, vec2(uv.x, uv.y)) if Albedo_useTexture else Albedo_Color
+    #albedo = vec4(, 0.0, 1.0)
     normal = sample(Normal_Texture, uv) if Normal_useTexture else Normal_Color
     emmisive = sample(Emmisive_Texture, uv) if Emmisive_useTexture else Emmisive_Color
     roughness = sample(Roughness_Texture, uv).x if Roughness_useTexture else Roughness_Color
     metallic = sample(Metallic_Texture, uv).x if Metallic_useTexture else Metallic_Color
-    
+
+    # Passed straight through from the vertex stage into their own G-buffer
+    # channels - `gWorldPos.w`/`gWorldNormal.w` are both a constant 1.0
+    # sentinel a lighting pass can use to tell "real geometry was rasterized
+    # here" apart from background pixels the cleared framebuffer never
+    # touched (those read back as 0 in every channel, .w included).
+    n: vec3 = normalize(vec3(worldNormal.x, worldNormal.y, worldNormal.z))
+    gWorldPos = worldPos
+    gWorldNormal = vec4(n.x, n.y, n.z, 1.0)
+

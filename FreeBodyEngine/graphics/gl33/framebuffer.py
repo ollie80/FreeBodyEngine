@@ -1,5 +1,14 @@
 from FreeBodyEngine.graphics.framebuffer import Framebuffer, AttachmentFormat, AttachmentType
 from OpenGL.GL import *
+import numpy as np
+
+
+GL_CHANNEL_COUNT = {
+    GL_RED: 1,
+    GL_RG: 2,
+    GL_RGB: 3,
+    GL_RGBA: 4,
+}
 
 
 GL_ATTACHMENT_FORMAT = {
@@ -8,6 +17,8 @@ GL_ATTACHMENT_FORMAT = {
     AttachmentFormat.RGBA16F: GL_RGBA16F,
     AttachmentFormat.RGBA32F: GL_RGBA32F,
     AttachmentFormat.RGB10_A2: GL_RGB10_A2,
+    AttachmentFormat.R32F: GL_R32F,
+    AttachmentFormat.RG32F: GL_RG32F,
 
     AttachmentFormat.DEPTH24: GL_DEPTH_COMPONENT24,
     AttachmentFormat.DEPTH32F: GL_DEPTH_COMPONENT32F,
@@ -23,6 +34,8 @@ GL_ATTACHMENT_TYPE = {
     AttachmentFormat.RGBA16F: (GL_RGBA, GL_FLOAT),
     AttachmentFormat.RGBA32F: (GL_RGBA, GL_FLOAT),
     AttachmentFormat.RGB10_A2: (GL_RGBA, GL_UNSIGNED_INT_2_10_10_10_REV),
+    AttachmentFormat.R32F: (GL_RED, GL_FLOAT),
+    AttachmentFormat.RG32F: (GL_RG, GL_FLOAT),
 
     AttachmentFormat.DEPTH24: (GL_DEPTH_COMPONENT, GL_UNSIGNED_INT),
     AttachmentFormat.DEPTH32F: (GL_DEPTH_COMPONENT, GL_FLOAT),
@@ -110,6 +123,15 @@ class GLFramebuffer(Framebuffer):
     def _draw_depth_texture(tex, size):
         pass
 
+    def clear_color_attachment(self, name: str, value=(0.0, 0.0, 0.0, 0.0)):
+        if name not in self.attachments:
+            raise ValueError(f"No attachment named '{name}'")
+        if self._attachments[name][0] != AttachmentType.COLOR:
+            raise ValueError(f"Attachment '{name}' is not a color attachment")
+
+        draw_buffer_index = self.attachments[name] - GL_COLOR_ATTACHMENT0
+        glClearBufferfv(GL_COLOR, draw_buffer_index, np.array(value, dtype=np.float32))
+
     def draw(self, attachment, size: tuple[int,int] = None):
         """Draw a named attachment to the screen."""
         if attachment not in self.attachments:
@@ -137,6 +159,24 @@ class GLFramebuffer(Framebuffer):
         glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
 
+    def read(self, attachment_name: str) -> np.ndarray:
+        if attachment_name not in self._attachments:
+            raise ValueError(f"No attachment named '{attachment_name}'")
+
+        att_type, att_format = self._attachments[attachment_name]
+        if att_type != AttachmentType.COLOR:
+            raise ValueError(f"Attachment '{attachment_name}' is not a color attachment")
+
+        fmt, _typ = GL_ATTACHMENT_TYPE[att_format]
+        channels = GL_CHANNEL_COUNT[fmt]
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, self.fbo)
+        glReadBuffer(self.attachments[attachment_name])
+        raw = glReadPixels(0, 0, self.width, self.height, fmt, GL_FLOAT)
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, 0)
+
+        return np.frombuffer(raw, dtype=np.float32).reshape(self.height, self.width, channels)
+
     def get_attachment_texture(self, attachment_name):
         if attachment_name in self.textures.keys():
             return self.textures[attachment_name]
@@ -144,7 +184,7 @@ class GLFramebuffer(Framebuffer):
             error(f'No attachment "{attachment_name}" on framebuffer: {self}')
 
     def resize(self, size: tuple[int, int]):
-        self.width, self.height = size
+        self.width, self.height = size[0], size[1]
 
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
 
@@ -199,7 +239,7 @@ class GLFramebuffer(Framebuffer):
         status = glCheckFramebufferStatus(GL_FRAMEBUFFER)
         if status != GL_FRAMEBUFFER_COMPLETE:
             raise RuntimeError(f"Framebuffer incomplete after resize: status {status}")
-
+        glViewport(0, 0, self.width, self.height)
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     def bind(self):

@@ -1,20 +1,27 @@
-@define
-test = False
-test2 = test+3
-
 @uniform
 view: mat4
-proj: mat4 
+proj: mat4
 tex: texture
-model: mat4 
+model: mat4
 
 @input
 vertex: vec3
 uvs: vec2
+normal: vec3
 
 @output
 uv: vec2
+worldPos: vec4
+worldNormal: vec4
 
 def main():
     uv = uvs
-    VERTEX_POSITION = proj * view * model * vec4(vertex.x, vertex.y, vertex.z, 1.0)
+
+    world: vec4 = model * vec4(vertex.x, vertex.y, vertex.z, 1.0)
+    worldPos = vec4(world.x, world.y, world.z, 1.0)
+
+    world_normal: vec4 = model * vec4(normal.x, normal.y, normal.z, 0.0)
+    worldNormal = vec4(world_normal.x, world_normal.y, world_normal.z, 1.0)
+
+    VERTEX_POSITION = proj * view * world
+    #VERTEX_POSITION = vec4(uvs.x, uvs.y, 0.5, 1.0)

@@ -60,6 +60,7 @@ PARTICLE_DTYPE = np.dtype(
 )
 
 class ParticleEmmiter(Node2D):
+    """Spawns and simulates a pool of particles on a fixed-size, struct-of-arrays NumPy buffer (`self.particles`, dtype PARTICLE_DTYPE) rather than one object per particle, so large particle counts stay cheap."""
     def __init__(
         self,
         position: Vector = Vector(),
@@ -67,6 +68,12 @@ class ParticleEmmiter(Node2D):
         scale: Vector = Vector(),
         particle_settings: ParticleSettings = ParticleSettings()
     ):
+        """Allocates the fixed-size particle buffer (sized to `particle_settings.max_particles`) and starts the spawn cooldown timer.
+
+        `free_list` tracks which slots in `self.particles` are unused - a
+        spawn pops a slot from it, and a particle's death pushes its slot
+        back on, so the buffer never needs to grow or shrink.
+        """
         super().__init__(position, rotation, scale)
         self.particle_settings: ParticleSettings = particle_settings
         self.particles = np.zeros(particle_settings.max_particles, dtype=PARTICLE_DTYPE)
@@ -80,9 +87,11 @@ class ParticleEmmiter(Node2D):
         self._active = True
 
     def activate(self):
+        """Resumes spawning and simulating particles."""
         self._active = True
 
     def deactivate(self):
+        """Stops spawning and simulating particles (on_update() becomes a no-op) - existing particles are left as they are, not cleared."""
         self._active = False
 
     def _spawn(self):
@@ -102,6 +111,7 @@ class ParticleEmmiter(Node2D):
         return idx
 
     def on_update(self):
+        """While active, spawns a new particle whenever the spawn cooldown completes, ages and moves all currently-alive particles, and recycles any whose lifetime has run out back onto `free_list`."""
         if self._active:
             self.spawn_timer.update()
 

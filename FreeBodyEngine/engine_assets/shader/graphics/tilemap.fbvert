@@ -15,7 +15,7 @@ spritesheet_id: flat int
 
 def main():
     texcoord = uv
-    image_id = int(round(vertex.z))
-    spritesheet_id = int(round(vertex.w))
-    chunk_world_pos: vec2 = chunk_pos * _ENGINE_CHUNK_WORLD_SIZE
+    image_id = round(vertex.z)
+    spritesheet_id = round(vertex.w)
+    chunk_world_pos: vec2 = vec2(chunk_pos.x * float(_ENGINE_CHUNK_WORLD_SIZE), chunk_pos.y * float(_ENGINE_CHUNK_WORLD_SIZE))
     VERTEX_POSITION = proj * view * model * vec4(vertex.xy + chunk_world_pos, 0.0, 1.0)

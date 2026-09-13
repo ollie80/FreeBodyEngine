@@ -19,6 +19,8 @@ PERL_STRING_ASSIGNMENT = re.compile(
 
 @dataclass
 class Option:
+    """The eyes/tongue glyphs for one of the cow's mood presets (`-b`,
+    `-d`, `-g`, ... - see `COW_OPTIONS`)."""
     eyes: str = 'oo'
     tongue: str = '  '
 
@@ -44,6 +46,9 @@ COW_OPTIONS = {
 
 @dataclass
 class Bubble:
+    """The border glyphs used to draw the speech/thought bubble above the
+    cow (one preset per `THOUGHT_OPTIONS` entry, for `cowsay` vs.
+    `cowthink`)."""
     stem: str = '\\'
     l: str = '<'
     r: str = '>'
@@ -67,6 +72,14 @@ ESCAPES = {
 }
  
 def cowsay_handler(env, args):
+    """`fb cowsay` handler - intended to print `args`' message inside a
+    speech bubble above an ASCII cow, as the GNU `cowsay`/`cowthink` tools
+    do, resolved via `cow`/`cowfile`/`preset`/`eyes`/`tongue`/`width`/
+    `wrap_text`.
+
+    Incomplete: none of those names, nor `get_cow`/`build_cow` below, are
+    defined anywhere in this module or derived from `args` - calling this
+    currently raises `NameError`."""
 
     the_cow = get_cow(cow) if cowfile is None else cowfile
     cow_ops = COW_OPTIONS.get(preset, Option(eyes=eyes, tongue=tongue))
