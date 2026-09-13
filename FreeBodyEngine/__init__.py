@@ -22,6 +22,7 @@ DEVMODE = "DEVMODE"
 PROJECT_PATH = "PROJECT_PATH"
 PROFILER = "PROFILER"
 NAME = "NAME"
+FORCE_RENDERER = "FORCE_RENDERER"  # e.g. fb.set_flag(fb.FORCE_RENDERER, "gl33") to override graphics.get_renderer()'s auto-detection
 
 MAX_FPS = "MAX_FPS"
 MAX_TPS = "MAX_TPS"
@@ -38,9 +39,19 @@ QUIT = "QUIT"
 PRE_FLAGS = {}
 
 def get_flag(key: str, default: any):
+    """Gets the value of global flag `key`, or `default` if it isn't set.
+
+    Works both before and after `init()`: before a `Main` exists, flags live
+    in the temporary `PRE_FLAGS` store; afterwards they're read from the
+    live `Main.flags`, which is seeded from `PRE_FLAGS` on startup."""
     return get_main().flags.get(key, default) if main_exists() else PRE_FLAGS.get(key, default)
-    
+
 def set_flag(key: str, value: any):
+    """Sets global flag `key` to `value`.
+
+    Before `init()` creates a `Main`, this writes into the temporary
+    `PRE_FLAGS` store (later consumed by `Main.__init__`) instead of a live
+    `GlobalFlags`, so flags can be set ahead of engine startup."""
     if main_exists():
         get_main().flags.set(key, value)
     else:
@@ -54,33 +65,46 @@ if TYPE_CHECKING:
     from FreeBodyEngine.core.update import UpdatePhase
 
 def register_service_update(phase: 'UpdatePhase', callback: Callable, priority: int = 0):
+    """Registers `callback` to run every `phase` of the main update loop.
+
+    Higher `priority` callbacks run first within the same phase - see
+    `UpdateCoordinator.register`."""
     get_main().updater.register(phase, callback, priority)
 
 def unregister_service_update(phase: 'UpdatePhase', callback: Callable):
+    """Removes a callback previously registered for `phase` with `register_service_update`."""
     get_main().updater.unregister(phase, callback)
 
 def fbquit():
+    """Requests an orderly engine shutdown by emitting the QUIT event."""
     emit_event(QUIT)
 
 def get_time():
+    """Returns the current engine time in seconds."""
     return get_main().time.get_time()
 
 def register_service(service: 'Service'):
+    """Registers `service` with the global service locator, making it
+    retrievable afterwards via `get_service(service.name)`."""
     get_service_locator()._register(service)
 
 def unregister_service(name: str):
+    """Unregisters and destroys the service registered under `name`."""
     get_service_locator()._unregister(name)
 
 def get_service(name: str) -> 'Service':
-    if service_exists(name):        
+    """Returns the registered service named `name`, or None if no such service exists."""
+    if service_exists(name):
         return get_service_locator()._get(name)
     else:
         return None
-    
+
 def service_exists(name: str):
+    """Returns whether a service named `name` is currently registered."""
     return get_service_locator()._exists(name)
 
 def get_service_locator() -> 'ServiceLocator':
+    """Returns the engine's global `ServiceLocator`."""
     return get_main().services
 
 def _set_main(main: 'Main'):
@@ -88,6 +112,12 @@ def _set_main(main: 'Main'):
     _main_object = main
 
 def get_main(throw_error = True):
+    """Returns the global `Main` instance.
+
+    Raises:
+        RuntimeError: if no `Main` has been created yet and `throw_error`
+            is True (the default). With `throw_error=False`, returns None
+            instead in that case."""
     global _main_object
     if _main_object == None:
         if throw_error:
@@ -95,6 +125,7 @@ def get_main(throw_error = True):
     return _main_object
 
 def main_exists():
+    """Returns whether the global `Main` instance has been created yet."""
     global _main_object
     return _main_object != None
 
@@ -103,39 +134,56 @@ def delta() -> float:
     return get_main().time.delta_time
 
 def register_event_callback(event_name: str, callable: Callable):
+    """Registers `callable` to be invoked whenever `event_name` is emitted.
+
+    A no-op if the "event" service isn't registered yet."""
     print(get_service_locator().services.keys())
-    
+
     if service_exists("event"):
         get_service('event').register_callback(event_name, callable)
 
 def unregister_event_callback(event_name: str, callable: Callable):
+    """Unregisters `callable` from `event_name`, previously registered with
+    `register_event_callback`. A no-op if the "event" service isn't registered."""
     if service_exists("event"):
         get_service('event').unregister_callback(event_name, callable)
 
 def register_event(name: str, *categories: str) -> None:
+    """Registers a new event named `name`, filed under `categories`.
+
+    A no-op if the "event" service isn't registered yet."""
     if service_exists("event"):
         return get_service('event').register_event(name, *categories)
 
 def unregister_event(name: str) -> None:
+    """Unregisters the event named `name`. A no-op if the "event" service isn't registered."""
     if service_exists("event"):
         return get_service('event').unregister_event(name)
 
 def emit_event(name: str, *callback_args, **callback_kwargs) -> None:
+    """Emits event `name`, invoking every callback registered on it with the
+    given arguments. A no-op if the "event" service isn't registered."""
     if service_exists("event"):
         return get_service('event').emit(name, *callback_args, **callback_kwargs)
 
 def register_event_category(name: str, priority=0) -> None:
+    """Registers a new event category named `name` at the given `priority`.
+
+    A no-op if the "event" service isn't registered yet."""
     if service_exists("event"):
         return get_service('event').register_category(name, priority)
 
 def unregister_event_category(name: str) -> None:
+    """Unregisters the event category named `name`. A no-op if the "event" service isn't registered."""
     if service_exists("event"):
         return get_service('event').unregister_category(name)
 
 def get_mouse() -> 'Mouse':
+    """Returns the registered "mouse" service."""
     return get_service('mouse')
 
 def physics_delta() -> float:
+    """Returns the fixed physics timestep in seconds (see `UpdateCoordinator.physics_timestep`)."""
     return get_main().updater.physics_timestep
 
 def warning(msg):
@@ -154,6 +202,7 @@ def log(*msg):
     get_service('logger').log(*msg, color="reset")
 
 from FreeBodyEngine import core
+from FreeBodyEngine import audio
 from FreeBodyEngine import math
 from FreeBodyEngine import net
 from FreeBodyEngine import ui
@@ -178,7 +227,7 @@ def init():
 
     DLL_DIRECTORY = load_dlls()
 
-    print(get_flag(DEVMODE, False))
+    
 
     if get_flag(DEVMODE, False):
         from FreeBodyEngine.core.dev import find_project
@@ -201,6 +250,7 @@ __all__ = [
             "load_shader",
             "load_sound",
             "load_sprite",
+            "audio"
             'add',
             "get_platform",
             "core",

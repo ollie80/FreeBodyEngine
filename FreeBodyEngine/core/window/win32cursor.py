@@ -35,6 +35,11 @@ def rgba_to_bitmap_and_mask(img: Image.Image):
     return bmp_bits, and_mask
 
 def build_cursor_from_pil(img: Image.Image, hotspot=(0, 0)):
+    """Builds a Win32 HCURSOR from a PIL image by hand-assembling an in-memory .cur resource and loading it via CreateIconFromResourceEx.
+
+    Raises:
+        OSError: via ctypes.WinError if CreateIconFromResourceEx fails.
+    """
     img = img.convert("RGBA")
     width, height = img.size
 

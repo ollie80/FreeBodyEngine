@@ -1,8 +1,75 @@
 @input
 uv: vec2
+image_uv: vec2
 
 @output
 color: vec4
 
+@uniform
+size: vec2
+border_radius: vec4
+border_width: vec4
+border_color: vec4
+base_color: vec4
+use_texture: bool
+background_texture: texture
+
+
+def rounded_box_sdf(p: vec2, half_size: vec2, radius: float) -> float:
+    q: vec2 = vec2(abs(p.x), abs(p.y)) - half_size + vec2(radius, radius)
+    return length(max(q, vec2(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - radius
+
+
+def corner_radius(p: vec2, radius: vec4) -> float:
+    # border_radius order: (top_left, top_right, bottom_right, bottom_left)
+    if p.x < 0.0:
+        if p.y < 0.0:
+            return radius.x
+        else:
+            return radius.w
+    else:
+        if p.y < 0.0:
+            return radius.y
+        else:
+            return radius.z
+
+
 def main() -> void:
-    color = vec4(0.0, 0.0, 0.0, 1.0)
+    pixel_pos: vec2 = (uv - vec2(0.5, 0.5)) * size
+    half_size: vec2 = size * 0.5
+
+    radius: float = corner_radius(pixel_pos, border_radius)
+
+    # Treated as a single uniform thickness (border_width.x) for now.
+    # border_width is a vec4 so you can go per-edge (top/right/bottom/
+    # left, CSS order) later, but that needs a directional shrink of
+    # the inner SDF's half_size instead of the symmetric one below.
+    border_thickness: float = border_width.x
+
+    outer_dist: float = rounded_box_sdf(pixel_pos, half_size, radius)
+    inner_dist: float = rounded_box_sdf(pixel_pos, half_size - vec2(border_thickness, border_thickness), max(radius - border_thickness, 0.0))
+
+    outer_alpha: float = 1.0 - smoothstep(0.0, 1.0, outer_dist)
+
+    # At border_thickness == 0, inner_dist is identical to outer_dist, so
+    # without this guard smoothstep(-1, 0, inner_dist) still transitions
+    # from 0 to 1 across the true edge - a faint but real unrequested
+    # border_color leak exactly where no border was asked for.
+    border_mask: float = 0.0
+    if border_thickness > 0.0:
+        border_mask = clamp(smoothstep(-1.0, 0.0, inner_dist), 0.0, 1.0)
+
+    # An image is shown as itself, not tinted by base_color - base_color's
+    # job is "the flat fill when there's no image", and defaults to fully
+    # transparent (see UIElement.DEFAULT_STYLES) so a plain layout wrapper
+    # doesn't paint an unwanted box. Multiplying an image by that default
+    # would silently zero every avatar/background image out unless the
+    # caller also remembered to set base_color to opaque white.
+    base: vec4 = base_color
+    if use_texture == True:
+        base = sample(background_texture, image_uv)
+
+    filled: vec4 = mix(base, border_color, border_mask)
+
+    color = vec4(filled.xyz, filled.w * outer_alpha)
+

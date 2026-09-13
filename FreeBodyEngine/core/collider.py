@@ -17,6 +17,7 @@ class CollisionShape:
     :type position: Vector
     """
     def __init__(self, position: Vector, rotation: float):
+        """No-op base initializer - concrete shapes (Circle/RectangleCollisionShape) set their own position/rotation/size attributes directly instead of calling this."""
         pass
 
     def collide(self, other: Union['CollisionShape', Vector]) -> bool:
@@ -72,22 +73,29 @@ class CollisionShape:
         raise NotImplementedError(f"Rect collision not implemented on Collider: {str(self)}")
 
 class CircleCollisionShape(CollisionShape):
+    """A circular collision shape, defined by a center position and radius."""
     def __init__(self, position: Vector, rotation: float, radius: int):
+        """Stores the circle's position, rotation, and radius directly (rotation has no effect on a circle's shape, but is kept for a consistent CollisionShape interface)."""
         self.position = position
         self.radius = radius
         self.rotation = rotation
 
     def collide_point(self, point: Vector):
+        """Checks whether `point` lies within the circle's radius."""
         return self.position.distance(point) <= self.radius
 
     def collide_circle(self, other: "CircleCollisionShape"):
+        """Checks whether the two circles overlap by comparing the distance between their centers to the sum of their radii."""
         return self.position.distance(other.position) <= self.radius + other.radius
 
     def collide_rectangle(self, other: "RectangleCollisionShape"):
-        return other.collide_circle(self)  
+        """Checks collision against a rectangle by delegating to the rectangle's own circle-collision test."""
+        return other.collide_circle(self)
 
 class RectangleCollisionShape(CollisionShape):
+    """An oriented (rotatable) rectangular collision shape, defined by a center position, size, and rotation."""
     def __init__(self, position: Vector, rotation: float, size: Vector):
+        """Stores the rectangle's position, size, and rotation directly."""
         self.position = position
         self.size = size
         self.rotation = rotation
@@ -150,6 +158,11 @@ class RectangleCollisionShape(CollisionShape):
         return min(projections), max(projections)
 
     def collide_rectangle(self, other: "RectangleCollisionShape"):
+        """Checks for overlap with another rectangle using the separating axis theorem (SAT): tests both rectangles' face normals as candidate separating axes, and reports a collision only if no axis separates them.
+
+        Returns:
+            bool: True if the rectangles overlap.
+        """
         corners_a = self._get_corners()
         corners_b = other._get_corners()
 
@@ -165,6 +178,11 @@ class RectangleCollisionShape(CollisionShape):
         return True
 
     def collide_point(self, point: Vector):
+        """Checks whether `point` lies inside the rectangle by projecting it onto the rectangle's two (rotated) axes and testing against the rectangle's extent on each.
+
+        Returns:
+            bool: True if the point is inside the rectangle.
+        """
         corners = self._get_corners()
         axis1 = (corners[1] - corners[0]).normalized().perpendicular()
         axis2 = (corners[3] - corners[0]).normalized().perpendicular()
@@ -182,6 +200,11 @@ class RectangleCollisionShape(CollisionShape):
         return not (max_b < min_a or max_a < min_b)
 
     def collide_circle(self, other: "CircleCollisionShape"):
+        """Checks for overlap with a circle by clamping the circle's center onto the rectangle's bounds along each axis to find the closest point on the rectangle, then comparing that distance to the circle's radius.
+
+        Returns:
+            bool: True if the circle overlaps the rectangle.
+        """
         corners = self._get_corners()
 
         closest = other.position
@@ -197,35 +220,41 @@ class RectangleCollisionShape(CollisionShape):
         return closest.distance(other.position) <= other.radius
 
 class Collider2D(Node2D):
+    """Base node for 2D colliders - wraps a CollisionShape and keeps it in sync with the node's world transform each update."""
     def __init__(self, collision_shape_cls: type[CollisionShape], position=Vector(), rotation=0, scale=Vector(1, 1)):
+        """Creates the collision shape instance via `collision_shape_cls(position, rotation, scale)` - passing `scale` for whichever third parameter that shape class expects (`size` for RectangleCollisionShape). CircleCollider2D corrects this immediately afterward by overwriting `collision_shape.radius`, since a circle's constructor expects a radius, not a size vector."""
         super().__init__(position, rotation, scale)
         self.collision_shape = collision_shape_cls(position, rotation, scale)
         self._last_matrix = None
 
     def on_update(self):
-        current = self.world_transform.to_matrix()
-        if not np.array_equal(current, self._last_matrix):
-            self.apply_transform()
-            self._last_matrix = current.copy()
-    
+        """Keeps the collision shape's position/rotation/size in sync with the node's world transform every frame."""
+        self.apply_transform()
+
     def collide(self, other: 'Collider2D'):
+        """Checks collision against another Collider2D by delegating to the underlying collision shapes."""
         return self.collision_shape.collide(other.collision_shape)
 
 
     @abstractmethod
     def toggle_debug_visuals(self):
+        """Adds or removes this collider's debug-visualization child node, depending on whether one is already present."""
         pass
 
     @abstractmethod
     def apply_transform(self):
+        """Copies the node's world transform onto the underlying collision shape's position/rotation/size."""
         pass
 
 class RectangleCollider2D(Collider2D):
+    """A rectangular Collider2D, backed by a RectangleCollisionShape."""
     def __init__(self, position = Vector(), rotation = 0, scale = Vector(1, 1)):
+        """Creates a RectangleCollider2D with the collision shape's size taken directly from `scale`."""
         super().__init__(RectangleCollisionShape, position, rotation, scale)
         self.collision_shape: RectangleCollisionShape
 
     def toggle_debug_visuals(self):
+        """Adds a RectangleColliderDebug child if this collider (already initialized) has none yet, otherwise removes any existing ones."""
         if self.is_initialized:
             debug = self.find_nodes_with_type('RectangleColliderDebug')
             if len(debug) > 0:
@@ -233,19 +262,24 @@ class RectangleCollider2D(Collider2D):
                     d.kill()
             else:
                 self.add(RectangleColliderDebug())
-        
+
     def apply_transform(self):
+        """Syncs the collision shape's position, rotation, and size to the node's current world transform."""
+
         self.collision_shape.position = self.world_transform.position
         self.collision_shape.rotation = self.world_transform.rotation
         self.collision_shape.size = self.world_transform.scale
 
 class CircleCollider2D(Collider2D):
+    """A circular Collider2D, backed by a CircleCollisionShape."""
     def __init__(self, position = Vector(), rotation = 0, scale = Vector(1, 1)):
+        """Creates a CircleCollider2D, deriving the collision shape's radius from `scale.x` (half of it, so `scale.x` acts as the circle's diameter)."""
         super().__init__(CircleCollisionShape, position, rotation, scale)
-        self.collision_shape: CircleCollisionShape  
+        self.collision_shape: CircleCollisionShape
         self.collision_shape.radius = scale.x / 2
 
     def toggle_debug_visuals(self):
+        """Adds a CircleColliderDebug child if this collider (already initialized) has none yet, otherwise removes any existing ones."""
         if self.is_initialized:
             debug = self.find_nodes_with_type('RectangleColliderDebug')
             if len(debug) > 0:
@@ -253,8 +287,9 @@ class CircleCollider2D(Collider2D):
                     d.kill()
             else:
                 self.add(CircleColliderDebug())
-        
+
     def apply_transform(self):
+        """Syncs the collision shape's position and rotation to the node's world transform, and derives its radius from the world scale's x component."""
         self.collision_shape.position = self.world_transform.position
         self.collision_shape.rotation = self.world_transform.rotation
         self.collision_shape.radius = self.world_transform.scale.x / 2
@@ -271,6 +306,7 @@ class Ray2D:
     """
 
     def __init__(self, origin: Vector, direction: Vector, scene: 'Scene'):
+        """Normalizes `direction` and stores it along with `origin` and the scene the ray will be cast against."""
         self.origin = origin
         self.direction = direction.normalized
         self.scene = scene
@@ -340,7 +376,11 @@ class Ray2D:
         return hit_point
 
     def intersect(self, collider: Union[Collider2D, CollisionShape]):
-            
+        """Dispatches to intersect_circle()/intersect_rectangle() based on `collider`'s (or its `collision_shape`'s) concrete type.
+
+        Raises:
+            ValueError: If `collider` is not a supported Collider2D/CollisionShape type.
+        """
         if isinstance(collider, Collider2D):
             if isinstance(collider.collision_shape, RectangleCollisionShape):
                 return self.intersect_rectangle(collider.collision_shape)
@@ -356,6 +396,17 @@ class Ray2D:
             raise ValueError(f"Provided collider type is not supported, type: {collider.__class__}")
 
     def cast(self, max_dist: float = 100):
+        """Finds the closest collider in the scene that this ray intersects.
+
+        Only considers colliders whose own position is within `max_dist` of
+        the ray's origin (a cheap broad-phase filter, not a check on the
+        actual intersection point) before running the real intersection
+        test on each.
+
+        Returns:
+            Vector | None: The closest intersection point found, or None if
+            the ray hits nothing.
+        """
         colliders: list[Collider2D] = self.scene.root.find_nodes_with_type('Collider2D')
         found = []
         for collider in colliders:
@@ -376,13 +427,17 @@ class Ray2D:
             return None
 
 class Raycaster2D(Node2D):
+    """A node that casts a ray from its own world position, facing its own world rotation, every update."""
     def __init__(self):
+        """Initializes the node; the ray itself isn't created until on_initialize(), once the node has a world transform to read."""
         super().__init__()
 
     def on_initialize(self):
-        self.ray = Ray2D(self.world_transform.position, Vector.from_angle(self.world_transform.rotation), self.scene)    
+        """Creates the ray, facing the node's current world rotation from its current world position."""
+        self.ray = Ray2D(self.world_transform.position, Vector.from_angle(self.world_transform.rotation), self.scene)
 
     def update(self):
+        """Re-aims the ray at the node's current world transform and casts it."""
         self.ray.direction = Vector.from_angle(self.world_transform.rotation)
         self.ray.origin = self.world_transform.position
         self.ray.cast()

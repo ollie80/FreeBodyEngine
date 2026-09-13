@@ -4,6 +4,11 @@ import numpy as np
 from enum import Enum, auto
 
 class AttributeType(Enum):
+    """Per-vertex attribute layout a Mesh's `attributes` dict declares for
+    one channel (e.g. "verticies", "uvs"). Only FLOAT/VEC2/VEC3/VEC4/INT/
+    IVEC2/IVEC3/IVEC4 are actually handled by the GL33/GL44 backends'
+    upload() (see GLMesh.upload) - MAT3/MAT4/VEC5/VEC6/IVEC5/IVEC6 raise
+    there."""
     FLOAT = auto()
     VEC2 = auto()
     VEC3 = auto()
@@ -23,21 +28,32 @@ class AttributeType(Enum):
 
 
 class PrimitiveType(Enum):
+    """GL primitive topology a Mesh's vertex/index data is drawn as."""
     TRIANGLES = auto()
     TRIANGLE_STRIP = auto()
     TRIANGLE_FAN = auto()
 
 
 class IndexType(Enum):
+    """Index buffer element width - GLMesh selects GL_UNSIGNED_SHORT for
+    UINT16 or GL_UNSIGNED_INT for UINT32 when uploading/drawing indices."""
     UINT16 = auto()
     UINT32 = auto()
 
 class BufferUsage(Enum):
+    """GPU buffer update-frequency hint, mapped to GL_STATIC_DRAW/
+    GL_DYNAMIC_DRAW/GL_STREAM_DRAW by the GL backends. A STATIC mesh
+    additionally refuses set_data() calls - see Mesh.set_data."""
     STATIC = auto()
     DYNAMIC = auto()
     STREAM = auto()
 
 class Mesh:
+    """Backend-agnostic vertex/index geometry: a dict of named per-vertex
+    attributes (`{"verticies": (AttributeType.VEC3, array), ...}`), optional
+    indices, and drawing/update-frequency hints. Concrete backends (GLMesh
+    etc.) own the actual GPU buffers and implement uploading/drawing/
+    destroying them."""
     def __init__(
         self,
         attributes: dict[str, tuple[AttributeType, np.ndarray]],
@@ -46,6 +62,9 @@ class Mesh:
         index_type: IndexType = IndexType.UINT16,
         usage: BufferUsage = BufferUsage.STATIC,
     ):
+        """Stores the mesh's attribute/index data and drawing hints;
+        uploading them to the GPU is left to a concrete subclass's
+        constructor."""
 
         self.attributes = attributes
         self.indices = indices
@@ -55,6 +74,7 @@ class Mesh:
 
     @abstractmethod
     def destroy(self):
+        """Releases the mesh's underlying GPU resources."""
         pass
 
     @abstractmethod
@@ -62,6 +82,9 @@ class Mesh:
         pass
 
     def set_data(self, attribute_name: str, data: np.ndarray):
+        """Updates one attribute's data in place - a no-op (with a warning)
+        if this mesh's `usage` is STATIC, since a static mesh's buffers
+        aren't expected to change after upload."""
         if self.usage == BufferUsage.STATIC:
             warning("Cannot set data of a static Mesh.")
             return
@@ -69,6 +92,8 @@ class Mesh:
 
     @abstractmethod
     def draw(self):
+        """Issues the draw call for this mesh using its currently uploaded
+        GPU buffers."""
         pass
 
 
@@ -80,6 +105,9 @@ def create_static_mesh(
     buffer_usage: BufferUsage = BufferUsage.STATIC,
     primitive: PrimitiveType = PrimitiveType.TRIANGLES,
 ) -> Mesh:
+    """Builds a Mesh (via the active renderer's mesh class) from raw vertex/
+    uv/normal arrays plus `indices`, always as IndexType.UINT32 regardless of
+    Mesh's own UINT16 default - see the comment on `index_type` below."""
     return get_service("renderer").get_mesh_class()(
         {
             "verticies": (AttributeType.VEC3, verticies),
@@ -87,12 +115,20 @@ def create_static_mesh(
             "normals": (AttributeType.VEC3, normals),
         },
         indices=indices,
+        # Every caller here (this module's generate_*() helpers and the glTF
+        # loader in core/files/loaders/model.py) builds `indices` as uint32 -
+        # Mesh's own default (IndexType.UINT16) silently mismatched that,
+        # making GLMesh.draw() read a uint32 index buffer 2 bytes at a time
+        # (GL_UNSIGNED_SHORT) instead of 4, corrupting every indexed mesh's
+        # geometry regardless of vertex count.
+        index_type=IndexType.UINT32,
         usage=buffer_usage,
         primitive=primitive,
     )
 
 
 def generate_quad(width=1.0, height=1.0):
+    """Generates a quad mesh centered at the origin, facing +Z."""
     hw = width / 2.0
     hh = height / 2.0
 
@@ -149,6 +185,8 @@ def generate_quad(width=1.0, height=1.0):
 
 
 def generate_circle(radius=0.5, segments=32):
+    """Generates a filled circle mesh (a triangle fan around a center
+    vertex), facing +Z."""
     vertices = [0.0, 0.0, 0.0]  # center
     normals = [0.0, 0.0, 1.0]  # facing +Z
     uvs = [0.5, 0.5]  # center UV
@@ -167,7 +205,7 @@ def generate_circle(radius=0.5, segments=32):
             indices.extend([0, i, i + 1])
 
     return create_static_mesh(
-        vertices=np.array(vertices, dtype=np.float32),
+        verticies=np.array(vertices, dtype=np.float32),
         normals=np.array(normals, dtype=np.float32),
         uvs=np.array(uvs, dtype=np.float32),
         indices=np.array(indices, dtype=np.uint32),
@@ -175,6 +213,8 @@ def generate_circle(radius=0.5, segments=32):
 
 
 def generate_cube(width: float = 1.0, height: float = 1.0, depth: float = 1.0):
+    """Generates an axis-aligned box mesh centered at the origin, with
+    unshared per-face vertices so each face gets its own flat UVs/normal."""
     hw = width / 2.0
     hh = height / 2.0
     hd = depth / 2.0

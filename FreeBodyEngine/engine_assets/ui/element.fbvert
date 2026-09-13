@@ -1,24 +1,51 @@
 @input
 vertex: vec3
-normal: vec3 
+normal: vec3
 uvs: vec2
 
 @uniform
-layout: vec4
+rect: vec4
+window_size: vec2
 
 @output
 uv: vec2
+image_uv: vec2
 
 def main() -> void:
-    uv = uvs
-    if VERTEX_INDEX == 0:
-        VERTEX_POSITION = vec2(layout[0], layout[1])
+    screen_rect: vec4 = vec4(rect.x / window_size.x * 2.0 - 1.0, 1.0 - rect.y / window_size.y * 2.0, rect.z / window_size.x * 2.0, rect.w / window_size.y * 2.0)
 
+    # `uv` is a plain, non-flipped quad-local coordinate (top-left is
+    # (0,0), matching the CSS-style top_left/top_right/bottom_right/
+    # bottom_left corner order border_radius/border_width use) - the
+    # mesh's own baked `uvs` attribute doesn't correspond to these
+    # VERTEX_INDEX-computed screen positions at all (it's the sprite
+    # quad's own fixed layout, meant for a completely different vertex
+    # ordering), so using it here scrambled which screen corner got which
+    # rounded-box distance/corner radius, and which pixel got which
+    # texture texel - visible as a diagonal tear across every rounded/
+    # textured element.
+    #
+    # `image_uv` is the same quad, point-reflected (1,1) at top-left down
+    # to (0,0) at bottom-right) - background_texture is uploaded through
+    # the same 180-degree-flip convention as every other standalone
+    # texture (see graphics/gl33/texture.py's _create_standalone_texture),
+    # so sampling needs the reversed mapping the same way text.fbvert and
+    # core/files/loaders/font.py's _flip_uv work it out for MSDF glyphs -
+    # while the rounded-box SDF math must NOT be flipped, or its corners
+    # end up rotated 180 degrees from the styles that requested them.
+    if VERTEX_INDEX == 0:
+        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y, 0.0, 1.0)
+        uv = vec2(0.0, 0.0)
+        image_uv = vec2(1.0, 1.0)
     elif VERTEX_INDEX == 1:
-        VERTEX_POSITION = vec2(layout[0]+layout[2], layout[1])
-    
+        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y, 0.0, 1.0)
+        uv = vec2(1.0, 0.0)
+        image_uv = vec2(0.0, 1.0)
     elif VERTEX_INDEX == 2:
-        VERTEX_POSITION = vec2(layout[0], layout[1] + layout[3])
-    
-    elif VERTEX_INDEX == 3:
-        VERTEX_POSITION = vec2(layout[0] + layout[2], layout[1] + layout[3])
+        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y - screen_rect.w, 0.0, 1.0)
+        uv = vec2(0.0, 1.0)
+        image_uv = vec2(1.0, 0.0)
+    else:
+        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y - screen_rect.w, 0.0, 1.0)
+        uv = vec2(1.0, 1.0)
+        image_uv = vec2(0.0, 0.0)

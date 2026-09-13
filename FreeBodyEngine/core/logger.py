@@ -14,14 +14,26 @@ colors = {
 }
 
 def get_timestamp() -> str:
+    """Returns the current local time as "YYYY-MM-DD HH:MM:SS.mmm"."""
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 def print_colored(*text: str, color='reset'):
+    """Prints `text` (concatenated with no separator) wrapped in the ANSI
+    escape code for `color` (see `colors`)."""
     s = "".join(f"\033[{colors[color]}m{t}\033[0m" for t in text)
     print(s)
 
 class Logger(Service):
+    """The engine's central logging service (registered as "logger").
+    Keeps an in-memory history of every log/warning/error (capped at
+    `max_history_length`, oldest dropped first) and, once the "files"
+    service is available, also mirrors each entry as a line of
+    `user://log.jsonl`."""
+
     def __init__(self, max_history_length=10000):
+        """Sets up an empty log history, and reads the SUPRESS_ERRORS/
+        SUPRESS_WARNINGS/SUPRESS_LOGS flags to decide which message types
+        are silenced."""
         super().__init__('logger')
         self.history: list[dict] = []
         self.max_history_length = max_history_length
@@ -67,6 +79,8 @@ class Logger(Service):
             return log_entry["id"]
 
     def log(self, *msg, color: str = "reset"):
+        """Logs `msg` (joined with spaces) to the console in `color`, unless
+        DEBUG logs are suppressed. Returns the new entry's log id."""
         if not self.supress["DEBUG"]:
             full_msg = " ".join(str(m) for m in msg)
             log_id = self._store_log("DEBUG", full_msg)
@@ -74,22 +88,31 @@ class Logger(Service):
             return log_id
 
     def error(self, msg):
+        """Logs `msg` as an ERROR (printed in red) and records a stack
+        trace for it, unless errors are suppressed. Returns the new entry's
+        log id."""
         if not self.supress["ERROR"]:
             log_id = self._store_log("ERROR", msg)
             print_colored(f"ERROR [{log_id}]: {msg}", color="red")
             return log_id
 
     def warning(self, msg):
+        """Logs `msg` as a WARNING (printed in yellow) and records a stack
+        trace for it, unless warnings are suppressed. Returns the new
+        entry's log id."""
         if not self.supress["WARNING"]:
             log_id = self._store_log("WARNING", msg)
             print_colored(f"WARNING [{log_id}]: {msg}", color="yellow")
             return log_id
 
     def get_traceback(self, log_id: int):
+        """Returns the recorded stack trace for the ERROR/WARNING entry with
+        id `log_id`, or a "No log found" message if no entry has that id."""
         entry = next((e for e in self.history if e["id"] == log_id), None)
         if entry:
             return "".join(entry["traceback"] or [])
         return f"No log found for ID {log_id}"
 
     def get_history(self):
+        """Returns the whole in-memory log history, formatted one line per entry."""
         return "\n".join(f"[{e['timestamp']}] {e['type']} [{e['id']}]: {e['message']}" for e in self.history)

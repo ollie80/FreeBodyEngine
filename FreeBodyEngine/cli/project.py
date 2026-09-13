@@ -7,7 +7,12 @@ REGISTRY_DIR = os.path.join(os.path.expanduser("~"), "FreeBodyEngine")
 REGISTRY_PATH = os.path.join(REGISTRY_DIR, "projects.json")
 
 class ProjectRegistry:
+    """Tracks every FreeBody project the CLI knows about (id, name,
+    absolute path) in a single JSON file at `registry_path`. Entries whose
+    path no longer exists on disk are dropped automatically on load."""
     def __init__(self, registry_path=REGISTRY_PATH):
+        """Loads (creating if necessary) the registry file at
+        `registry_path`."""
         self.registry_path = registry_path
         os.makedirs(os.path.dirname(self.registry_path), exist_ok=True)
         self.projects = self._load()
@@ -35,6 +40,7 @@ class ProjectRegistry:
         return str(new_id)
     
     def project_exists(self, id: int):
+        """True if a project with this id is registered."""
         for project in self.projects:
             if project.get('id') == id:
                 return True  
@@ -42,12 +48,16 @@ class ProjectRegistry:
         return False
 
     def get_project_config(self, id: str):
-        path = self.get_project_path(id) 
+        """Reads and parses the given project's `fbproject.toml`."""
+        path = self.get_project_path(id)
         config_path = os.path.join(path, 'fbproject.toml')
         txt = open(config_path).read()
         return tomllib.loads(txt)
 
     def add_project(self, path: str, name: str):
+        """Registers a project at `path` under `name`, assigning it a new
+        id. A no-op if `path` (compared as an absolute path) is already
+        tracked."""
         path = os.path.abspath(path)
         if any(p['path'] == path for p in self.projects):
             return  # already tracked
@@ -56,30 +66,42 @@ class ProjectRegistry:
         self._save()
 
     def remove_project_by_id(self, proj_id: str):
+        """Removes the project with this id from the registry and persists
+        the change."""
         self.projects = [p for p in self.projects if p["id"] != proj_id]
         self._save()
 
     def list_projects(self):
+        """Returns a `"<id> - <name>: \"<path>\""` display line for every
+        registered project."""
         return [f'{p.get('id')} - {p.get('name')}: "{p.get('path')}"' for p in self.projects]
 
     def get_project_name(self, id: str):
+        """Returns the name of the project with this id, or None if no
+        project has that id."""
         for p in self.projects:
             if p.get('id') == id:
-                
+
                 return p.get('name')
 
     def get_project_path(self, id: int):
+        """Returns the absolute path of the project with this id, or None
+        if no project has that id."""
         for project in self.projects:
             if project.get('id') == id:
                 return project.get("path")
 
     def get_project_id(self, name: str):
+        """Returns the id of the project named `name` (case-insensitively),
+        or None if none matches."""
         for p in self.projects:
             if p["name"].lower() == name.lower():
                 return p["id"]
         return None
 
     def get_project_by_id(self, proj_id: str):
+        """Returns the full registry entry (`{"id", "name", "path"}`) for
+        this id, or None if it doesn't exist."""
         for p in self.projects:
             if p["id"] == proj_id:
                 return p

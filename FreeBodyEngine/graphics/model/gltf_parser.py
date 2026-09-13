@@ -10,6 +10,7 @@ from FreeBodyEngine.graphics.pbr.pipeline import PBRPipeline
 import numpy as np
 
 class GLBParser:
+    """Splits a `.glb` (binary glTF) blob into its JSON and binary chunks."""
     def __init__(self, data_bytes):
         "Parses .glb (glTF blob) files into its glTF + bin data."
         self.bytes = data_bytes
@@ -46,17 +47,27 @@ class GLBParser:
             self.bin_chunk = self.bytes[offset:offset+chunk_length]
 
     def get_json(self):
+        """Returns the parsed glTF JSON document."""
         return self.json_chunk
 
     def get_binary_buffer(self):
+        """Returns the raw BIN chunk bytes, or None if the file had none."""
         return self.bin_chunk
 
 class GLTFParser:
+    """Builds a Model from a parsed glTF JSON document plus its binary
+    buffer data. Legacy/dead code - not used anywhere in the engine; the
+    actively-used glTF loader is core/files/loaders/model.py."""
     def __init__(self, gltf_dict, bin_data):
+        """Stores the parsed glTF JSON (`gltf_dict`) and its binary buffer
+        (`bin_data`)."""
         self.gltf = gltf_dict
         self.bin_data = bin_data
 
     def get_accessor_data(self, accessor_index):
+        """Returns a flat list of per-element tuples decoded from the glTF
+        accessor at `accessor_index` (e.g. a VEC3 accessor yields a list of
+        3-float tuples)."""
         accessor = self.gltf["accessors"][accessor_index]
         buffer_view = self.gltf["bufferViews"][accessor["bufferView"]]
 
@@ -104,6 +115,8 @@ class GLTFParser:
         return values
     
     def get_model_index(self, name: str):
+        """Returns the index into `self.gltf['meshes']` of the mesh named
+        `name`, or None if no mesh has that name."""
         i = 0
         for model in self.gltf['meshes']:
             if model['name'] == name:
@@ -111,6 +124,10 @@ class GLTFParser:
             i += 1   
 
     def get_image_data(self, image_index):
+        """Returns the raw encoded bytes of image `image_index`, from
+        either the GLB BIN chunk or an embedded base64 `data:` URI - an
+        external (non-`data:`) URI raises NotImplementedError, since this
+        parser has no base path to resolve a sibling file against."""
         image = self.gltf['images'][image_index]
 
         if "bufferView" in image:
@@ -132,6 +149,11 @@ class GLTFParser:
             raise ValueError("Image has no bufferView or URI")
 
     def build_model(self, model_name: str, pipeline: GraphicsPipeline, renderer: Renderer, scale: tuple[int, int, int] = None) -> Model:
+        """Builds a single named mesh (`model_name`, or the glTF's first
+        mesh if None) into a Model, uploading every image in the file as a
+        standalone texture and every material as a real Material along the
+        way. Unlike core/files/loaders/model.py's build_model(), this
+        always builds exactly one mesh, not every mesh in the file."""
         if model_name is None:
             model_name = self.gltf['meshes'][0].get('name')
 

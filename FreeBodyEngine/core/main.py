@@ -9,7 +9,18 @@ import cProfile
 import pstats
 
 class Main:
+    """The engine's top-level singleton - owns global flags, timing, the
+    update-loop coordinator, and the service locator, and drives the main
+    loop via `run()`. Constructing one registers it as the module-level
+    "main object" (`FreeBodyEngine._set_main`), which is what
+    `fb.get_main()`/`fb.get_service()`/etc. all resolve against."""
+
     def __init__(self):
+        """Sets up flags (seeded from any `fb.set_flag()` calls made before
+        the engine existed), timing, the update coordinator, and the
+        service locator, and registers itself as the global `Main`
+        instance. Also wires the QUIT event to `self.quit`, so
+        `fb.fbquit()`/emitting QUIT stops the main loop."""
         from FreeBodyEngine import _set_main
         pre_flags = _get_pre_flags()
 
@@ -26,9 +37,14 @@ class Main:
 
 
     def quit(self):
+        """Stops the main loop after its current iteration finishes."""
         self.running = False
 
     def run(self):
+        """Runs the engine's main loop until `quit()` is called: advances
+        time and drives every registered update phase through
+        `self.updater` each iteration. Wraps each iteration in a `Profiler`
+        start/stop if the PROFILER flag is set."""
         if get_flag(PROFILER, False):
             profiler = Profiler() 
 

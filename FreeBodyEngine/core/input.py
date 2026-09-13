@@ -29,6 +29,7 @@ from FreeBodyEngine.core.service import Service
 
 
 class Key(Enum):
+    """Engine-level keyboard key identifiers, independent of any windowing backend - each backend (GLFW/X11/Wayland) translates its own native key codes to/from these values."""
     A = auto()
     B = auto()
     C = auto()
@@ -151,6 +152,7 @@ class Key(Enum):
 
 
 class GamepadButton(Enum):
+    """Engine-level gamepad button identifiers, independent of any windowing backend's native gamepad mapping."""
     A = auto()
     B = auto()
     X = auto()
@@ -171,6 +173,7 @@ class GamepadButton(Enum):
 
 
 class GamepadAxis(Enum):
+    """Engine-level gamepad analog axis identifiers (sticks and triggers), independent of any windowing backend's native gamepad mapping."""
     LEFT_X = auto()
     LEFT_Y = auto()
     RIGHT_X = auto()
@@ -304,6 +307,7 @@ CHARACTERSTRINGMAP = {
     "DPAD_UP": GamepadButton.DPAD_UP,
     "DPAD_RIGHT": GamepadButton.DPAD_RIGHT,
     "DPAD_DOWN": GamepadButton.DPAD_DOWN,
+    "DPAD_LEFT": GamepadButton.DPAD_LEFT,
     "GUIDE": GamepadButton.GUIDE,
     "AXIS_LEFT_X": GamepadAxis.LEFT_X,
     "AXIS_LEFT_Y": GamepadAxis.LEFT_Y,
@@ -315,18 +319,22 @@ CHARACTERSTRINGMAP = {
 
 
 class KeyCallbackType(Enum):
+    """Distinguishes the kind of key event being dispatched through Input._key_callback()."""
     PRESS = auto()
     RELEASE = auto()
     REPEAT = auto()
 
 
 class Gamepad:
+    """Represents a single connected gamepad, identified by its backend-assigned `id`."""
     def __init__(self, id: int, window: "Window"):
+        """Stores the gamepad's id and the window backend used to query its state."""
         self.id = id
         self.window = window
 
     def get_state(self):
-        return self.window.get_gamepad_state(self.id)
+        """Returns this gamepad's current button/axis state, as reported by the window backend."""
+        return self.window._get_gamepad_state(self.id)
 
 
 comparison_ops = {
@@ -341,29 +349,34 @@ comparison_ops = {
 
 @dataclass
 class ActionCheck:
+    """A comparison (`check_type`, e.g. ">") and threshold value (`val`) applied to a raw input's strength, letting an analog input (a gamepad axis/trigger) drive a digital or differently-thresholded action."""
     check_type: str
     val: str
 
 
 class Action:
+    """A single physical input (key/button/axis) bound to an action, with an optional threshold check - an action fires if any one of its bound Actions passes its check."""
     def __init__(
         self, input: Union[Key, GamepadAxis, GamepadButton], check: ActionCheck = None
     ):
+        """Binds `input` to this action, optionally gated by `check` (no check means "pressed" is just `value > 0`)."""
         self.input = input
         self.check = check
 
     def check_val(self, val: float) -> bool:
+        """Tests a raw input value against this binding's check, defaulting to "greater than zero" (a digital press) if no check was given."""
         if self.check == None:
-            if val > 0.0:
-                return True
-            else:
-                return False
+            return val > 0.0
         else:
-            comparison_ops[self.check.check_type](val, self.check.val)
+            return comparison_ops[self.check.check_type](val, float(self.check.val))
 
+    def __str__(self):
+        return f"ACTION {self.input}" if self.check == None else f"ACTION {self.input} {self.check.check_type} {self.check.val}"
 
 class Input(Service):
+    """Central input service - polls the window backend every frame and turns raw key/gamepad state into named, engine-defined actions (each action can be bound to several physical inputs via `actions`)."""
     def __init__(self, actions: dict[str, list[Action]] = {}):
+        """Stores the action bindings and sets up empty pressed/released tracking state."""
         super().__init__("input")
         self.dependencies.append("window")
 
@@ -375,39 +388,48 @@ class Input(Service):
         self.gamepads = {}
 
     def on_initialize(self):
+        """Registers update() to run every frame's EARLY phase and grabs the 'window' service ('window' is a declared dependency, so it's guaranteed to already be registered)."""
         register_service_update(UpdatePhase.EARLY, self.update)
         self.window = get_service("window")
 
     def on_destroy(self):
+        """Unregisters update() from the EARLY update phase."""
         unregister_service_update(UpdatePhase.EARLY, self.update)
 
     def set_actions(self, actions: dict[str, list[Action]]):
+        """Replaces the entire action-bindings dict."""
         self.actions = actions
 
     def bind_action(self, name: str, inputs: list[Key]):
+        """Intended to add extra input bindings to an existing action at runtime - not yet implemented."""
         pass
 
     def reset(self):
+        """Called at the start of each poll: carries this frame's still-pressed actions into `released` (so a released action reads True for exactly one frame), then clears `pressed`/`pressed_set` for update() to repopulate."""
+        self.released = self.pressed_set.copy()
         self.pressed = {}
-        self.pressed_set = set(self.pressed.keys())
-        self.released = set()
+        self.pressed_set = set()
 
     def action_exists(self, name) -> bool:
+        """Checks whether `name` is a registered action."""
         return name in self.actions.keys()
 
     def get_action_pressed(self, name) -> bool:
+        """Returns whether `name` is currently pressed (held down this frame); warns and returns None if `name` isn't a registered action."""
         if self.action_exists(name):
             return name in self.pressed_set
         else:
             warning(f'Action with name "{name}" does not exist.')
 
     def get_action_strength(self, name):
+        """Returns `name`'s current analog strength (the highest check-passing value among its bound inputs this frame); warns and returns None if `name` isn't a registered action."""
         if self.action_exists(name):
             return self.pressed[name]
         else:
             warning(f'Action with name "{name}" does not exist.')
 
     def get_action_released(self, name) -> bool:
+        """Returns whether `name` was released this frame (it was pressed as of the last poll, but isn't anymore); warns and returns None if `name` isn't a registered action."""
         if self.action_exists(name):
             return name in self.released
         else:
@@ -417,7 +439,7 @@ class Input(Service):
         """Get a vector from the strengths of 4 actions."""
         x = self.get_action_strength(pos_x) - self.get_action_strength(neg_x)
         y = self.get_action_strength(pos_y) - self.get_action_strength(neg_y)
-
+        
         return Vector(x, y)
 
     def _key_callback(self, key: Key, type: KeyCallbackType):
@@ -429,31 +451,66 @@ class Input(Service):
             emit_event(KEY_REPEAT, key)
 
     def update(self):
+        """Polls the window backend's key and gamepad state and recomputes every registered action's pressed/strength state for this frame.
+
+        Each distinct physical input is only read from the backend once per
+        frame (cached in `input_vals`), even if several actions share it, so
+        a key/axis bound to multiple actions doesn't get polled redundantly.
+        """
         self.reset()
         input_vals = {}
+
+        gamepad_state = self.window._get_gamepad_state(0)
+
         for name in self.actions:
             highest = 0.0
             pressed = False
+
             for action in self.actions[name]:
                 if action.input not in input_vals:
-                    input_vals[action.input] = self.window._get_key_down(action.input)
-                if input_vals[action.input] > highest:
-                    highest = input_vals[action.input]
-                if pressed == False:
-                    pressed = action.check_val(input_vals[action.input])
+                    if isinstance(action.input, Key):
+                        input_vals[action.input] = self.window._get_key_down(action.input)
+                    else:
+                        input_vals[action.input] = gamepad_state[action.input]
+
+                val = input_vals[action.input]
+
+                if action.check_val(val):
+                    pressed = True
+
+                    if action.check == None:
+                        strength = val
+                    else:
+                        if action.check.check_type in ("<", "<="):
+                            strength = -val
+                        else:
+                            strength = val
+
+                    if strength > highest:
+                        highest = strength
+
             self.pressed[name] = highest
             if pressed:
                 self.pressed_set.add(name)
 
     @classmethod
     def parse_actions(self, source: dict[str, list[str]]):
+        """Parses an `actions.toml`-style config (`{action_name: ["INPUT_NAME", "INPUT_NAME OP VAL", ...]}`) into the `dict[str, list[Action]]` form `Input` uses at runtime.
+
+        Each input string is an input name (a key from CHARACTERSTRINGMAP)
+        optionally followed by a comparison operator and threshold value,
+        e.g. `"AXIS_LEFT_X > 0.5"` for a thresholded gamepad axis, or
+        `"SPACE"` alone for a plain digital press.
+
+        Raises:
+            ValueError: If an input string doesn't match the expected format.
+        """
         actions = {}
         for action in source:
             inputs = []
             for input in source[action]:
                 match = re.match(
-                    r"^([A-Z0-9_]+)\s*([<>=!]+)?\s*([-\d\.]+)?$", input.strip()
-                )
+                    r"^([A-Z0-9_]+)\s*([<>=!]+)?\s*([-\d\.]+)?$", input.strip())
                 if not match:
                     raise ValueError(f"Invalid input string format: {input}")
 
@@ -472,14 +529,17 @@ class Input(Service):
 
 
 def get_action_pressed(name: str) -> bool:
+    """Returns whether the action `name` is currently pressed."""
     return get_service("input").get_action_pressed(name)
 
 
 def get_action_strength(name: str) -> float:
+    """Returns the action `name`'s current analog strength."""
     return get_service("input").get_action_strength(name)
 
 
 def get_action_released(name: str) -> bool:
+    """Returns whether the action `name` was released this frame."""
     return get_service("input").get_action_released(name)
 
 

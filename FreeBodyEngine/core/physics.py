@@ -25,6 +25,7 @@ class PhysicsBody(Node2D):
     :type friction: float
     """
     def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1), mass: int = 1, velocity: Vector = Vector(0, 0), rotational_velocity: float = 0.0, friction: float = 0.98):
+        """Sets up the body's starting motion state and requires a sibling Collider2D (declared in `self.requirements`) for collision checks."""
         super().__init__(position, rotation, scale)
         self.vel = velocity
         self.rot_vel = rotational_velocity
@@ -67,7 +68,22 @@ class PhysicsBody(Node2D):
         a = collider.collision_shape
         b = other.collision_shape
 
+        # Both bodies in a colliding pair run this independently (once from
+        # each side's own _check_collisions()) - without splitting the
+        # correction, each would push itself out by the FULL overlap as if
+        # the other were stationary, so together they'd move twice as far
+        # as needed and overshoot into a new overlap the opposite way next
+        # tick, oscillating every frame (visible as jitter). Weighting by
+        # the other body's share of the combined mass makes the two
+        # corrections sum to exactly the needed separation, while a
+        # non-PhysicsBody collider (e.g. static level geometry, no `mass`
+        # to weigh against) still gets the entire correction pushed onto
+        # the dynamic side, as before.
+        other_mass = getattr(other.parent, 'mass', None)
+        correction_share = 1.0 if other_mass is None else other_mass / (self.mass + other_mass)
+
         def apply_mtv(mtv: Vector, contact_point: Vector):
+            mtv = mtv * correction_share
             self.world_transform.position += mtv
 
             if self.vel.dot(mtv) < 0:
@@ -136,6 +152,7 @@ class PhysicsBody(Node2D):
                 apply_mtv(mtv, contact_point)
 
     def on_collision(self, collider: Collider2D, other: Collider2D):
+        """Called after a collision with `other` has been resolved - override to react to collisions (e.g. play a sound, take damage)."""
         pass
 
     def apply_force(self, force: Vector):
@@ -148,12 +165,15 @@ class PhysicsBody(Node2D):
         self.forces += force
 
     def apply_acceleration(self, acceleration: Vector):
+        """Applies a mass-independent acceleration to the body (unlike apply_force(), this isn't divided by mass during integration)."""
         self.accumulated_acceleration += acceleration
 
     def apply_rotation_force(self, force: float):
+        """Applies a rotational force (torque) to the body."""
         self.rot_forces += force
-    
+
 
     def on_physics_process(self):
+        """Called once per physics step - override to run custom per-step physics logic."""
         pass
     

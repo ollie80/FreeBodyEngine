@@ -1,8 +1,8 @@
-from FreeBodyEngine.core.window import Window, Cursor, WINDOW_RESIZE
+from FreeBodyEngine.core.window import Window, Cursor, WINDOW_RESIZE, FRAMEBUFFER_RESIZE 
 from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.utils import abstractmethod
 from typing import TYPE_CHECKING
-from FreeBodyEngine.core.input import Key, KeyCallbackType
+from FreeBodyEngine.core.input import Key, KeyCallbackType, GamepadButton, GamepadAxis
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine.core.camera import Camera
 from FreeBodyEngine import emit_event
@@ -143,14 +143,23 @@ GLFW_CHARACTER_MAP = {
 }
 
 class GLFWWindow(Window):
+    """Window backend built on GLFW, the engine's cross-platform fallback.
+
+    Used whenever a native backend (X11/Wayland/Win32) isn't selected or
+    available - GLFW handles window creation, the OpenGL context, and input
+    polling itself, so this class is mostly a thin translation layer between
+    GLFW's API and the engine's Window/Mouse contracts.
+    """
     def __init__(self, size: tuple[int, int], title: str):
+        """Initializes GLFW, creates the window and its OpenGL 4.3 core context, and makes it current."""
         super().__init__(size, title)
         self.window_type = 'glfw'
-        
-        
+
+
         if not glfw.init():
             raise RuntimeError("GLFW failed to initialize")
-        
+        glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)
+        glfw.window_hint(glfw.SCALE_FRAMEBUFFER, glfw.TRUE)
         glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
         glfw.window_hint(glfw.POSITION_X, 200)
         glfw.window_hint(glfw.POSITION_Y, 200)
@@ -174,35 +183,104 @@ class GLFWWindow(Window):
         get_service('input')._key_callback(input_key, key_type)
 
     def set_title(self, new_title):
+        """Sets the OS-level window title."""
         glfw.set_window_title(self._window, new_title)
 
     @property
     def size(self) -> tuple[int, int]:
+        """The window's client area size, in pixels, as reported by GLFW."""
         return glfw.get_window_size(self._window)
 
+    @property
+    def framebuffer_size(self) -> tuple[int, int]:
+        """The size, in pixels, of the GL framebuffer (may differ from `size` under display scaling)."""
+        return glfw.get_framebuffer_size(self._window)
+
     def resize(self, window, width, height):
+        """GLFW window-size callback - fires WINDOW_RESIZE/FRAMEBUFFER_RESIZE for both programmatic and user-driven resizes."""
         emit_event(WINDOW_RESIZE, (width, height))
+        emit_event(FRAMEBUFFER_RESIZE, self.framebuffer_size)
+
 
     @size.setter
     def size(self, new: tuple[int, int]):
+        """Resizes the window's client area to `new` (width, height), in pixels."""
         glfw.set_window_size(self._window, new[0], new[1])
+
 
     @property
     def position(self) -> tuple[int, int]:
+        """The window's position on screen, in pixels, as (x, y)."""
         return glfw.get_window_pos(self._window)
 
     @position.setter
     def position(self, new: tuple[int, int]):
+        """Moves the window to `new` (x, y), in pixels."""
         glfw.set_window_pos(self._window, new[0], new[1])
 
     def is_ready(self) -> bool:
+        """True as long as GLFW hasn't been told to close this window."""
         return not glfw.window_should_close(self._window)
 
     def _get_key_down(self, key: Key):
         return 0.0 if glfw.get_key(self._window, GLFW_CHARACTER_MAP[key]) == glfw.RELEASE else 1.0
 
     def _get_gamepad_state(self, gamepad: int):
-        pass
+        if not glfw.joystick_is_gamepad(gamepad):
+            return {
+                button: 0.0 for button in GamepadButton
+            } | {
+                axis: 0.0 for axis in GamepadAxis
+            }
+
+        state = {
+            button: 0.0 for button in GamepadButton
+        } | {
+            axis: 0.0 for axis in GamepadAxis
+        }
+
+        gamepad_state = glfw.get_gamepad_state(gamepad)
+
+        if gamepad_state is None:
+            return state
+
+        button_map = {
+            GamepadButton.A: glfw.GAMEPAD_BUTTON_A,
+            GamepadButton.B: glfw.GAMEPAD_BUTTON_B,
+            GamepadButton.X: glfw.GAMEPAD_BUTTON_X,
+            GamepadButton.Y: glfw.GAMEPAD_BUTTON_Y,
+            GamepadButton.LB: glfw.GAMEPAD_BUTTON_LEFT_BUMPER,
+            GamepadButton.RB: glfw.GAMEPAD_BUTTON_RIGHT_BUMPER,
+            GamepadButton.LS_DOWN: glfw.GAMEPAD_BUTTON_LEFT_THUMB,
+            GamepadButton.RS_DOWN: glfw.GAMEPAD_BUTTON_RIGHT_THUMB,
+            GamepadButton.GUIDE: glfw.GAMEPAD_BUTTON_GUIDE,
+            GamepadButton.DPAD_UP: glfw.GAMEPAD_BUTTON_DPAD_UP,
+            GamepadButton.DPAD_RIGHT: glfw.GAMEPAD_BUTTON_DPAD_RIGHT,
+            GamepadButton.DPAD_DOWN: glfw.GAMEPAD_BUTTON_DPAD_DOWN,
+            GamepadButton.DPAD_LEFT: glfw.GAMEPAD_BUTTON_DPAD_LEFT,
+        }
+
+        for button, glfw_button in button_map.items():
+            state[button] = float(
+                gamepad_state.buttons[glfw_button]
+            )
+
+        axis_map = {
+            GamepadAxis.LEFT_X: glfw.GAMEPAD_AXIS_LEFT_X,
+            GamepadAxis.LEFT_Y: glfw.GAMEPAD_AXIS_LEFT_Y,
+            GamepadAxis.RIGHT_X: glfw.GAMEPAD_AXIS_RIGHT_X,
+            GamepadAxis.RIGHT_Y: glfw.GAMEPAD_AXIS_RIGHT_Y,
+            GamepadAxis.LEFT_TRIGGER: glfw.GAMEPAD_AXIS_LEFT_TRIGGER,
+            GamepadAxis.RIGHT_TRIGGER: glfw.GAMEPAD_AXIS_RIGHT_TRIGGER,
+        }
+
+        for axis, glfw_axis in axis_map.items():
+            state[axis] = float(
+                gamepad_state.axes[glfw_axis]
+            )
+
+        return state 
+         
 
     def _create_cursor(self, image: 'Image'):
         pass
@@ -211,21 +289,25 @@ class GLFWWindow(Window):
         pass
 
     def create_mouse(self):
+        """Creates and returns this window's GLFWMouse."""
         return GLFWMouse(self)
 
     def close(self):
+        """Flags the GLFW window to close, destroys it, terminates GLFW, and emits QUIT."""
         glfw.set_window_should_close(self._window, True)
         glfw.destroy_window(self._window)
         glfw.terminate()
         emit_event(QUIT)
 
     def draw(self):
+        """Swaps the GLFW window's front/back buffers to present the frame."""
         glfw.swap_buffers(self._window)
 
     def update(self):
+        """Polls GLFW events for this frame and quits the engine once the window is told to close."""
         glfw.poll_events()
         if glfw.window_should_close(self._window):
-            
+
             get_main().quit()
 
 glfw_mouse_button_map = {
@@ -240,7 +322,9 @@ glfw_mouse_button_map = {
 }
 
 class GLFWMouse(Mouse):
+    """Mouse implementation for the GLFW backend - polls button/position state from GLFW each frame."""
     def __init__(self, window: GLFWWindow):
+        """Sets up per-button state tracking for `window`."""
         super().__init__()
         self.window = window
         self._pressed = [False] * 8
@@ -252,18 +336,23 @@ class GLFWMouse(Mouse):
         self.drag_threshold = 0.2
 
     def get_pressed(self, button: int):
+        """True on the frame `button` was pressed."""
         return self._pressed[button]
 
     def get_released(self, button: int):
+        """True on the frame `button` was released."""
         return self._released[button]
 
     def get_down(self, button: int):
+        """True for as long as `button` is held down."""
         return self._down[button]
-    
+
     def get_double_click(self, button: int):
+        """True on the frame `button` was pressed as part of a double-click."""
         return self._double_clicked[button]
 
     def update(self):
+        """Polls GLFW's cursor/button state for this frame and updates screen and world-space position, click and drag state."""
         self.position = Vector(glfw.get_cursor_pos(self.window._window))
         scene = get_service('scene_manager').get_active()
         
@@ -309,6 +398,53 @@ class GLFWMouse(Mouse):
             self._pressed[i] = pressed
 
             self._released[i] = released
+
+
+_raw_offscreen_window = None  # kept alive so GLFW doesn't tear the context down under us
+
+
+def create_raw_offscreen_context():
+    """A bare GLFW-backed OpenGL context with *no* Window/Service wrapper
+    around it at all - not a GLFWWindow, not registered as the 'window'
+    service, no input/event pump, nothing. Used by
+    graphics.ensure_gpu_context() for a genuinely headless compute-only
+    session: "headless" means no window service running at all, not a
+    window service that merely happens to be invisible.
+
+    Safe to call repeatedly - the same context is reused (and made current
+    again, in case something else changed the current context on this
+    thread since) rather than creating a new one each time.
+    """
+    global _raw_offscreen_window
+
+    if _raw_offscreen_window is not None:
+        glfw.make_context_current(_raw_offscreen_window)
+        return _raw_offscreen_window
+
+    if not glfw.init():
+        raise RuntimeError("GLFW failed to initialize")
+
+    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
+    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+
+    window = glfw.create_window(1, 1, "", None, None)
+    if not window:
+        glfw.terminate()
+        raise RuntimeError("Failed to create an offscreen OpenGL context")
+
+    glfw.make_context_current(window)
+    _raw_offscreen_window = window
+    return window
+
+
+def destroy_raw_offscreen_context():
+    """Destroys the shared offscreen context created by create_raw_offscreen_context(), if one exists."""
+    global _raw_offscreen_window
+    if _raw_offscreen_window is not None:
+        glfw.destroy_window(_raw_offscreen_window)
+        _raw_offscreen_window = None
             
         
         

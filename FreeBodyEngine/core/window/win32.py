@@ -29,6 +29,7 @@ class Win32Cursor(Cursor):
     The Win32 implementation of the cursor class. Converts image into .cur file format and sets up for use with Win32.
     """
     def __init__(self, image: 'Image'):
+        """Builds a Win32 HCURSOR from `image`'s PIL image via build_cursor_from_pil()."""
         self.image = image
         self.handle = build_cursor_from_pil(self.image._image)
 
@@ -37,6 +38,13 @@ class Win32Window(Window):
     The Win32 implmentation of the window class. Supports both OpenGL and Vulkan renderers.
     """
     def __init__(self, size: tuple[int, int], title):
+        """Registers a Win32 window class and creates the window, marking the process DPI-aware first.
+
+        DPI awareness is set via SetProcessDpiAwareness (falling back to the
+        older SetProcessDPIAware if that API isn't available) before window
+        creation, since Windows decides scaling behavior for a window based
+        on the process's DPI-awareness state at creation time.
+        """
         super().__init__(size, title)
         self.window_type = 'win32'
 
@@ -72,6 +80,7 @@ class Win32Window(Window):
     
 
     def wnd_proc(self, hwnd, msg, wparam, lparam):
+        """The window's WNDPROC - handles WM_DESTROY (closes the window), WM_PAINT (marks the window ready) and WM_SIZE (emits WINDOW_RESIZE), passing everything else to DefWindowProc."""
         if msg == win32con.WM_DESTROY:
             win32gui.PostQuitMessage(0)
             self.close()
@@ -99,45 +108,54 @@ class Win32Window(Window):
         return Win32Cursor(image)
 
     def is_ready(self):
+        """True once the window has received its first WM_PAINT."""
         return self._is_ready
 
     @property
     def size(self):
+        """The window's size, in pixels, as (right, bottom) of its window rect."""
         rect = win32gui.GetWindowRect(self._window)
         return (rect[2], rect[3])
-    
+
     @size.setter
     def size(self, new: tuple[int, int]):
-        
+        """Resizes the window to `new` (width, height), in pixels, keeping its current top-left position."""
+
         rect = win32gui.GetWindowRect(self._window)
-        
+
         win32gui.MoveWindow(self._window, rect[0], rect[1], *new, True)
 
     def create_mouse(self):
+        """Not yet implemented - returns a bare `Service('mouse')` placeholder rather than a working Mouse."""
         return Service('mouse')
 
     @property
     def position(self) -> tuple[int, int]:
+        """The window's position on screen, in pixels."""
         rect = win32gui.GetWindowRect(self._window)
         return (rect[0], rect[0])
-    
+
     @property
     def position(self, new: tuple[int, int]):
+        """Moves the window to `new` (x, y), in pixels, keeping its current size."""
         rect = win32gui.GetWindowRect(self._window)
         win32gui.MoveWindow(self._window, rect[0], rect[1], *new, True)
-        
+
     def _get_key_down(self, key):
         return False
 
     def close(self):
+        """Releases the window's device context and destroys the window."""
         win32gui.ReleaseDC(self._window, self.hdc)
         win32gui.DestroyWindow(self._window)
         self.main.quit()
 
     def draw(self):
+        """Swaps the window's GDI buffers to present the frame."""
         ctypes.windll.gdi32.SwapBuffers(self.hdc)
 
     def update(self):
+        """Closes the window if its native handle has become invalid, then pumps any waiting Win32 messages."""
         exists = win32gui.IsWindow(self._window)
 
         if not exists:

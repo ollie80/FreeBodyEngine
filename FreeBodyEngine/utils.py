@@ -1,17 +1,24 @@
 from FreeBodyEngine import get_main, warning, get_flag, get_service
 from typing import Literal, overload
 
-def abstractmethod(func):
-    def wrapper(*args, **kwargs):
-        cls_name = args[0].__class__.__name__
-        raise NotImplementedError(f"Method '{func.__name__}' is not implemented on '{cls_name}'.")
-    return wrapper
-
 def get_platform() -> Literal['win32','darwin','linux']:
+    """Returns the identifier for the current host platform, or None if it
+    isn't one of the three recognized here (other platforms - e.g. mobile,
+    console - aren't handled yet)."""
     sys_plat = sys.platform
     if sys_plat in ['win32', 'darwin', 'linux']:
         return sys_plat
     # handle stuff like android, IOs, console
+
+def abstractmethod(func):
+    """Decorator marking a method as abstract: the decorated method always
+    raises `NotImplementedError` when called, naming both the method and
+    the instance's class - `func`'s own body is never executed, regardless
+    of what it contains."""
+    def wrapper(*args, **kwargs):
+        cls_name = args[0].__class__.__name__
+        raise NotImplementedError(f"Method '{func.__name__}' is not implemented on '{cls_name}'.")
+    return wrapper
 
 import sys
 import os
@@ -19,6 +26,16 @@ import platform
 from pathlib import Path
 
 def load_dlls():
+    """Locates this engine's bundled native library directory for the
+    current platform/architecture (under `sys._MEIPASS` when running as a
+    PyInstaller-frozen build, else next to the installed package) and adds
+    it to the OS's dynamic library search path (`os.add_dll_directory` on
+    Windows, `DYLD_LIBRARY_PATH` on macOS, `LD_LIBRARY_PATH` on Linux).
+    Returns the resolved directory.
+
+    Raises:
+        RuntimeError: if the host platform isn't win32/darwin/linux.
+        FileNotFoundError: if the expected library directory doesn't exist."""
     system = sys.platform
     arch = platform.machine()
 
@@ -101,7 +118,7 @@ def add(node: 'Node'):
 @overload
 def add(element: UIElement):
     """
-    Add a ui element to the root node in the ui manager.
+    Adds a ui element to the root node in the ui manager.
     """
     pass
 

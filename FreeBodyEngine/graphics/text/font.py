@@ -1,76 +1,56 @@
-import pygame
-import moderngl
+"""Runtime representation of a loaded `.fbfont` (an MSDF atlas + its
+per-glyph metrics/UVs) - see font/atlasgen.py for how these are generated
+and core/files/loaders/font.py for how this gets constructed from a loaded
+file. This replaces the previous version of this file, which targeted
+pygame+moderngl (dead code, imported nowhere) and parsed a JSON schema the
+engine's own generator never actually produced.
+"""
+from typing import TYPE_CHECKING
 
-import FreeBodyEngine as engine
-
-import numpy as np
-import json
-
-from pygame.locals import DOUBLEBUF, OPENGL
-from pygame import Vector2 as vector
-from dataclasses import dataclass
-from pathlib import Path
+if TYPE_CHECKING:
+    from FreeBodyEngine.graphics.texture import Texture
 
 
-@dataclass
-class Character:
-    uv_min: vector
-    uv_max: vector
-    size: vector
-    bearing: vector
-    advance: float
+class Glyph:
+    """One character's metrics and atlas location within a Font."""
+    __slots__ = ("advance", "plane_bounds", "uv_bounds")
 
-@dataclass
+    def __init__(self, advance: float, plane_bounds: tuple[float, float, float, float], uv_bounds: tuple[float, float, float, float]):
+        """Stores this glyph's advance width plus its already-computed
+        plane/UV bounds - see the attribute comments below for exactly what
+        each represents."""
+        self.advance = advance
+        # (left, bottom, right, top), em-relative, standard Y-up convention -
+        # where a glyph's quad should be positioned relative to the pen.
+        self.plane_bounds = plane_bounds
+        # (u0, v0, u1, v1) in the *actual uploaded texture's* UV space
+        # (already accounts for _create_standalone_texture's 180-degree
+        # flip - see core/files/loaders/font.py) - where to sample the atlas.
+        self.uv_bounds = uv_bounds
+
+
 class Font:
-    tex: moderngl.Texture
-    chars: dict[str, Character]
-    pxrange: int
+    """A ready-to-render MSDF font: an atlas Texture plus, per Unicode
+    codepoint, the Glyph describing where in it and how to draw that
+    character."""
+    def __init__(self, texture: 'Texture', glyphs: dict[int, Glyph], distance_range: float,
+                 atlas_em_size: float, ascender: float, descender: float, line_height: float):
+        """Stores the given atlas/glyphs/metrics directly - see the
+        attribute comments below for what each metric means."""
+        self.texture = texture
+        self.glyphs = glyphs
+        # `distance_range` is in atlas texels, relative to `atlas_em_size`
+        # (the pixels-per-em the atlas was generated at) - a renderer needs
+        # both to compute the correct on-screen AA scale (px_range) at
+        # whatever em-size text is actually drawn at, which is virtually
+        # never the same size the atlas happened to be generated at.
+        self.distance_range = distance_range
+        self.atlas_em_size = atlas_em_size
+        self.ascender = ascender
+        self.descender = descender
+        self.line_height = line_height
 
-def create_msdf_font(ctx, image_path: str, data_path: str):
-    chars = {}
-    image = pygame.image.load(image_path).convert_alpha()
-    atlas_width, atlas_height = image.get_size()
-    image_data = pygame.image.tostring(image, "RGBA", 1)
-    tex = ctx.texture((atlas_width, atlas_height), 4, image_data)
-    tex.repeat_x = False
-    tex.repeat_y = False
-    tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
-
-    with open(data_path, 'r') as f:
-        data = json.load(f)
-
-    for glyph in data["glyphs"]:
-        codepoint = glyph["unicode"]
-        char = chr(codepoint)
-        advance = glyph.get("advance", 0.0)
-
-        if "planeBounds" not in glyph or "atlasBounds" not in glyph:
-            if char == " ":
-                chars[char] = Character(
-                    uv_min=vector(0, 0),
-                    uv_max=vector(0, 0),
-                    size=vector(0, 0),
-                    bearing=vector(0, 0),
-                    advance=advance
-                )
-            else:
-                print(f"[!] Skipping unsupported or control character: U+{codepoint:04X} ({repr(char)})")
-            continue
-
-        pb = glyph["planeBounds"]
-        ab = glyph["atlasBounds"]
-
-        size = vector(pb["right"] - pb["left"], pb["top"] - pb["bottom"])
-        bearing = vector(pb["left"], pb["bottom"])
-        uv_min = vector(ab["left"] / atlas_width, ab["bottom"] / atlas_height)
-        uv_max = vector(ab["right"] / atlas_width, ab["top"] / atlas_height)
-
-        chars[char] = Character(
-            uv_min=uv_min,
-            uv_max=uv_max,
-            size=size,
-            bearing=bearing,
-            advance=advance
-        )
-
-    return Font(tex, chars, data["atlas"]["distanceRange"])
+    def get_glyph(self, codepoint: int) -> Glyph | None:
+        """Returns the Glyph for `codepoint` (a Unicode code point, e.g.
+        `ord(ch)`), or None if this font has no glyph for it."""
+        return self.glyphs.get(codepoint)

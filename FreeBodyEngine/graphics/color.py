@@ -1,6 +1,14 @@
 
 class Color:
+    """An RGB(A) color, normalized internally to `float_normalized_a` (four
+    floats in 0-1) regardless of how it was constructed - accepts a hex
+    string, a 0-255 int tuple/list, or an already-normalized float tuple/
+    list, and exposes all of those representations back out via its
+    properties."""
     def __init__(self, value: str | tuple | list):
+        """Parses `value` (a `#RRGGBB(AA)` hex string, a 3/4-length int
+        tuple/list in 0-255, or a 3/4-length float tuple/list already in
+        0-1) into `float_normalized_a`."""
         if isinstance(value, (tuple, list)):
             if isinstance(value[0], float):
                 if len(value) == 3:
@@ -77,10 +85,14 @@ class Color:
 
     @hex.setter
     def hex(self, new):
+        """Reassigns this color from a new hex string."""
         self.float_normalized_a = self._hex_to_fn(new)
 
     @rgb.setter
     def rgb(self, new):
+        """Reassigns this color from a new 3/4-length 0-255 int tuple/list -
+        a 3-length value resets alpha to fully opaque rather than preserving
+        whatever alpha this color had before (see `_rgb_to_fn`)."""
         self.float_normalized_a = self._rgb_to_fn(new)
 
     @property

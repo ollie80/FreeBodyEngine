@@ -4,6 +4,12 @@ import curses
 import os
 
 def fulcrum_editor(stdscr, filepath):
+    """Runs a minimal curses-based line editor on `filepath` inside
+    `stdscr`: arrow keys to move the cursor, Enter to split a line,
+    Backspace to merge lines, Ctrl+S to save, Ctrl+C to quit. Loads the
+    file's existing contents up front (starting from a single empty line if
+    it doesn't exist yet, or is empty) and writes them back out verbatim,
+    newline-joined, on save."""
     curses.curs_set(1)
     stdscr.clear()
     max_y, max_x = stdscr.getmaxyx()
@@ -107,6 +113,9 @@ def fulcrum_editor(stdscr, filepath):
     stdscr.clear()
 
 def fulcrum_handler(env, args):
+    """`fb fulcrum` handler: opens `args[0]` (relative to `env.path`) in
+    the curses editor, swallowing Ctrl+C so quitting doesn't surface as a
+    CLI traceback."""
     if len(args) > 0:
         path = os.path.join(env.path, args[0])
         try:

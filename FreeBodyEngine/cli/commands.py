@@ -19,7 +19,14 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 class Environment:
+    """The CLI's current working context: an on-disk path and, if that path
+    (or a given `project_id`) resolves to a registered project, that
+    project's id/path too. Also owns the file-watcher used while inside
+    `fb enter`."""
     def __init__(self, path=None, project_id=None):
+        """Resolves the project from `project_id` or `path`, in that order
+        of precedence, falling back to the current working directory if
+        neither is given."""
         self.project_id = project_id
         self.project_path = None
         self.observer = None
@@ -46,6 +53,9 @@ class Environment:
                 self.project_path = self.project_registry.get_project_path(project_id)
 
     def detect_project(self):
+        """Returns the registry id of the project rooted at `self.path`, or
+        None if there's no `fbproject.toml` there or it doesn't match a
+        registered project name."""
         config_path = os.path.join(self.path, "fbproject.toml")
         if os.path.exists(config_path):
             try:
@@ -60,6 +70,9 @@ class Environment:
         return None
 
     def start(self):
+        """Starts watching the detected project directory for file changes,
+        dispatching each one to `on_file_change`. No-op if no project was
+        detected."""
         self.running = True
         if self.project_path:
             self.observer = Observer()
@@ -68,6 +81,7 @@ class Environment:
             self.observer.start()
 
     def stop(self):
+        """Stops the file watcher started by `start()`, if one is running."""
         self.running = False
         if self.observer:
             self.observer.stop()
@@ -75,36 +89,56 @@ class Environment:
             self.observer = None
 
     def on_file_change(self, path):
+        """Called by the file watcher for every modified file; currently
+        just logs the change to stdout."""
         print(f"[env] File changed: {path}")
-    
+
     def reload_registry(self):
+        """Re-reads the project registry from disk, picking up projects
+        added or removed since this Environment was created."""
         self.project_registry = ProjectRegistry()
 
 class FileChangeHandler(FileSystemEventHandler):
+    """watchdog handler that forwards modified-file events to the owning
+    `Environment`."""
     def __init__(self, env):
+        """Stores the `Environment` to notify on a change."""
         self.env = env
 
     def on_modified(self, event):
+        """Forwards the event to `env.on_file_change()`, ignoring
+        directory-level events."""
         if not event.is_directory:
             self.env.on_file_change(event.src_path)
 
 class Command:
+    """One CLI command or subcommand: a set of name aliases, an optional
+    `handler` invoked as `handler(env, args)`, and/or nested
+    `subcommands`."""
     def __init__(self, names, handler=None, subcommands=None, help_text=""):
+        """Stores the command's aliases, handler, subcommands and help
+        text."""
         self.names = names
         self.handler = handler
         self.subcommands = subcommands or []
         self.help_text = help_text
 
     def matches(self, name):
+        """True if `name` is one of this command's aliases."""
         return name in self.names
 
     def find_subcommand(self, name):
+        """Returns the subcommand matching `name`, or None if there isn't
+        one."""
         for cmd in self.subcommands:
             if cmd.matches(name):
                 return cmd
         return None
 
     def print_help(self, path=[]):
+        """Prints this command's usage line, description and (if any) its
+        subcommands. `path` is the chain of parent command names, used to
+        build the usage line for a nested command."""
         command_path = " ".join(path + [self.names[0]])
         print(f"Usage: fb {command_path} [subcommand] [args]" if self.subcommands else f"Usage: fb {command_path} [args]")
         print(f"Description: {self.help_text}")
@@ -114,6 +148,8 @@ class Command:
                 print(f"  {cmd.names[0]:10} - {cmd.help_text}")
 
 def build_handler(env, args):
+    """`fb build` handler: builds the given project (or the detected one),
+    passing `--dev` through as the dev-build flag."""
     dev = False
     if "--dev" in args:
         dev = True
@@ -127,6 +163,9 @@ def build_handler(env, args):
         build(env.project_registry.get_project_path(args[0]), dev)
 
 def run_handler(env, args):
+    """`fb run` handler: runs the given project (or the detected one),
+    swallowing Ctrl+C so stopping the game doesn't surface as a CLI
+    traceback."""
     if len(args) == 0:
         if env.project_path:
             try:
@@ -147,6 +186,10 @@ def run_handler(env, args):
             print(f"Project with ID '{id}' does not exist.")
 
 def get_current_project(env):
+    """Returns the registry id of the project rooted at `env.path` (based on
+    its `fbproject.toml`), or None if there's no `fbproject.toml` there or
+    it isn't registered yet (printing a hint to run `freebody init` in the
+    latter case)."""
     cwd = env.path
     project_file = os.path.join(cwd, "fbproject.toml")
     if os.path.exists(project_file):
@@ -157,14 +200,26 @@ def get_current_project(env):
         return project_id
 
 def create_sprite(env, args):
+    """`fb create sprite` handler - currently just a placeholder that prints
+    what it would create."""
     if len(args) < 1:
         print("Usage: fb create sprite <name>")
         return
     print(f"Creating sprite '{args[0]}' in environment path '{env.path}'")
 
 def init_handler(env: Environment, args):
-    cwd = env.path
+    """`fb init` handler: registers the project rooted at the current
+    working directory (not `env.path` - see the comment below) in the
+    project registry, then runs the initial C++ compile for it."""
+    # `env.path` is captured once when the Environment is constructed and
+    # never updated - `create_project` calls os.chdir() into the freshly
+    # created project directory before calling this, so `env.path` here is
+    # stale (it still points at the directory the CLI was originally
+    # invoked from). The current working directory is what's actually
+    # wanted, both here and in that call path.
+    cwd = os.getcwd()
     project_file = os.path.join(cwd, "./fbproject.toml")
+    id = None
     if os.path.exists(project_file):
         project_data = tomllib.loads(open(project_file, "r").read())
         project_name = project_data.get('name', None)
@@ -172,15 +227,20 @@ def init_handler(env: Environment, args):
         id = env.project_registry.get_project_id(project_name)
         if id is None:
             env.project_registry.add_project(cwd, project_name)
+            id = env.project_registry.get_project_id(project_name)
         else:
             print(f'A project with the name "{project_name}" already exists.')
-    
+
     env.reload_registry()
-    if env.project_registry.project_exists(id):
+    if id is not None and env.project_registry.project_exists(id):
         compile_handler(env, [id])
 
 
 def get_log_file(env):
+    """Returns the plain-text log file path for the current project, under
+    the OS-appropriate config directory (mirrors `get_json_log_file`, but
+    for a `log.txt` - nothing in the engine currently writes to this path;
+    only `log.jsonl` is actually produced by the logger)."""
     name = None
     if env.project_id:
         name = env.project_registry.get_project_name(env.project_id)
@@ -202,6 +262,8 @@ def get_log_file(env):
     return os.path.join(base, name, "log.txt")
 
 def confirm():
+    """Prompts for a y/N confirmation, returning True only on an explicit
+    "y"."""
     return input("Are you sure you want to do that? y/N: ").lower().strip() == 'y'
 
 def get_json_log_file(env):
@@ -316,7 +378,11 @@ def log_traceback_handler(env, args):
 
     print(f"No log entry found with ID {log_id}")
 
-def delete_project(env, args):
+def delete_project(env: Environment, args):
+    """`fb project delete` handler: deletes a project's directory from disk
+    after two confirmation prompts. Note: this does not remove the entry
+    from the project registry, which is left pointing at a path that no
+    longer exists."""
     project = None
     if not len(args) > 0:
         current_project = get_current_project(env)
@@ -330,7 +396,7 @@ def delete_project(env, args):
         if not env.project_registry.project_exists(project):
             print(f'Project with ID "{project}" does not exist.')
             return
-
+    path = env.project_registry.get_project_path(project)
     print(f'Deleting project "{env.project_registry.get_project_name(project)}" with ID "{project}" at path {path}.')
 
     if confirm():
@@ -342,6 +408,8 @@ def delete_project(env, args):
         print("Aborting.")
 
 def list_projects(env, args):
+    """`fb project list` handler: prints a table of every project in the
+    registry (id, name, path)."""
     print("{:<4} {:<20} {:<50}".format("ID", "Name", "Path"))
     print("-" * 80)
     for p in env.project_registry.projects:
@@ -352,6 +420,8 @@ def list_projects(env, args):
         ))
 
 def cat_handler(env, args):
+    """`fb cat` handler: prints the contents of a file relative to
+    `env.path`."""
     if not args:
         print("Usage: cat <file>")
         return
@@ -374,6 +444,9 @@ def cat_handler(env, args):
         print(f"Error reading file: {e}")
 
 def create_project(env, args):
+    """`fb create project` handler: scaffolds a new project directory
+    (`assets/`, `code/`, `fbproject.toml`, `main.py`), then `cd`s into it
+    and runs `init_handler` to register and compile it."""
     if len(args) < 1:
         print("Usage: create_project.py <project_name> [base_path]")
         return
@@ -413,6 +486,8 @@ code = "./code"
     print(f"Project '{project_name}' created successfully and initialized at {os.path.abspath(project_dir)}")
 
 def get_project(env, args):
+    """`fb project get` handler: prints the id, name and path of the given
+    project (or the current/detected one), if it exists."""
     if len(args) > 0:
         project = args[0]
     else:
@@ -430,6 +505,8 @@ def get_project(env, args):
 
 
 def get_project_lines(env, id: str):
+    """Counts the total lines across the project's main file and every
+    `.py` file under its code directory."""
     config = env.project_registry.get_project_config(id)
     lines = 0
     path = env.project_registry.get_project_path(id)
@@ -442,6 +519,10 @@ def get_project_lines(env, id: str):
     return lines
 
 def lines_project(env, args):
+    """Prints the total line count (see `get_project_lines`) for the given
+    project (or the current/detected one). Note: not currently wired into
+    `root_commands` - `cloc_handler` (`fb cloc`) is the reachable
+    equivalent."""
     if len(args) > 0:
         project = args[0]
     else:
@@ -458,6 +539,10 @@ def lines_project(env, args):
         print(f'Project with ID "{project}" does not exist.')
 
 def enter_handler(env, args):
+    """`fb enter` handler: starts an interactive shell (prompt
+    `freebody@<project-or-path>>`) that dispatches each typed line as its
+    own CLI command against the same shared `env`/`root_commands`, until
+    `exit`/`quit` is typed."""
     if len(args) > 0:
         env.project_id = args[0]
         env.project_path = env.project_registry.get_project_path(args[0])
@@ -491,6 +576,8 @@ def enter_handler(env, args):
     env.stop()
 
 def mkdir_handler(env, args):
+    """`fb mkdir` handler: creates a directory relative to `env.path`,
+    refusing to overwrite an existing path."""
     if not args:
         print("Usage: mkdir <path>")
         return
@@ -502,6 +589,8 @@ def mkdir_handler(env, args):
     os.makedirs(dir_path)
     
 def rm_handler(env, args):
+    """`fb rm` handler: removes a file, or (with `-r`) a directory tree,
+    prompting for confirmation unless `-f` is also given."""
     flags, positional = parse_options(args, {'r', 'f'})
     recusive = 'r' in flags
     force = 'f' in flags
@@ -548,6 +637,11 @@ def parse_options(args, allowed_flags=None):
 
     return flags, positional
 def cloc_handler(env, args):
+    """`fb cloc` handler: counts lines across engine-recognized source
+    files (`.cpp`, `.py`, `.fbusl`, `.fbvert`, `.fbfrag`, `.fbspr`,
+    `.fbmat`) under a project's main file/code/assets directories, or under
+    a given/current directory, printing a per-extension breakdown plus
+    totals."""
     extensions = {".cpp", ".py", ".fbusl", ".fbvert", ".fbfrag", ".fbspr", ".fbmat"}
     paths_to_check = []
 
@@ -640,6 +734,8 @@ def cloc_handler(env, args):
     print(f"Total lines: {total_lines}")
 
 def cwoc_handler(env, args):
+    """`fb cwoc` handler: same as `cloc_handler`, but counts words instead
+    of lines."""
     extensions = {".cpp", ".py", ".fbusl", ".fbvert", ".fbfrag", ".fbspr", ".fbmat"}
     paths_to_check = []
 
@@ -732,6 +828,9 @@ def cwoc_handler(env, args):
 
 
 def cd_handler(env, args):
+    """`fb cd` handler: changes `env.path` to a directory relative to the
+    current one, or - if given a registered project id instead of a path -
+    jumps directly to that project's directory."""
     if not args:
         print("Usage: cd <path>")
         return
@@ -757,6 +856,8 @@ def cd_handler(env, args):
 
 
 def ls_handler(env, args):
+    """`fb ls` handler: lists the entries of a directory (default
+    `env.path`), directories highlighted in blue."""
     target_path = env.path if not args else os.path.abspath(os.path.join(env.path, args[0]))
     
     if not os.path.isdir(target_path):
@@ -774,6 +875,8 @@ def ls_handler(env, args):
             print(entry)
 
 def help_handler(env, args):
+    """`fb help` handler: prints the list of top-level commands, then exits
+    the process."""
     print("FreeBodyEngine CLI")
     print("Usage: fb <command> [subcommand] [args]")
     print("Available commands:")
@@ -782,6 +885,8 @@ def help_handler(env, args):
     sys.exit(0)
 
 def clear_handler(env, args):
+    """`fb clear` handler: clears the terminal screen using the
+    platform-appropriate command."""
     system = platform.system()
     if system == "Windows":
         os.system("cls")
@@ -789,6 +894,9 @@ def clear_handler(env, args):
         os.system("clear")
 
 def create_font(env, args):
+    """`fb create font` handler: generates an MSDF atlas (and its
+    `.fbfont` metadata) from a `.ttf` file in the project's asset
+    directory, writing both into a hidden `.font` folder alongside it."""
     size = 16
     if len(args) == 0:
         project = env.project_id
@@ -825,9 +933,15 @@ def create_font(env, args):
             return
 
         image, data = generate_atlas(font_path, size)
-        image.save(os.path.join(font_registry, font_name.removesuffix('.ttf') + ".png"))
-        
-        with open(os.path.join(font_registry, font_name.removesuffix('.ttf') + ".json"), 'w') as f:
+        base_name = font_name.removesuffix('.ttf')
+        image.save(os.path.join(font_registry, base_name + ".png"))
+
+        # load_font() (core/files/loaders/font.py) resolves the atlas image
+        # relative to the .fbfont file using this field - generate_atlas()
+        # itself doesn't know the final on-disk name, so it's filled in here.
+        data["atlas"]["image"] = base_name + ".png"
+
+        with open(os.path.join(font_registry, base_name + ".fbfont"), 'w') as f:
             json.dump(data, f)
 
         print(f"Successfully created font with name '{font_name.removesuffix('.ttf')}'.")
@@ -870,6 +984,12 @@ root_commands = [
 ]
 
 def dispatch(args: list[str], commands, env=None, path=[]):
+    """Resolves `args` against `commands`: aliases a leading `fb`/`freebody`
+    to the implicit root (defaulting to `help` if nothing follows it),
+    prints a matched command's help on a trailing `--help`/`-h`, recurses
+    into subcommands, or invokes `handler(env, args[1:])` once a leaf
+    command is reached - creating a default `Environment` first if none was
+    passed in."""
     if not args:
         print("No command provided.\n")
         help_handler(env, [])
@@ -902,5 +1022,8 @@ def dispatch(args: list[str], commands, env=None, path=[]):
     print(f"Unknown command: {cmd_name}")
 
 def main():
+    """CLI entry point (`fb`/`freebody` console script): builds an
+    `Environment` from the current directory and dispatches
+    `sys.argv[1:]` against the root commands."""
     env = Environment()
     dispatch(sys.argv[1:], root_commands, env)

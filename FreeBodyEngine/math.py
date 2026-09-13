@@ -15,6 +15,12 @@ class GenericVector:
 VECTOR_LIKE = Union[GenericVector, float, Sequence[float]]
 
 def simplify_fraction(numerator, denominator):
+    """Reduces a fraction to lowest terms, normalizing the sign so a
+    negative result always carries its sign on the numerator.
+
+    Raises:
+        ValueError: If `denominator` is zero.
+    """
     if denominator == 0:
         raise ValueError("Denominator cannot be zero.")
 
@@ -35,6 +41,8 @@ def bezier_point(curve, t):
     return curve[0]
 
 def vector_towards(start: 'Vector', to: 'Vector', magnitude):
+    """Returns a vector pointing from `start` towards `to`, scaled to
+    `magnitude` rather than the actual distance between them."""
     relx = to.x - start.x
     rely = to.y - start.y
     angle = math.atan2(rely, relx)
@@ -42,9 +50,11 @@ def vector_towards(start: 'Vector', to: 'Vector', magnitude):
     return Vector((magnitude) * math.cos(angle), (magnitude) * math.sin(angle))
 
 def is_even(x):
+    """Returns whether `x` is an even number."""
     return x % 2 == 0
 
 def clamp(min, value, max):
+    """Restricts `value` to the `[min, max]` range."""
     if value < min:
         return min
     if value > max:
@@ -52,9 +62,13 @@ def clamp(min, value, max):
     return value
 
 def clamp_vector(min, value, max):
+    """Componentwise `clamp()`: clamps `value`'s x and y independently
+    against `min` and `max`'s corresponding components."""
     return Vector(clamp(min.x, value.x, max.x), clamp(min.y, value.y, max.y))
 
 def vector_is_close(value1, value2, max):
+    """Returns whether `value1` and `value2` are within `max` of each other
+    on both axes (`math.isclose` with `abs_tol=max`, applied per component)."""
     if math.isclose(value1.x, value2.x, abs_tol=max) and math.isclose(
         value1.y, value2.y, abs_tol=max
     ):
@@ -63,6 +77,9 @@ def vector_is_close(value1, value2, max):
     return False
 
 def gaussian_random(rng: numpy.random.RandomState, mean=0, standard_deveation=1):
+    """Draws a single normally-distributed random value via the Box-Muller
+    transform, using `rng` instead of the `random`/`numpy.random` globals so
+    callers can get reproducible sequences from a seeded generator."""
     u = 1 - rng.random()
     v = rng.random()
     z = math.sqrt(-2 * math.log(u)) * math.cos(2 * math.pi * v)
@@ -70,25 +87,38 @@ def gaussian_random(rng: numpy.random.RandomState, mean=0, standard_deveation=1)
     return z * standard_deveation + mean
 
 class GenericRotation:
+    """Placeholder for a future rotation representation shared between 2D
+    and 3D transforms; not yet implemented or used anywhere."""
     pass
 
 class Rotation():
+    """Placeholder for a future rotation representation; not yet
+    implemented or used anywhere."""
     pass
 
 class Transform:
+    """A 2D position/rotation/scale triple, with `rotation` a single scalar
+    angle (degrees) around Z rather than a full rotation object."""
     def __init__(self, position: VECTOR_LIKE, rotation: float, scale: VECTOR_LIKE):
+        """`position` and `scale` are coerced through `Vector(...)`, so any
+        `VECTOR_LIKE` value (a vector, scalar, or 2-sequence) works."""
         self.position = Vector(position)
         self.rotation = rotation
         self.scale = Vector(scale)
 
     def copy(self):
+        """Returns an independent copy of this transform."""
         return Transform(self.position.copy(), self.rotation, self.scale.copy())
 
     def neg(self):
+        """Returns a new transform with position, rotation and scale all
+        negated."""
         return Transform(-self.position, -self.rotation, -self.scale)
-    
+
     @property
     def model(self) -> numpy.ndarray:
+        """Builds this transform's 4x4 model matrix (translation @ rotation
+        @ scale, as a row-vector affine matrix)."""
         px = self.position.x
         py = self.position.y
 
@@ -123,8 +153,16 @@ class Transform:
             [px, -py, 0, 1]
         ], dtype=float)
 
-        return translation @ rotation @ scale 
-    
+        # NOTE: Transform3.model (below) has the equivalent 3D fix for this
+        # same translation-gets-scaled bug, verified against RaytraceDemo.
+        # Left as-is here deliberately - this 2D Transform is shared by
+        # every currently-working 2D scene (sprites, tilemaps, UI), none of
+        # which I can visually re-verify from this session, and the bug
+        # only bites when scale != 1 and position != 0 are combined, which
+        # existing 2D code may or may not do. Fix this the same way once
+        # there's a way to confirm it doesn't regress 2D rendering.
+        return translation @ rotation @ scale
+
     def __eq__(self, other):
         if isinstance(other, Transform):
             return (self.position == other.position and
@@ -221,6 +259,11 @@ class Transform:
         raise TypeError("Transform can only be divided by a scalar, vector or another Transform")
 
     def to_matrix(self):
+        """Builds this transform's 3x3 2D affine matrix (column-vector
+        convention: `[[cos*sx, -sin*sy, px], [sin*sx, cos*sy, py], [0, 0, 1]]`),
+        used by `compose_with`/`from_matrix` for parent-child composition -
+        distinct from `model`, which builds a 4x4 matrix in the row-vector
+        convention the renderer expects."""
         cos_r = math.cos(math.radians(self.rotation))
         sin_r = math.sin(math.radians(self.rotation))
 
@@ -233,13 +276,25 @@ class Transform:
             [0,           0,          1]])
         
     def compose_with(self, parent_transform: 'Transform') -> 'Transform':
+        """Combines this (local) transform with `parent_transform` to get
+        the equivalent world transform, via 3x3 matrix multiplication
+        rather than combining position/rotation/scale directly - this is
+        what lets `Node2D.world_transform` account for a rotated or scaled
+        parent's effect on a child's position."""
         parent_mat = parent_transform.to_matrix()
         local_mat = self.to_matrix()
-        result_matx = parent_mat @ local_mat
+        result_mat = parent_mat @ local_mat
         return Transform.from_matrix(result_mat)
 
     @classmethod
     def from_matrix(cls, mat: numpy.ndarray) -> 'Transform':
+        """Decomposes a 3x3 affine matrix (as produced by `to_matrix`) back
+        into a `Transform`'s position/rotation/scale.
+
+        Raises:
+            ValueError: If the matrix's extracted scale is zero on either
+                axis, since rotation can't be recovered from it then.
+        """
         assert mat.shape == (3, 3), "Matrix must be 3x3 for 2D transforms"
 
         # Extract translation (position)
@@ -261,19 +316,30 @@ class Transform:
         return cls((px, py), rotation, (sx, sy))
 
 class Transform3:
+    """A 3D position/rotation/scale triple, with `rotation` a `Vector3` of
+    Euler angles (degrees, applied Z then Y then X - see `model`)."""
     def __init__(self, position: 'Vector3', rotation: 'Vector3', scale: 'Vector3'):
+        """`position`, `rotation` and `scale` are each coerced through
+        `Vector3(...)`."""
         self.position = Vector3(position)
         self.rotation = Vector3(rotation)
         self.scale = Vector3(scale)
 
     def copy(self):
+        """Returns an independent copy of this transform."""
         return Transform3(self.position.copy(), self.rotation.copy(), self.scale.copy())
 
     def neg(self):
+        """Returns a new transform with position, rotation and scale all
+        negated."""
         return Transform3(-self.position, -self.rotation, -self.scale)
 
     @property
     def model(self) -> numpy.ndarray:
+        """Builds this transform's 4x4 model matrix, as `scale @ rotation @
+        translation` (row-vector convention) so a locally-authored mesh is
+        scaled and rotated about its own origin before being placed in the
+        world - see the note below on why the factor order matters here."""
         tx, ty, tz = self.position
         sx, sy, sz = self.scale
         rx, ry, rz = map(math.radians, self.rotation)
@@ -314,7 +380,17 @@ class Transform3:
 
         rotation = rot_z @ rot_y @ rot_x
 
-        return translation @ rotation @ scale
+        # `translation`'s translation components live in its last ROW (a
+        # row-vector affine matrix: v' = v @ M), so composing left-to-right
+        # as `translation @ rotation @ scale` applies translation *first*
+        # and scale *last* to any point run through this matrix - meaning
+        # scale then also multiplies the translation itself (a Model3D at
+        # position (2, 0, 0) with scale 8 ended up at world (16, 0, 0), not
+        # (2, 0, 0)). Scale-then-rotate-then-translate (the standard TRS
+        # order for placing a locally-authored mesh in the world) needs the
+        # matrix factors in the opposite order: `scale @ rotation @
+        # translation`.
+        return scale @ rotation @ translation
 
 
     def __eq__(self, other):
@@ -398,6 +474,10 @@ class Transform3:
         raise TypeError("Transform3 can only be divided by a scalar or another Transform3")
 
 class Vector(GenericVector):
+    """A 2D float vector, also used throughout the engine as a generic
+    (x, y) pair (e.g. sizes, UV coordinates). Constructible from separate
+    x/y values, a single scalar (broadcast to both axes), a 2-element
+    sequence, or another `Vector` - see the `__init__` overloads."""
     @overload
     def __init__(self) -> None: ...
     @overload
@@ -410,6 +490,9 @@ class Vector(GenericVector):
     def __init__(self, x: 'Vector') -> None: ...
 
     def __init__(self, x: Union[float, Sequence[float], GenericVector] = 0, y: float = None):
+        """Builds a vector from another `Vector`, a 2-element sequence, an
+        explicit `(x, y)` pair, or a single scalar broadcast to both axes
+        (`Vector()` defaults to `(0, 0)`)."""
         if isinstance(x, Vector):
             self.x, self.y = x.x, x.y
         elif isinstance(x, Sequence):
@@ -421,6 +504,7 @@ class Vector(GenericVector):
 
     @classmethod
     def from_angle(self, angle: float) -> 'Vector':
+        """Returns a unit vector pointing at `angle` radians."""
         return Vector(math.cos(angle), math.sin(angle))
 
     def __getitem__(self, index):
@@ -440,6 +524,7 @@ class Vector(GenericVector):
             raise IndexError("Vector index out of range")
 
     def copy(self) -> 'Vector':
+        """Returns an independent copy of this vector."""
         return Vector(self.x, self.y)
 
     def __hash__(self):
@@ -460,12 +545,17 @@ class Vector(GenericVector):
             return self
 
     def cross(self, other: "Vector") -> float:
+        """Returns the 2D cross product (the scalar z-component of the 3D
+        cross product), whose sign indicates whether `other` is clockwise
+        or counter-clockwise from this vector."""
         return self.x * other.y - self.y * other.x
 
     def dot(self, other: "Vector") -> float:
+        """Returns the dot product of this vector and `other`."""
         return self.x * other.x + self.y * other.y
 
     def perpendicular(self) -> "Vector":
+        """Returns this vector rotated 90 degrees counter-clockwise."""
         return Vector(-self.y, self.x)
 
     def __add__(self, other):
@@ -525,18 +615,23 @@ class Vector(GenericVector):
         if isinstance(other, (int, float)):
             return Vector(self.x / other, self.y / other)
 
-    @property    
+    @property
     def magnitude(self):
+        """This vector's length."""
         return math.sqrt(self.x**2 + self.y**2)
 
     @property
     def normalized(self):
+        """This vector scaled to length 1, or `(0, 0)` if it's already the
+        zero vector (rather than raising a divide-by-zero error)."""
         mag = self.magnitude
         if mag == 0:
             return Vector(0, 0)  # Or raise an error
-        return Vector(self.x / mag, self.y / mag) 
+        return Vector(self.x / mag, self.y / mag)
 
     def distance(self, to: 'Vector'):
+        """Returns the difference between this vector's and `to`'s
+        magnitude - NOT the Euclidean distance between the two points."""
         return abs(self.magnitude - to.magnitude)
 
     def __iter__(self):
@@ -546,7 +641,11 @@ class Vector(GenericVector):
         return f"[{self.x}, {self.y}]"
 
 class Vector3:
+    """A 3D float vector."""
     def __init__(self, x=0.0, y=None, z=None):
+        """Builds a vector from another `Vector3`, a 3-element list/tuple,
+        explicit `(x, y, z)` values, or a single scalar broadcast to all
+        three axes (`Vector3()` defaults to `(0, 0, 0)`)."""
         if isinstance(x, (int, float)):
             self.x = x
             if y == None:
@@ -585,6 +684,7 @@ class Vector3:
             raise IndexError("Vector3 index out of range")
 
     def copy(self):
+        """Returns an independent copy of this vector."""
         return Vector3(self.x, self.y, self.z)
 
     def __add__(self, other):
@@ -621,20 +721,30 @@ class Vector3:
         return iter((self.x, self.y, self.z))
 
 class Curve(ABC):
+    """Base class for easing curves: given a progress value `x` (typically
+    0-1), maps it to an eased output value used to interpolate animations."""
     @abstractmethod
     def get_value(self, x):
+        """Evaluates the curve at `x`."""
         pass
 
 class Linear(Curve):
+    """No easing - output equals input, capped at 1."""
     def get_value(self, x):
+        """See class docstring."""
         return min(1, x)
 
 class EaseInOut(Curve):
+    """Smoothstep-style ease in and out (cubic Hermite interpolation),
+    capped at 1."""
     def get_value(self, x):
+        """See class docstring."""
         return min(1, (x * x) * (3 - (2 * x)))
 
 class EaseInOutExpo(Curve):
+    """Exponential ease in and out, clamped to `[0, 1]`."""
     def get_value(self, x: float) -> float:
+        """See class docstring."""
         return min(
             max(
                 (2 ** (20 * x - 10)) / 2 if x < 0.5 else (2 - 2 ** (-20 * x + 10)) / 2,
@@ -644,11 +754,15 @@ class EaseInOutExpo(Curve):
         )
 
 class EaseInOutSin(Curve):
+    """Sine-based ease in and out, capped at 1."""
     def get_value(self, x):
+        """See class docstring."""
         return min(1, math.sin(x * 1.5))
 
 class EaseInOutCircular(Curve):
+    """Circular ease in and out (based on the unit circle equation)."""
     def get_value(self, x):
+        """See class docstring."""
         return (
             (1 - math.sqrt(1 - (2 * x) ** 2)) / 2
             if x < 0.5
@@ -656,11 +770,16 @@ class EaseInOutCircular(Curve):
         )
 
 class EaseOutSin(Curve):
+    """Sine-based ease out, capped at 1."""
     def get_value(self, x):
+        """See class docstring."""
         return min(math.sin((0.5 * x) * math.pi), 1)
 
 class BounceOut(Curve):
+    """Ease out with a bouncing overshoot at the end, made of four
+    quadratic segments (a standard "bounce" easing formula)."""
     def get_value(self, x):
+        """See class docstring."""
         n1, d1 = 7.5625, 2.75
         return (
             n1 * x * x
