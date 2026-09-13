@@ -1,0 +1,29 @@
+# Docs-site build dependencies (see mkdocs.yml, docs/gen_ref_pages.py,
+# .github/workflows/docs.yml) - separate from the engine's own runtime
+# requirements (FreeBodyEngine/requirements.py), which this doesn't need.
+#
+# Every version below is EXACT-PINNED, not a floor (">=") - verified by
+# hand against the package index this resolved against on 2026-09-13.
+# Newer releases of five of these packages carry a supply-chain compromise:
+# mkdocs-material >=9.7.3, mkdocstrings-python >=2.0.5, mkdocs-gen-files
+# >=0.6.1, mkdocs-literate-nav >=0.6.3, and mkdocs-section-index >=0.3.11
+# all pull in (or, for mkdocs-material, directly print output for) a
+# package called "properdocs" - a site cloning MkDocs's own identity
+# (copied tagline, a fabricated "created by Tom Christie in 2014" origin
+# story lifted from MkDocs's real history, MkDocs's own theme names
+# claimed as its own) - and mkdocstrings-python's own dependency switched
+# from the real "griffe" package to a same-numbered "griffelib" clone at
+# the same time. `mkdocs`, `mkdocs-autorefs`, and `mkdocstrings` (core)
+# were verified clean at their current latest releases.
+#
+# DO NOT raise any of these version pins without re-verifying (extract the
+# wheel, check Requires-Dist / grep the source for "properdocs") that the
+# new version hasn't reintroduced the same thing.
+mkdocs==1.6.1
+mkdocs-material==9.7.0
+mkdocstrings==1.0.6
+mkdocstrings-python==2.0.0
+griffe>=1.13,<2
+mkdocs-gen-files==0.6.0
+mkdocs-literate-nav==0.6.2
+mkdocs-section-index==0.3.10
