@@ -3,7 +3,7 @@
 from FreeBodyEngine import get_service
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.files.loader import load_file
-from FreeBodyEngine.graphics.mesh import Mesh, generate_circle, generate_quad
+from FreeBodyEngine.graphics.mesh import Mesh, generate_circle, generate_quad, generate_polygon
 from FreeBodyEngine.graphics.renderer import Renderer
 
 class Debug2D(Node2D):
@@ -34,4 +34,14 @@ class CircleColliderDebug(Debug2D):
         the node's own scale maps directly onto the collider's radius) and
         loads the shared `engine://debug/debug.fbmat` debug material."""
         super().__init__(generate_circle(0.5), load_file('engine://debug/debug.fbmat'))
+
+class PolygonColliderDebug(Debug2D):
+    """Debug overlay drawn as a filled polygon, added as a child by
+    `PolygonCollider2D.toggle_debug_visuals()` to visualize a
+    PolygonCollider2D's extent."""
+    def __init__(self, local_vertices):
+        """Builds the debug polygon mesh from the same `local_vertices` the
+        PolygonCollisionShape itself uses, and loads the shared
+        `engine://debug/debug.fbmat` debug material."""
+        super().__init__(generate_polygon([(v.x, v.y) for v in local_vertices]), load_file('engine://debug/debug.fbmat'))
 

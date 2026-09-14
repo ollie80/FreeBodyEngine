@@ -4,7 +4,7 @@ from FreeBodyEngine import get_main
 from typing import TYPE_CHECKING, Literal, Union
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.scene import Scene
-from FreeBodyEngine.graphics.debug import RectangleColliderDebug, CircleColliderDebug
+from FreeBodyEngine.graphics.debug import RectangleColliderDebug, CircleColliderDebug, PolygonColliderDebug
 import numpy as np
 import math
 
@@ -31,6 +31,7 @@ class CollisionShape:
         """
         if isinstance(other, CircleCollisionShape): return self.collide_circle(other)
         elif isinstance(other, RectangleCollisionShape): return self.collide_rectangle(other)
+        elif isinstance(other, PolygonCollisionShape): return self.collide_polygon(other)
         elif isinstance(other, Vector): return self.collide_point(other)
         else: raise TypeError(f"Object of class {other.__class__} cannot be collided with.")
 
@@ -66,11 +67,102 @@ class CollisionShape:
 
         Parameters:
             other (RectangleCollider): The checked collider.
-        
+
         Returns:
             bool: collision?
         """
         raise NotImplementedError(f"Rect collision not implemented on Collider: {str(self)}")
+
+    @abstractmethod
+    def collide_polygon(self, other: "PolygonCollisionShape") -> bool:
+        """Checks for collision against a general convex polygon collider."""
+        raise NotImplementedError(f"Polygon collision not implemented on Collider: {str(self)}")
+
+    @abstractmethod
+    def get_aabb(self) -> tuple[Vector, Vector]:
+        """Returns this shape's world-space axis-aligned bounding box as
+        `(min, max)` corners - used by the physics broad phase to cheaply
+        reject non-overlapping pairs before running real narrow-phase
+        collision."""
+        raise NotImplementedError(f"AABB not implemented on Collider: {str(self)}")
+
+    @abstractmethod
+    def compute_mass(self, density: float) -> tuple[float, float]:
+        """Returns `(mass, moment_of_inertia)` for this shape at the given
+        `density`, both about this shape's own centroid - used by
+        `RigidBody2D` to auto-derive mass/inertia from its collider rather
+        than requiring them to be set by hand."""
+        raise NotImplementedError(f"Mass computation not implemented on Collider: {str(self)}")
+
+def _project_points(points: list[Vector], axis: Vector) -> tuple[float, float]:
+    """Projects `points` onto `axis` and returns `(min, max)` of the
+    resulting scalar range - the shared building block behind every SAT
+    overlap/containment test below."""
+    projections = [p.dot(axis) for p in points]
+    return min(projections), max(projections)
+
+def _convex_polygons_overlap(corners_a: list[Vector], axes_a: list[Vector], corners_b: list[Vector], axes_b: list[Vector]) -> bool:
+    """SAT overlap test between any two convex polygons, given their
+    world-space corners and face-normal axes - the same algorithm
+    `RectangleCollisionShape.collide_rectangle` uses, generalized so
+    `PolygonCollisionShape` can share it instead of duplicating SAT."""
+    for axis in axes_a + axes_b:
+        min_a, max_a = _project_points(corners_a, axis)
+        min_b, max_b = _project_points(corners_b, axis)
+        if max_a < min_b or max_b < min_a:
+            return False
+    return True
+
+def _point_in_convex_polygon(corners: list[Vector], axes: list[Vector], point: Vector) -> bool:
+    """SAT-based point-in-convex-polygon test: `point` is inside iff its
+    projection falls within the polygon's own projection on every one of
+    the polygon's face-normal axes."""
+    for axis in axes:
+        min_p, max_p = _project_points(corners, axis)
+        point_proj = point.dot(axis)
+        if point_proj < min_p or point_proj > max_p:
+            return False
+    return True
+
+def _closest_point_on_polygon(corners: list[Vector], point: Vector) -> Vector:
+    """Returns the closest point on a convex polygon's boundary (edges, in
+    order) to `point` - generalizes
+    `RectangleCollisionShape._closest_point_on_bounds` to any vertex
+    count."""
+    closest_point = corners[0]
+    min_dist_sq = float('inf')
+
+    for i in range(len(corners)):
+        start = corners[i]
+        end = corners[(i + 1) % len(corners)]
+
+        edge = end - start
+        to_point = point - start
+        edge_len_sq = edge.dot(edge)
+        if edge_len_sq == 0:
+            projection = start
+        else:
+            t = max(0, min(1, to_point.dot(edge) / edge_len_sq))
+            projection = start + edge * t
+
+        dist_sq = (point - projection).dot(point - projection)
+        if dist_sq < min_dist_sq:
+            min_dist_sq = dist_sq
+            closest_point = projection
+
+    return closest_point
+
+def regular_polygon_vertices(sides: int, radius: float) -> list[Vector]:
+    """Returns `sides` local vertices (centered on the origin, first vertex
+    pointing along +X) for a regular polygon inscribed in a circle of
+    `radius` - a convenient way to build a `PolygonCollisionShape` that
+    approximates a circle/capsule more closely than a box does (e.g. for a
+    rounded-looking limb segment), without needing true curved-edge
+    collision support."""
+    return [
+        Vector(radius * math.cos(2 * math.pi * i / sides), radius * math.sin(2 * math.pi * i / sides))
+        for i in range(sides)
+    ]
 
 class CircleCollisionShape(CollisionShape):
     """A circular collision shape, defined by a center position and radius."""
@@ -91,6 +183,22 @@ class CircleCollisionShape(CollisionShape):
     def collide_rectangle(self, other: "RectangleCollisionShape"):
         """Checks collision against a rectangle by delegating to the rectangle's own circle-collision test."""
         return other.collide_circle(self)
+
+    def collide_polygon(self, other: "PolygonCollisionShape") -> bool:
+        """Checks collision against a polygon by delegating to the polygon's own circle-collision test."""
+        return other.collide_circle(self)
+
+    def get_aabb(self) -> tuple[Vector, Vector]:
+        """The circle's bounding box: its position offset by `radius` on every side."""
+        r = Vector(self.radius, self.radius)
+        return self.position - r, self.position + r
+
+    def compute_mass(self, density: float) -> tuple[float, float]:
+        """A solid disk's mass is `density * pi * r^2`; its moment of
+        inertia about its own center is `mass * r^2 / 2`."""
+        mass = density * math.pi * self.radius ** 2
+        inertia = mass * self.radius ** 2 / 2
+        return mass, inertia
 
 class RectangleCollisionShape(CollisionShape):
     """An oriented (rotatable) rectangular collision shape, defined by a center position, size, and rotation."""
@@ -129,8 +237,9 @@ class RectangleCollisionShape(CollisionShape):
         hw = self.size.x / 2
         hh = self.size.y / 2
 
-        cos_r = math.cos(self.rotation)
-        sin_r = math.sin(self.rotation)
+        rot_rad = math.radians(self.rotation)
+        cos_r = math.cos(rot_rad)
+        sin_r = math.sin(rot_rad)
 
         local_corners = [
             Vector(-hw, -hh),
@@ -220,6 +329,137 @@ class RectangleCollisionShape(CollisionShape):
 
         return closest.distance(other.position) <= other.radius
 
+    def collide_polygon(self, other: "PolygonCollisionShape") -> bool:
+        """Checks for overlap with a general convex polygon via SAT, treating this rectangle as its own 4-corner polygon."""
+        corners = self._get_corners()
+        return _convex_polygons_overlap(corners, self._get_axes(corners), other._get_corners(), other._get_axes())
+
+    def get_aabb(self) -> tuple[Vector, Vector]:
+        """The rectangle's bounding box: the min/max of its (possibly rotated) corners."""
+        corners = self._get_corners()
+        xs = [c.x for c in corners]
+        ys = [c.y for c in corners]
+        return Vector(min(xs), min(ys)), Vector(max(xs), max(ys))
+
+    def compute_mass(self, density: float) -> tuple[float, float]:
+        """A solid `w`x`h` box's mass is `density * w * h`; its moment of
+        inertia about its own center is `mass * (w^2 + h^2) / 12`."""
+        w, h = self.size.x, self.size.y
+        mass = density * w * h
+        inertia = mass * (w ** 2 + h ** 2) / 12
+        return mass, inertia
+
+class PolygonCollisionShape(CollisionShape):
+    """A general convex collision shape, defined by an ordered, centroid-
+    relative list of local vertices (`local_vertices`) plus a world
+    position/rotation - RectangleCollisionShape's fixed-4-corner shape is a
+    common enough special case to keep as its own simpler class, but
+    anything else convex (a hexagon, an octagon standing in for a rounded
+    capsule via `regular_polygon_vertices`, a custom hull) goes through
+    this one instead. Vertices must be wound consistently (order doesn't
+    matter which way, just that it's consistent) and the shape must
+    actually be convex - SAT and the mass formula below both assume it."""
+    def __init__(self, position: Vector, rotation: float, local_vertices: list[Vector]):
+        """Stores `local_vertices` (centroid-relative, in the shape's own
+        unrotated local space) alongside position/rotation - world-space
+        corners are recomputed from these on every query rather than
+        cached, matching RectangleCollisionShape's approach."""
+        self.position = position
+        self.rotation = rotation
+        self.local_vertices = local_vertices
+
+    def _get_corners(self) -> list[Vector]:
+        """Returns this polygon's vertices transformed into world space by
+        its current position/rotation."""
+        return [self.position + v.rotated(self.rotation) for v in self.local_vertices]
+
+    def _get_axes(self, corners: list[Vector] = None) -> list[Vector]:
+        """Returns one outward-facing normal axis per edge - unlike a
+        rectangle (where opposite edges share a normal, so only 2 axes are
+        needed), a general polygon needs a normal for every edge since
+        nothing is assumed about parallelism."""
+        if corners is None:
+            corners = self._get_corners()
+        axes = []
+        for i in range(len(corners)):
+            edge = corners[(i + 1) % len(corners)] - corners[i]
+            axes.append(edge.perpendicular().normalized)
+        return axes
+
+    def collide_point(self, point: Vector) -> bool:
+        """Checks whether `point` lies inside the polygon via the SAT containment test."""
+        corners = self._get_corners()
+        return _point_in_convex_polygon(corners, self._get_axes(corners), point)
+
+    def collide_circle(self, other: "CircleCollisionShape") -> bool:
+        """Checks for overlap with a circle: if the circle's center is
+        inside the polygon it's automatically a collision (the closest-
+        boundary-point check below only makes sense for a center outside
+        the polygon - otherwise it'd measure to whichever edge happens to
+        be nearest, which can be much farther away than the circle's own
+        radius, missing the case where a small circle sits deep inside a
+        larger polygon)."""
+        corners = self._get_corners()
+        axes = self._get_axes(corners)
+        if _point_in_convex_polygon(corners, axes, other.position):
+            return True
+        closest = _closest_point_on_polygon(corners, other.position)
+        return closest.distance(other.position) <= other.radius
+
+    def collide_rectangle(self, other: "RectangleCollisionShape") -> bool:
+        """Checks for overlap with a rectangle by delegating to the rectangle's own polygon-collision test."""
+        return other.collide_polygon(self)
+
+    def collide_polygon(self, other: "PolygonCollisionShape") -> bool:
+        """Checks for overlap with another convex polygon via SAT."""
+        corners = self._get_corners()
+        return _convex_polygons_overlap(corners, self._get_axes(corners), other._get_corners(), other._get_axes())
+
+    def get_aabb(self) -> tuple[Vector, Vector]:
+        """The polygon's bounding box: the min/max of its world-space vertices."""
+        corners = self._get_corners()
+        xs = [c.x for c in corners]
+        ys = [c.y for c in corners]
+        return Vector(min(xs), min(ys)), Vector(max(xs), max(ys))
+
+    def compute_mass(self, density: float) -> tuple[float, float]:
+        """Standard convex-polygon mass/inertia formula (as used by e.g.
+        Box2D's `b2PolygonShape::ComputeMass`): triangulates the polygon
+        into a fan from its own centroid and sums each triangle's area and
+        second-moment contribution, rather than assuming a closed-form
+        shape like the circle/box formulas above can."""
+        vertices = self.local_vertices
+        area = 0.0
+        centroid = Vector(0, 0)
+        inertia = 0.0
+        # 1/6 rather than the usual 1/3 because the cross-product term
+        # below is already 2x the signed triangle area - baking that
+        # factor of 2 into the divisor here keeps it out of every term.
+        k_inv3 = 1.0 / 3.0
+
+        for i in range(len(vertices)):
+            p1 = vertices[i]
+            p2 = vertices[(i + 1) % len(vertices)]
+
+            cross = p1.cross(p2)
+            triangle_area = 0.5 * cross
+
+            area += triangle_area
+            centroid += (p1 + p2) * (triangle_area * k_inv3)
+
+            intx2 = p1.x * p1.x + p1.x * p2.x + p2.x * p2.x
+            inty2 = p1.y * p1.y + p1.y * p2.y + p2.y * p2.y
+            inertia += (0.25 * k_inv3 * cross) * (intx2 + inty2)
+
+        centroid /= area
+        mass = density * area
+
+        # Recentered from the local origin to the polygon's own centroid
+        # (parallel axis theorem) since `local_vertices` isn't guaranteed
+        # to already be centroid-relative.
+        inertia = density * inertia - mass * centroid.dot(centroid)
+        return mass, inertia
+
 class Collider2D(Node2D):
     """Base node for 2D colliders - wraps a CollisionShape and keeps it in sync with the node's world transform each update."""
     def __init__(self, collision_shape_cls: type[CollisionShape], position=Vector(), rotation=0, scale=Vector(1, 1)):
@@ -294,6 +534,33 @@ class CircleCollider2D(Collider2D):
         self.collision_shape.position = self.world_transform.position
         self.collision_shape.rotation = self.world_transform.rotation
         self.collision_shape.radius = self.world_transform.scale.x / 2
+
+class PolygonCollider2D(Collider2D):
+    """A general convex-polygon Collider2D, backed by a
+    PolygonCollisionShape - unlike Rectangle/CircleCollider2D, its shape
+    isn't derived from `scale` (a polygon's shape is its vertex list, not
+    a single size), so `local_vertices` is a required constructor argument
+    instead."""
+    def __init__(self, local_vertices: list[Vector], position=Vector(), rotation=0, scale=Vector(1, 1)):
+        """Creates a PolygonCollider2D from `local_vertices` (centroid-
+        relative, in the shape's own unrotated local space)."""
+        super().__init__(PolygonCollisionShape, position, rotation, local_vertices)
+        self.collision_shape: PolygonCollisionShape
+
+    def toggle_debug_visuals(self):
+        """Adds a PolygonColliderDebug child if this collider (already initialized) has none yet, otherwise removes any existing ones."""
+        if self.is_initialized:
+            debug = self.find_nodes_with_type('PolygonColliderDebug')
+            if len(debug) > 0:
+                for d in debug:
+                    d.kill()
+            else:
+                self.add(PolygonColliderDebug(self.collision_shape.local_vertices))
+
+    def apply_transform(self):
+        """Syncs the collision shape's position and rotation to the node's current world transform (the polygon's local vertices, and hence its size, don't change with the node's scale)."""
+        self.collision_shape.position = self.world_transform.position
+        self.collision_shape.rotation = self.world_transform.rotation
 
 class Ray2D:
     """

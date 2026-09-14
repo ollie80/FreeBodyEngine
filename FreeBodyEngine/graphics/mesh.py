@@ -212,6 +212,40 @@ def generate_circle(radius=0.5, segments=32):
     )
 
 
+def generate_polygon(local_vertices):
+    """Generates a filled convex polygon mesh (a triangle fan around the
+    vertices' own centroid), facing +Z - for debug-visualizing a
+    PolygonCollisionShape, whose `local_vertices` (a list of
+    `(x, y)`-like pairs) this takes directly."""
+    xs = [v[0] for v in local_vertices]
+    ys = [v[1] for v in local_vertices]
+    cx = sum(xs) / len(xs)
+    cy = sum(ys) / len(ys)
+
+    max_extent = max(max(abs(x - cx), abs(y - cy)) for x, y in zip(xs, ys)) or 1.0
+
+    vertices = [cx, cy, 0.0]
+    normals = [0.0, 0.0, 1.0]
+    uvs = [0.5, 0.5]
+    indices = []
+
+    n = len(local_vertices)
+    for i in range(n + 1):  # +1 to close the loop
+        x, y = local_vertices[i % n]
+        vertices.extend([x, y, 0.0])
+        normals.extend([0.0, 0.0, 1.0])
+        uvs.extend([((x - cx) / (2 * max_extent)) + 0.5, ((y - cy) / (2 * max_extent)) + 0.5])
+        if i > 0:
+            indices.extend([0, i, i + 1])
+
+    return create_static_mesh(
+        verticies=np.array(vertices, dtype=np.float32),
+        normals=np.array(normals, dtype=np.float32),
+        uvs=np.array(uvs, dtype=np.float32),
+        indices=np.array(indices, dtype=np.uint32),
+    )
+
+
 def generate_cube(width: float = 1.0, height: float = 1.0, depth: float = 1.0):
     """Generates an axis-aligned box mesh centered at the origin, with
     unshared per-face vertices so each face gets its own flat UVs/normal."""
