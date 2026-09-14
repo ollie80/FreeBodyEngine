@@ -67,6 +67,7 @@ class EventManager(Service):
             categories = re.findall(r"@([^#@\?]+)", q)
 
             def add_event(events: list, event_name: str, event_obs):
+                """Appends the event named `event_name` (looked up in `event_obs`) to `events` if it isn't already present, returning the (possibly unchanged) list - used to build query_events()'s result set without duplicates."""
                 n_events = events
                 e = event_obs[event_name]
                 if e not in events:

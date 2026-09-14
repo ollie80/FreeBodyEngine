@@ -4,8 +4,17 @@ import numpy as np
 
 
 class GLMesh(Mesh):
+    """The GL 3.3 implementation of Mesh: owns a real VAO, one VBO per
+    vertex attribute, and an optional EBO for indexed drawing. Maps the
+    abstract PrimitiveType onto the actual GL draw-mode enum once at
+    construction (`_render_mode`) rather than re-resolving it on every
+    draw()."""
     def __init__(self, attributes: dict[str, tuple], indices: np.ndarray = None,
                  primitive=None, index_type=None, usage=None):
+        """Generates the VAO and, if `indices` is given, the EBO (VBOs
+        themselves are created lazily per-attribute in upload()), resolves
+        `primitive` to its GL draw-mode enum, and immediately calls upload()
+        to push the mesh's initial data to the GPU."""
         super().__init__(attributes, indices, primitive, index_type, usage)
 
         self.vao = glGenVertexArrays(1)
@@ -31,6 +40,13 @@ class GLMesh(Mesh):
         glBufferData(GL_ARRAY_BUFFER, data.nbytes, data, usage_map.get(self.usage, GL_STATIC_DRAW))
 
     def upload(self):
+        """(Re)creates one VBO per entry in `self.attributes` and uploads its
+        data, wiring each up as a sequential vertex attribute starting at
+        location 0 in `self.attributes`' iteration order - so the order
+        attributes are inserted into that dict is exactly the order the
+        matching shader's `in` locations must line up with. Also uploads
+        `self.indices` into the EBO if this mesh has one, recording its GL
+        index-element type (`gl_index_type`) for draw() to use."""
         glBindVertexArray(self.vao)
 
         usage_map = {
@@ -85,6 +101,11 @@ class GLMesh(Mesh):
         glBindVertexArray(0)
 
     def draw(self):
+        """Issues the draw call: `glDrawElements` against the EBO if this
+        mesh has indices, else `glDrawArrays` over a vertex count derived
+        from the first attribute's raw array length divided by 3 (i.e. this
+        non-indexed path assumes that first attribute is 3 components wide,
+        such as a "verticies" vec3 channel)."""
         glBindVertexArray(self.vao)
 
         if self.indices is not None:
@@ -96,6 +117,8 @@ class GLMesh(Mesh):
         glBindVertexArray(0)
 
     def destroy(self):
+        """Deletes every attribute VBO, the EBO if this mesh has one, and the
+        VAO itself, releasing all of this mesh's GPU resources."""
         for vbo in self.vbos.values():
             glDeleteBuffers(1, [vbo])
         if self.ebo:

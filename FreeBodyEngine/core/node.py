@@ -80,6 +80,7 @@ class GenericNode:
         Logs a node tree in human-readable tree format.
         """
         def build_tree_str(node_dict, prefix="", is_last=True):
+            """Recursively renders `node_dict` (as produced by `get_tree_dict()`) into an indented ASCII tree (`└──`/`├──` branches, `│` continuation bars), matching the classic `tree` command's layout."""
             node_line = f"{node_dict['class']}"
             if prefix == "":
                 # Root node, no branch prefix

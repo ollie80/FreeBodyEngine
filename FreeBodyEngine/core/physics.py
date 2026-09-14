@@ -83,6 +83,7 @@ class PhysicsBody(Node2D):
         correction_share = 1.0 if other_mass is None else other_mass / (self.mass + other_mass)
 
         def apply_mtv(mtv: Vector, contact_point: Vector):
+            """Applies this body's share (`correction_share`) of the collision's minimum translation vector `mtv`: pushes it out of the overlap, cancels the component of its velocity still moving into `mtv`'s direction (stopping it from accelerating further into the surface without killing tangential motion), and, if a contact point was found, converts the resulting linear impulse into an angular one via torque."""
             mtv = mtv * correction_share
             self.world_transform.position += mtv
 

@@ -216,6 +216,11 @@ class GLShader(Shader):
         vector GL types they map onto, alongside a plain tuple/list/ndarray
         of the right length."""
         def is_vec_of_length(obj, length, types=(int, float)):
+            """Returns True if `obj` is an acceptable Python value for a
+            `length`-component GLSL vector uniform: a tuple/list/ndarray of
+            exactly `length` elements each matching `types`, or one of the
+            engine's own vector-shaped types (`Color` for length>=3,
+            `Vector` for length==2, `Vector3` for length==3)."""
             if isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj):
                 return True
 

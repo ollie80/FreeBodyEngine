@@ -188,6 +188,7 @@ class RectangleCollisionShape(CollisionShape):
         axis2 = (corners[3] - corners[0]).normalized().perpendicular()
 
         def project_point(p, axis):
+            """SAT helper: projects point `p` onto `axis` via the dot product, giving its scalar position along that axis for overlap comparison. Defined for symmetry with `_project_onto_axis()` but not actually called below - `_project_onto_axis()` already inlines the same projection over its point list."""
             return p.dot(axis)
 
         min_a, max_a = self._project_onto_axis(corners, axis1)
