@@ -98,13 +98,26 @@ body, input,
   box-shadow: none !important;
 }
 
+/* Material's "black" primary preset hardcodes these backgrounds directly
+   (not via the --md-primary-fg-color variable), at a higher specificity
+   than a bare `.md-header`/`.md-tabs` rule - so redefining the variables
+   above isn't enough on its own; these need to be beaten at the same
+   [data-md-color-primary=black] specificity to actually take. */
+[data-md-color-primary="black"] .md-header,
+[data-md-color-primary="black"] .md-tabs,
+[data-md-color-primary="black"] .md-nav--primary .md-nav__title[for="__drawer"] {
+  background-color: var(--fb-bg);
+}
+[data-md-color-primary="black"] .md-nav__source {
+  background-color: var(--fb-bg-alt);
+}
+
 .md-header {
   border-bottom: 1px solid var(--fb-border);
 }
 
 .md-tabs {
   border-bottom: 1px solid var(--fb-border);
-  background-color: var(--fb-bg);
 }
 
 .md-footer {
@@ -127,6 +140,12 @@ body, input,
 .md-nav__link:focus,
 .md-nav__link:hover {
   color: var(--fb-fg-bright);
+}
+
+[data-md-color-primary="black"] .md-button--primary {
+  background-color: var(--fb-accent);
+  border-color: var(--fb-accent);
+  color: var(--fb-bg);
 }
 
 .md-typeset a {
