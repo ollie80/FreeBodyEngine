@@ -1,0 +1,28 @@
+@input
+vertex: vec3
+normal: vec3
+uvs: vec2
+
+@uniform
+rect: vec4
+window_size: vec2
+uv_rect: vec4
+
+@output
+uv: vec2
+
+def main() -> void:
+    screen_rect: vec4 = vec4(rect.x / window_size.x * 2.0 - 1.0, 1.0 - rect.y / window_size.y * 2.0, rect.z / window_size.x * 2.0, rect.w / window_size.y * 2.0)
+
+    if VERTEX_INDEX == 0:
+        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y, 0.0, 1.0)
+        uv = vec2(uv_rect.x, uv_rect.y)
+    elif VERTEX_INDEX == 1:
+        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y, 0.0, 1.0)
+        uv = vec2(uv_rect.x + uv_rect.z, uv_rect.y)
+    elif VERTEX_INDEX == 2:
+        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y - screen_rect.w, 0.0, 1.0)
+        uv = vec2(uv_rect.x, uv_rect.y + uv_rect.w)
+    else:
+        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y - screen_rect.w, 0.0, 1.0)
+        uv = vec2(uv_rect.x + uv_rect.z, uv_rect.y + uv_rect.w)
