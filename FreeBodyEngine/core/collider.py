@@ -644,33 +644,53 @@ class Ray2D:
 
     def intersect_rectangle(self, rect: RectangleCollisionShape):
         """
-        Checks for intersection with a rectangle collider.
+        Checks for intersection with an axis-aligned rectangle collider
+        (ignores `rect.rotation` - only correct for an unrotated
+        rectangle, same as this method's previous implementation) via the
+        standard slab method.
 
         :param rect: The rectangle collider.
         :returns: The point of intersection, or None if there is no intersection.
         """
-        x, y = rect.position.x, rect.position.y
-        w, h = rect.size
-        
+        hw = rect.size.x / 2
+        hh = rect.size.y / 2
+        # rect.position is the rectangle's CENTER (see
+        # RectangleCollisionShape._get_corners()), not its bottom-left
+        # corner - treating it as a corner here (as this method used to)
+        # tested against completely the wrong region of space.
+        min_x, max_x = rect.position.x - hw, rect.position.x + hw
+        min_y, max_y = rect.position.y - hh, rect.position.y + hh
 
-        inv_dir_x = 1 / self.direction.x if self.direction.x != 0 else float('inf')
-        inv_dir_y = 1 / self.direction.y if self.direction.y != 0 else float('inf')
-        t1 = (x - self.origin.x) * inv_dir_x
-        t2 = (x + w - self.origin.x) * inv_dir_x
-        t3 = (y - self.origin.y) * inv_dir_y
-        t4 = (y + h - self.origin.y) * inv_dir_y
+        tmin, tmax = 0.0, float('inf')
 
-        tmin = max(min(t1, t2), min(t3, t4))
-        tmax = min(max(t1, t2), max(t3, t4))
+        for origin_c, dir_c, lo, hi in (
+            (self.origin.x, self.direction.x, min_x, max_x),
+            (self.origin.y, self.direction.y, min_y, max_y),
+        ):
+            if dir_c == 0:
+                # A ray parallel to this axis (e.g. straight down) never
+                # reaches a differing X - dividing by that zero direction
+                # component (as this method used to, via a "treat 1/0 as
+                # infinity" hack) multiplies a zero numerator by infinity
+                # whenever the ray starts exactly on the slab's edge,
+                # which is NaN, not 0 - silently poisoning every ray cast
+                # exactly along an axis (e.g. every straight-down ground
+                # raycast). Handled directly instead: parallel to this
+                # axis is only a hit if the origin already lies within
+                # the slab on it.
+                if origin_c < lo or origin_c > hi:
+                    return None
+            else:
+                t1 = (lo - origin_c) / dir_c
+                t2 = (hi - origin_c) / dir_c
+                if t1 > t2:
+                    t1, t2 = t2, t1
+                tmin = max(tmin, t1)
+                tmax = min(tmax, t2)
+                if tmin > tmax:
+                    return None
 
-        if tmax < 0 or tmin > tmax:
-            return None  # No intersection
-
-        if tmin < 0:
-            return None  # Intersection is behind the ray
-
-        hit_point = self.origin + self.direction * tmin
-        return hit_point
+        return self.origin + self.direction * tmin
 
     def intersect(self, collider: Union[Collider2D, CollisionShape]):
         """Dispatches to intersect_circle()/intersect_rectangle() based on `collider`'s (or its `collision_shape`'s) concrete type.
