@@ -109,6 +109,15 @@ class RigidBody2D(Node2D):
 
         self.collider: Collider2D | None = None
 
+        # Which other bodies this one is currently touching, as of the
+        # last physics step PhysicsWorld ran - lives here (rather than as
+        # separate bookkeeping inside PhysicsWorld itself) so it survives
+        # between steps without PhysicsWorld needing to keep any
+        # persistent per-scene state of its own; PhysicsWorld diffs this
+        # against the current step's fresh contact set to fire
+        # on_collision_enter/stay/exit and on_trigger_enter/exit.
+        self.touching: set['RigidBody2D'] = set()
+
     def on_initialize(self):
         """Finds this body's collider child and computes mass/inertia
         from it (unless overridden), then derives the inverse values the
@@ -209,9 +218,18 @@ class RigidBody2D(Node2D):
     def wake(self):
         """Clears sleeping state and resets the sleep timer - called
         automatically by force/impulse application, and by the solver
-        when an awake body touches a sleeping one."""
-        self.is_sleeping = False
-        self._sleep_timer = 0.0
+        when an awake body touches a sleeping one.
+
+        A no-op if already awake: apply_force()/apply_impulse() call this
+        unconditionally, including from *within* the contact solver's own
+        routine impulses (a resting body still gets a small corrective
+        impulse every step, to counteract that same step's gravity - it's
+        what "resting" means). If this reset the sleep timer even for an
+        already-awake body, that alone would keep a perfectly settled body
+        from ever accumulating enough idle time to sleep at all."""
+        if self.is_sleeping:
+            self.is_sleeping = False
+            self._sleep_timer = 0.0
 
     def on_collision_enter(self, other: 'RigidBody2D', contact):
         """Called the first physics step two (non-sensor) bodies start
