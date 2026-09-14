@@ -94,6 +94,20 @@ class CollisionShape:
         than requiring them to be set by hand."""
         raise NotImplementedError(f"Mass computation not implemented on Collider: {str(self)}")
 
+def _edge_normal(edge: Vector) -> Vector:
+    """Returns the outward-facing unit normal of an edge vector, assuming
+    counter-clockwise winding (as both RectangleCollisionShape's and
+    PolygonCollisionShape's corners are) - a 90-degree *clockwise*
+    rotation of the edge direction, not `Vector.perpendicular()`'s
+    counter-clockwise one (which gives the *inward* normal for a
+    CCW-wound polygon instead). Getting this backwards doesn't affect a
+    pure overlap/containment test (SAT and point-in-polygon are direction-
+    agnostic - projecting onto -N instead of N just negates min/max
+    symmetrically), which is why the bug this fixes went unnoticed there,
+    but it matters a great deal once a normal's actual direction is used
+    (e.g. as a physics contact/push-out normal)."""
+    return Vector(edge.y, -edge.x).normalized
+
 def _project_points(points: list[Vector], axis: Vector) -> tuple[float, float]:
     """Projects `points` onto `axis` and returns `(min, max)` of the
     resulting scalar range - the shared building block behind every SAT
@@ -257,10 +271,17 @@ class RectangleCollisionShape(CollisionShape):
         ]
 
     def _get_axes(self, corners):
-        return [
-            (corners[1] - corners[0]).normalized.perpendicular(),
-            (corners[3] - corners[0]).normalized.perpendicular()
-        ]
+        """Returns one outward-facing normal per edge (4, matching
+        `corners[i]`->`corners[i+1]` for each `i`) - not just the 2
+        unique face directions a rectangle's parallel-edge symmetry would
+        allow, so this has the same per-edge indexing
+        `PolygonCollisionShape._get_axes` uses, which the physics
+        narrow-phase's reference/incident face selection depends on. The
+        redundant second occurrence of each direction (opposite edges
+        share an axis, just negated) is harmless for the plain overlap/
+        containment tests elsewhere in this class - just a repeated,
+        already-passing check."""
+        return [_edge_normal(corners[(i + 1) % len(corners)] - corners[i]) for i in range(len(corners))]
 
     def _project_onto_axis(self, corners, axis):
         projections = [corner.dot(axis) for corner in corners]
@@ -380,11 +401,7 @@ class PolygonCollisionShape(CollisionShape):
         nothing is assumed about parallelism."""
         if corners is None:
             corners = self._get_corners()
-        axes = []
-        for i in range(len(corners)):
-            edge = corners[(i + 1) % len(corners)] - corners[i]
-            axes.append(edge.perpendicular().normalized)
-        return axes
+        return [_edge_normal(corners[(i + 1) % len(corners)] - corners[i]) for i in range(len(corners))]
 
     def collide_point(self, point: Vector) -> bool:
         """Checks whether `point` lies inside the polygon via the SAT containment test."""
