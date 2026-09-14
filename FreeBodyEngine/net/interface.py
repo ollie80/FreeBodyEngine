@@ -137,7 +137,7 @@ NetworkAddress = tuple[str, int]
 """Contains the host and port."""
 class NetworkInterface:
     """A basic UDP networking interface that inmplements TCP features to allow for both speed and reliability"""
-    def __init__(self, port=7433, host=LOCAL, max_packet_size=4096, reliable_resend_threshold=0.3, sequence_duplicate_threshold=64):
+    def __init__(self, port: int = 7433, host: str = LOCAL, max_packet_size: int = 4096, reliable_resend_threshold: float = 0.3, sequence_duplicate_threshold: int = 64):
         """Binds a non-blocking UDP socket at `(host, port)`.
 
         Args:
@@ -177,7 +177,7 @@ class NetworkInterface:
 
         return self.last_sequences[address].is_duplicate(seq)
         
-    def send_data_packet(self, channel: int, address, payload: bytes, reliable: bool = False, ordered: bool = False):
+    def send_data_packet(self, channel: int, address, payload: bytes, reliable: bool = False, ordered: bool = False) -> int:
         """Encodes and sends a `DATA` packet to `address`, assigning it the
         next sequence number.
 

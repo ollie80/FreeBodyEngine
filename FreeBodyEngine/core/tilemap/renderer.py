@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 chunk_mesh_sig = types.Tuple((types.float32[:, :], types.float32[:, :], types.uint32[:]))(types.uint8[:], types.int32, types.int32)
 
 @fbnjit(chunk_mesh_sig, cache=True)
-def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int):
+def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Builds a quad mesh for one chunk from its flat tile data, skipping
     empty tiles (`image_id < 0 and sprite_id == 0`) entirely so they cost
     nothing to draw.

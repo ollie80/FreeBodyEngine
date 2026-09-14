@@ -49,12 +49,12 @@ class Builder:
     the project's code with PyInstaller. Building is a side effect of
     construction - `__init__` runs the whole pipeline before returning."""
 
-    def __init__(self, path, dev):
+    def __init__(self, path: str, dev: bool):
         """Runs the full build pipeline for the project at `path`.
 
         Args:
-            path: Project root directory containing `fbproject.toml`.
-            dev: If True, builds loose assets for local development
+            path (str): Project root directory containing `fbproject.toml`.
+            dev (bool): If True, builds loose assets for local development
                 (`build_for_dev`); if False, produces a packaged release
                 build (`build_for_release`)."""
         self.progress = ProgressBar()
