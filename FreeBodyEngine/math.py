@@ -117,8 +117,8 @@ class Transform:
 
     @property
     def model(self) -> numpy.ndarray:
-        """Builds this transform's 4x4 model matrix (translation @ rotation
-        @ scale, as a row-vector affine matrix)."""
+        """Builds this transform's 4x4 model matrix (scale @ rotation @
+        translation, as a row-vector affine matrix)."""
         px = self.position.x
         py = self.position.y
 
@@ -150,18 +150,22 @@ class Transform:
             [1, 0, 0, 0],
             [0, 1, 0, 0],
             [0, 0, 1, 0],
-            [px, -py, 0, 1]
+            [px, py, 0, 1]
         ], dtype=float)
 
-        # NOTE: Transform3.model (below) has the equivalent 3D fix for this
-        # same translation-gets-scaled bug, verified against RaytraceDemo.
-        # Left as-is here deliberately - this 2D Transform is shared by
-        # every currently-working 2D scene (sprites, tilemaps, UI), none of
-        # which I can visually re-verify from this session, and the bug
-        # only bites when scale != 1 and position != 0 are combined, which
-        # existing 2D code may or may not do. Fix this the same way once
-        # there's a way to confirm it doesn't regress 2D rendering.
-        return translation @ rotation @ scale
+        # Same fix as Transform3.model below (verified against RaytraceDemo
+        # for 3D): in row-vector convention (v @ M), `translation @ rotation
+        # @ scale` transforms a point as `((v @ translation) @ rotation) @
+        # scale` - translating FIRST means the translation offset itself
+        # then gets rotated/scaled too, which is wrong (a model matrix
+        # should scale, then rotate, then translate last, leaving the
+        # translation itself untouched by the other two). Confirmed via
+        # SpiderArena (a from-scratch 2D physics demo): any rotated child
+        # node (i.e. nearly everything in a physics-driven scene) rendered
+        # at a wildly wrong screen position - e.g. a body-part 10 degrees
+        # from level, offset half a unit from its parent, rendered over 2
+        # units away from its actual position - before this fix.
+        return scale @ rotation @ translation
 
     def __eq__(self, other):
         if isinstance(other, Transform):

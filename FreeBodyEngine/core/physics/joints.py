@@ -25,6 +25,19 @@ from FreeBodyEngine.core.physics.body import RigidBody2D
 from FreeBodyEngine.math import Vector
 
 
+# Caps how fast a joint's Baumgarte position-correction bias is allowed to
+# pull a body back into compliance, the same way world.py's contact solver
+# caps its own position bias (MAX_CORRECTION_SPEED there) - without this,
+# a joint whose two bodies start out far from satisfying it (e.g. a
+# procedurally-placed limb chain whose segments weren't positioned exactly
+# where their joints expect) would inject a correction proportional to the
+# *entire* initial error in a single step, which for a large error is far
+# more velocity than the joint should ever need to add - the difference
+# between "snaps smoothly into place over a few frames" and "launches
+# across the map on frame one."
+MAX_JOINT_BIAS_SPEED = 4.0
+
+
 def _solve_2x2(k11: float, k12: float, k21: float, k22: float, bx: float, by: float) -> Vector:
     """Solves the 2x2 linear system `K * x = b` via Cramer's rule - the
     shared building block behind every point-to-point constraint below
@@ -109,7 +122,7 @@ class DistanceJoint2D(Joint2D):
              self.body_a.inv_inertia * ra_cross_n ** 2 +
              self.body_b.inv_inertia * rb_cross_n ** 2)
         self._effective_mass = 1.0 / k if k > 0 else 0.0
-        self._bias = (self.beta / dt) * separation
+        self._bias = max(-MAX_JOINT_BIAS_SPEED, min(MAX_JOINT_BIAS_SPEED, (self.beta / dt) * separation))
 
     def solve_velocity_constraint(self):
         va = self.body_a.velocity_at_point(self.body_a.world_position + self._ra)
@@ -313,6 +326,8 @@ class RevoluteJoint2D(Joint2D):
         vb = self.body_b.velocity_at_point(self.body_b.world_position + self._rb)
         cdot = vb - va
         bias = self._point_error * (self.beta / self._dt)
+        if bias.magnitude > MAX_JOINT_BIAS_SPEED:
+            bias = bias.normalized * MAX_JOINT_BIAS_SPEED
 
         k11, k12, k21, k22 = self._k
         impulse = _solve_2x2(k11, k12, k21, k22, -(cdot.x + bias.x), -(cdot.y + bias.y))
@@ -368,6 +383,8 @@ class WeldJoint2D(Joint2D):
         vb = self.body_b.velocity_at_point(self.body_b.world_position + self._rb)
         cdot = vb - va
         bias = self._point_error * (self.beta / self._dt)
+        if bias.magnitude > MAX_JOINT_BIAS_SPEED:
+            bias = bias.normalized * MAX_JOINT_BIAS_SPEED
 
         k11, k12, k21, k22 = self._k
         impulse = _solve_2x2(k11, k12, k21, k22, -(cdot.x + bias.x), -(cdot.y + bias.y))

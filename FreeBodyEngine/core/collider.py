@@ -560,9 +560,21 @@ class PolygonCollider2D(Collider2D):
     instead."""
     def __init__(self, local_vertices: list[Vector], position=Vector(), rotation=0, scale=Vector(1, 1)):
         """Creates a PolygonCollider2D from `local_vertices` (centroid-
-        relative, in the shape's own unrotated local space)."""
-        super().__init__(PolygonCollisionShape, position, rotation, local_vertices)
-        self.collision_shape: PolygonCollisionShape
+        relative, in the shape's own unrotated local space).
+
+        Deliberately doesn't go through Collider2D.__init__'s usual
+        `collision_shape_cls(position, rotation, scale)` pattern - that
+        reuses one `scale` argument for both this NODE's own transform
+        and the shape constructor's third argument, which works for
+        Rectangle/CircleCollider2D (where that third argument IS a scale)
+        but not here, where PolygonCollisionShape's third argument is the
+        vertex list instead. Passing `local_vertices` through as if it
+        were `scale` would silently corrupt this node's own
+        `transform.scale` into a vector built from two Vectors instead of
+        two floats."""
+        Node2D.__init__(self, position, rotation, scale)
+        self.collision_shape = PolygonCollisionShape(position, rotation, local_vertices)
+        self._last_matrix = None
 
     def toggle_debug_visuals(self):
         """Adds a PolygonColliderDebug child if this collider (already initialized) has none yet, otherwise removes any existing ones."""

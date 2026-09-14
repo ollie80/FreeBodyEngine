@@ -165,7 +165,7 @@ def generate_quad(width=1.0, height=1.0):
     )
 
     normals = np.array(
-        [0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        [0.0, 0.0, 1.0] * 4,
         dtype=np.float32,
     )
 
@@ -181,7 +181,7 @@ def generate_quad(width=1.0, height=1.0):
         dtype=np.uint32,
     )
 
-    return create_static_mesh(vertices, normals, uvs, indices)
+    return create_static_mesh(vertices, uvs, normals, indices)
 
 
 def generate_circle(radius=0.5, segments=32):
