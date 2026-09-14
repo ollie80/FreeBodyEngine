@@ -239,6 +239,16 @@ class Node2D(Node):
         else:
             return self.transform
 
+    @property
+    def world_position(self) -> Vector:
+        """Shorthand for `self.world_transform.position`."""
+        return self.world_transform.position
+
+    @property
+    def world_rotation(self) -> float:
+        """Shorthand for `self.world_transform.rotation`."""
+        return self.world_transform.rotation
+
 class Node3D(Node):
     """A `Node` with a 3D `Transform3`, requiring a `Node3D` (or root)
     parent so `world_transform` can compose up the tree."""

@@ -640,9 +640,17 @@ class Vector(GenericVector):
         return Vector(self.x / mag, self.y / mag)
 
     def distance(self, to: 'Vector'):
-        """Returns the difference between this vector's and `to`'s
-        magnitude - NOT the Euclidean distance between the two points."""
-        return abs(self.magnitude - to.magnitude)
+        """Returns the Euclidean distance between this point and `to`."""
+        return (self - to).magnitude
+
+    def rotated(self, degrees: float) -> 'Vector':
+        """Returns this vector rotated counter-clockwise by `degrees` around
+        the origin - for rotating a local offset (e.g. a joint anchor or a
+        polygon vertex) by a body's rotation into world space."""
+        rad = math.radians(degrees)
+        cos_r = math.cos(rad)
+        sin_r = math.sin(rad)
+        return Vector(self.x * cos_r - self.y * sin_r, self.x * sin_r + self.y * cos_r)
 
     def __iter__(self):
         return iter((self.x, self.y))  # returns an iterator over a tuple
