@@ -49,25 +49,44 @@ CURVE_SEGMENTS = 8            # line segments per curve, for distance + winding 
 
 
 class Edge:
+    """One outline edge (a line, quadratic, or cubic Bezier segment)
+    between two on-curve points, tagged with the color (see WHITE/CYAN/
+    MAGENTA/YELLOW) that `color_edges` assigns it for MSDF channel
+    selection."""
     __slots__ = ("kind", "points", "color")
 
     def __init__(self, kind: str, points: list[np.ndarray]):
+        """Stores the edge's `kind` and its control points (2 for "line", 3
+        for "quad", 4 for "cubic"); `color` defaults to WHITE until
+        `color_edges` assigns a real per-channel color."""
         self.kind = kind  # "line" | "quad" | "cubic"
         self.points = points
         self.color = WHITE
 
     def start(self) -> np.ndarray:
+        """Returns the edge's starting on-curve point."""
         return self.points[0]
 
     def end(self) -> np.ndarray:
+        """Returns the edge's ending on-curve point - for "quad"/"cubic"
+        edges this is the true curve endpoint, not an intermediate control
+        point."""
         return self.points[-1]
 
     def direction_at_start(self) -> np.ndarray:
+        """Returns the unit tangent direction leaving the edge's start
+        point (toward its first interior/control point). Falls back to +X
+        for a degenerate zero-length initial segment rather than dividing
+        by zero."""
         d = self.points[1] - self.points[0]
         n = np.linalg.norm(d)
         return d / n if n > 1e-9 else np.array([1.0, 0.0])
 
     def direction_at_end(self) -> np.ndarray:
+        """Returns the unit tangent direction arriving at the edge's end
+        point (from its last interior/control point). Falls back to +X for
+        a degenerate zero-length final segment rather than dividing by
+        zero."""
         d = self.points[-1] - self.points[-2]
         n = np.linalg.norm(d)
         return d / n if n > 1e-9 else np.array([1.0, 0.0])
@@ -99,6 +118,11 @@ class Edge:
 
 
 def get_outline(face: freetype.Face, char: str):
+    """Loads `char`'s outline from `face` and returns the raw FreeType
+    `(points, tags, contours)` triple for `contour_to_edges` to reconstruct
+    into real line/quadratic/cubic edges. Always loads with
+    FT_LOAD_NO_SCALE - see the inline comment below for why every caller
+    that consumes this module's output must agree on that convention."""
     # FT_LOAD_NO_SCALE is required here: without it, outline.points come
     # back in scaled 26.6 pixel-space relative to whatever set_char_size()
     # was last called with, not raw font design units - but generate_char's
@@ -185,6 +209,9 @@ def color_edges(contour: list[Edge], threshold: float = CORNER_ANGLE_THRESHOLD):
         return
 
     def is_corner(prev: Edge, cur: Edge) -> bool:
+        """Returns whether `prev`'s end tangent and `cur`'s start tangent
+        diverge by more than `threshold`, i.e. whether the two edges meet
+        at a sharp corner rather than a smooth join."""
         # angle = deviation from perfectly straight continuation: 0 means
         # the incoming and outgoing tangents point the same way (smooth),
         # pi means a full reversal. Anything past `threshold` is a corner.

@@ -48,7 +48,28 @@ GL_ATTACHMENT_TYPE = {
 
 
 class GLFramebuffer(Framebuffer):
+    """The GL 3.3 implementation of Framebuffer: a real `glGenFramebuffers`
+    object with one GL_TEXTURE_2D per color attachment (so it can also be
+    sampled from later, e.g. a G-buffer channel) and a single shared
+    renderbuffer for whichever depth/stencil/depth-stencil attachment was
+    requested. `self.attachments[name]` (inherited from the base class) is
+    repurposed here to hold each color attachment's actual
+    `GL_COLOR_ATTACHMENT0 + n` enum rather than the `(AttachmentType,
+    AttachmentFormat)` pair the constructor received - that original pair is
+    kept separately in `self._attachments` since resize() needs it again to
+    recreate storage at the new size."""
     def __init__(self, width, height, attachments, transparent=False):
+        """Creates the FBO and, for every requested attachment, the backing
+        GL object: a mipmapless linear-filtered GL_TEXTURE_2D for each COLOR
+        attachment (bound to consecutive GL_COLOR_ATTACHMENTn slots), or one
+        shared renderbuffer for a DEPTH/STENCIL/DEPTH_STENCIL attachment.
+        Color attachments are also collected into `draw_buffers` and wired up
+        via `glDrawBuffers` so a shader with multiple `@output` fields
+        actually renders to all of them; with no color attachments at all,
+        `glDrawBuffer(GL_NONE)`/`glReadBuffer(GL_NONE)` are set instead
+        (a depth-only FBO, e.g. a shadow map). Raises RuntimeError if the
+        finished FBO fails `glCheckFramebufferStatus`. `transparent` enables
+        standard alpha blending for subsequent draws into this FBO."""
         super().__init__(width, height, attachments)
         self.fbo = glGenFramebuffers(1)
         self.textures = {}
@@ -124,6 +145,12 @@ class GLFramebuffer(Framebuffer):
         pass
 
     def clear_color_attachment(self, name: str, value=(0.0, 0.0, 0.0, 0.0)):
+        """Clears the named color attachment to `value` via
+        `glClearBufferfv(GL_COLOR, draw_buffer_index, ...)`, targeting only
+        that attachment's own draw-buffer index rather than every bound draw
+        buffer at once (the effect a plain `glClear(GL_COLOR_BUFFER_BIT)`
+        would have) - see the abstract method's docstring for why that
+        distinction matters for a multi-attachment G-buffer."""
         if name not in self.attachments:
             raise ValueError(f"No attachment named '{name}'")
         if self._attachments[name][0] != AttachmentType.COLOR:
@@ -160,6 +187,12 @@ class GLFramebuffer(Framebuffer):
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
 
     def read(self, attachment_name: str) -> np.ndarray:
+        """Reads back the named color attachment's pixels via
+        `glReadPixels`, always as GL_FLOAT regardless of the attachment's own
+        storage type, and reshapes the raw buffer into a (height, width,
+        channels) float32 array (`channels` derived from the attachment's GL
+        format via GL_CHANNEL_COUNT). This is a synchronous GPU->CPU stall -
+        see the abstract method's docstring for when that's acceptable."""
         if attachment_name not in self._attachments:
             raise ValueError(f"No attachment named '{attachment_name}'")
 
@@ -178,12 +211,24 @@ class GLFramebuffer(Framebuffer):
         return np.frombuffer(raw, dtype=np.float32).reshape(self.height, self.width, channels)
 
     def get_attachment_texture(self, attachment_name):
+        """Returns the raw GL texture id backing the named color attachment
+        (there's nothing to return for a depth/stencil attachment - those are
+        renderbuffers, not textures - so only entries in `self.textures`
+        apply)."""
         if attachment_name in self.textures.keys():
             return self.textures[attachment_name]
         else:
             error(f'No attachment "{attachment_name}" on framebuffer: {self}')
 
     def resize(self, size: tuple[int, int]):
+        """Recreates every attachment's storage at the new `size`, mirroring
+        __init__'s attachment loop: each color texture is deleted and
+        regenerated at the new dimensions (a GL texture's storage can't be
+        resized in place), and the shared depth/stencil renderbuffer is
+        likewise deleted and regenerated if one exists. Also re-runs the
+        draw-buffers wiring and completeness check __init__ does, and updates
+        the GL viewport to match. Raises RuntimeError if the resized FBO is
+        incomplete."""
         self.width, self.height = size[0], size[1]
 
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
@@ -243,8 +288,14 @@ class GLFramebuffer(Framebuffer):
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
     def bind(self):
+        """Binds this FBO as the current GL_FRAMEBUFFER and sets the GL
+        viewport to its full size, so subsequent draws render into it at
+        the correct resolution instead of whatever viewport the
+        previously-bound target left set."""
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
         glViewport(0, 0, self.width, self.height)
 
     def unbind(self):
+        """Rebinds the default framebuffer (0), i.e. the window's own
+        backbuffer."""
         glBindFramebuffer(GL_FRAMEBUFFER, 0)

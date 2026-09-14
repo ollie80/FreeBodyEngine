@@ -519,20 +519,31 @@ RayHit trace_ray(Ray ray) {{
         return f'{node.op}{operand}'
 
     def generate_inline_if(self, node):
+        """Generates a ternary expression `cond ? then : else` - GLSL's
+        ternary operator has the same shape as FBUSL's inline-if, so this is
+        a direct textual translation with no lowering needed."""
         return f'{self.generate_node(node.condition)} ? {self.generate_node(node.then_expr)} : {self.generate_node(node.else_expr)}'
 
     def generate_vardecl(self, node):
+        """Generates a local variable declaration with its initializer,
+        e.g. `vec3 foo = ...;`."""
         name = self.generate_node(node.name)
         node_type = self.get_glsl_type(node.type)
         value = self.generate_node(node.value)
         return f"{node_type} {name} = {value};"
 
     def generate_setter(self, node):
+        """Generates a plain assignment `left = right` (no trailing
+        semicolon - callers append their own statement terminator)."""
         left = self.generate_node(node.node)
         right = self.generate_node(node.value)
         return f"{left} = {right}"
 
     def generate_literal(self, node):
+        """Generates a scalar literal's GLSL text form. Bools are spelled out
+        as `true`/`false` rather than Python's `True`/`False`, which GLSL
+        doesn't recognize; everything else is just `str()` of the coerced
+        Python value."""
         if node.type == "int":
             return str(int(node.value))
         elif node.type == "float":
@@ -542,6 +553,15 @@ RayHit trace_ray(Ray ray) {{
         return str(node.value)
 
     def generate_identifier(self, node):
+        """Generates an identifier reference, lowering the three compute
+        "invocation id" builtins to GL33's fullscreen-pass emulation of them
+        (there's no real gl_GlobalInvocationID/gl_WorkGroupID/
+        gl_LocalInvocationID under this backend - see the module docstring -
+        so they're derived from `gl_FragCoord` and the entry stage's
+        `local_size` instead of coming from IMPLEMENTATIONS like everything
+        else). Any other identifier falls through to the IMPLEMENTATIONS
+        variable/type "replace" table, or is emitted unchanged if it isn't
+        one of those either."""
         # These three need the entry stage's local_size to derive, so they're
         # handled here rather than as a static IMPLEMENTATIONS "replace"
         # string. There are no real hardware workgroups behind them under
@@ -567,6 +587,18 @@ RayHit trace_ray(Ray ray) {{
         return node.value
 
     def generate_inout(self, node):
+        """Generates an `in`/`out`/`uniform` declaration. Inputs/outputs get
+        an auto-incrementing `layout(location=...)` (tracked across the
+        whole shader via `self.input_index`/`self.output_index`, so field
+        order in the FBUSL source determines location assignment); a
+        `texture`/`textureStack` uniform additionally emits a matching
+        `_ENGINE_<name>_uv_rect[...]` uniform for the sub-rect metadata the
+        `sample()` builtin needs (see IMPLEMENTATIONS["sample"] and
+        generate_inout's `_ENGINE_..._uv_rect` uniforms it reads). A
+        geometry-stage input is forced into an unsized GLSL array on top of
+        its own type, since geometry shaders receive one value per input-
+        primitive vertex for every `@input` field regardless of its FBUSL
+        type."""
         qualifier = getattr(node, "qualifier", "")
         storage = ""
         layout = ""
@@ -605,9 +637,18 @@ RayHit trace_ray(Ray ray) {{
         return f"{text}{layout}{qualifier + ' ' if qualifier else ''}{storage} {base_type} {decl};\n"
 
     def generate_define(self, node):
+        """Generates a `#define NAME value` preprocessor directive."""
         return f"#define {node.name} {self.generate_node(node.value)}\n"
 
     def generate_binop(self, node):
+        """Generates a binary expression `left OP right`, unconditionally
+        parenthesizing any operand that is itself a BinOp. The FBUSL AST
+        already encodes precedence/grouping via tree shape, not via
+        preserved parens, so flattening a nested BinOp without adding its
+        own parens would let GLSL's own precedence table re-parse the
+        flattened text differently than intended whenever a lower-precedence
+        op is nested inside a higher-precedence one (see the inline comment
+        below for a worked example)."""
         # The AST already encodes grouping/precedence via tree structure (an
         # explicitly-parenthesized sub-expression in FBUSL source parses to
         # exactly the same tree shape as one that just happens to bind that
@@ -630,16 +671,26 @@ RayHit trace_ray(Ray ray) {{
         return f"{left}{node.op}{right}"
 
     def generate_struct(self, node):
+        """Generates a `struct Name { ... };` declaration, one field per
+        line via format_var()."""
         fields_text = ""
         for field in node.fields:
             fields_text += "    " + self.format_var(field.name, field.type) + "\n"
         return f"struct {node.name} {{\n{fields_text}}};\n"
 
     def generate_member_access(self, node):
+        """Generates a struct/vector field access `base.member` (also used
+        for swizzles, since FBUSL doesn't distinguish the two at this
+        level)."""
         base = self.generate_node(node.base)
         return f"{base}.{node.member}"
 
     def generate_function(self, node):
+        """Generates a full function definition: signature (via format_var()
+        for each parameter, with the trailing `;` it adds for a field
+        declaration stripped back off) plus a body where every statement is
+        re-terminated with exactly one `;` regardless of what generate_node()
+        happened to already append."""
         param_texts = [
             self.format_var(p.name, p.type).rstrip(";")
             for p in node.params
@@ -650,6 +701,16 @@ RayHit trace_ray(Ray ray) {{
         return f"{return_type} {node.name}({params_str}) {{\n{body_str}\n}}\n"
 
     def generate_function_call(self, node):
+        """Generates a function call, first checking whether `node.name` is a
+        `require()`-gated builtin (raising if this backend lacks the needed
+        capability), then whether IMPLEMENTATIONS has a "function" lowering
+        for it. A lowering's "call" dict maps either the unconditional key
+        `""` (always substitute the `$args[N]$` template) or an
+        `$args[N].type$==<typename>` condition, used to overload-dispatch a
+        single FBUSL call (e.g. `sample()`) onto different GLSL call shapes
+        depending on one argument's resolved type (a `texture` vs. a
+        `textureStack`). With no matching lowering, the call passes through
+        unchanged as `name(args...)`."""
         builtin_data = self._lookup_builtin_data(node.name)
         if builtin_data and "requires" in builtin_data:
             self.require(builtin_data["requires"], f"call to '{node.name}'", node.pos)
@@ -691,6 +752,11 @@ RayHit trace_ray(Ray ray) {{
         return f"{node.name}({', '.join(args_strs)})"
 
     def format_var(self, name, type_annotation, qualifier="") -> str:
+        """Formats one `<type> <name>[array-suffix];` field/parameter
+        declaration (optionally prefixed with a storage `qualifier`) - shared
+        by generate_struct() (struct fields) and generate_function()
+        (parameters, which strip the trailing `;` back off since a parameter
+        list isn't semicolon-terminated)."""
         base_type, array_suffix = self.resolve_type(type_annotation)
         declaration = f"{base_type} {name}{array_suffix};"
         if qualifier:
@@ -698,6 +764,12 @@ RayHit trace_ray(Ray ray) {{
         return declaration
 
     def resolve_type(self, type_annotation) -> tuple[str, str]:
+        """Resolves an FBUSL type annotation (a plain type name, or a dict
+        for an array type) to a `(base_type, array_suffix)` pair of GLSL
+        text, applying IMPLEMENTATIONS' "type" renames (e.g. `texture` ->
+        `sampler2D`) along the way. An array annotation recurses into its
+        element type and appends its own `[length]` onto whatever suffix
+        that produced, so nested arrays stack correctly."""
         if type_annotation is None:
             return "void", ""
 
@@ -723,6 +795,8 @@ RayHit trace_ray(Ray ray) {{
         return "unknown", ""
 
     def get_glsl_type(self, type_annotation) -> str:
+        """Returns just the base GLSL type name for `type_annotation`,
+        discarding any array suffix resolve_type() would also produce."""
         base_type, _ = self.resolve_type(type_annotation)
         return base_type
 

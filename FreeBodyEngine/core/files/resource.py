@@ -13,6 +13,7 @@ class FileResource:
     whether `data` is a DevFileStream, an AssetPackStream, or any other
     FileStream implementation."""
     def __init__(self, id: int, data: FileStream, file_path: str):
+        """Wraps `data` (a FileStream) as file `file_path`, tagged with `id` - stores the backend stream directly rather than copying its contents, so reads/writes below always reflect the stream's current state."""
         self.data = data
         self.id = id
         self.file_path = file_path

@@ -25,6 +25,7 @@ def fulcrum_editor(stdscr, filepath):
     scroll_offset = 0
 
     def save_file():
+        """Writes `text_lines` back to `filepath`, newline-joined, and returns a status-bar message reporting success or the exception string on failure."""
         try:
             with open(filepath, "w", encoding="utf-8") as f:
                 f.write("\n".join(text_lines))

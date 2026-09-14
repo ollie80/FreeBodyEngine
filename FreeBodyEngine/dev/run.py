@@ -6,7 +6,8 @@ import tomllib
 from FreeBodyEngine.build.builder import build 
 
 def main(path='./'):
-    try: 
+    """CLI entry point for `fb run`: builds the project fresh (`build(path, True)`), then launches its main file in a subprocess with `--dev`/`--path=`/`--name=` plus every original CLI argument forwarded, so the launched process sees the same flags this one was invoked with. Swallows Ctrl+C so interrupting the dev run doesn't surface as a traceback."""
+    try:
         flags = sys.argv
 
         build(path, True)

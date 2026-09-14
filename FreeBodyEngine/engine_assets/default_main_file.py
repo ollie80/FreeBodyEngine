@@ -4,6 +4,7 @@ import sys
 """This is the default main file for a FreeBodyEngine project. It has only the basic features to take in important args and run an example game. THIS IS MEANT TO BE CHANGED!"""
 
 def register_default_services():
+    """Registers the baseline services (event bus, file manager, logger, cooldown manager, scene manager, window, renderer, PBR pipeline, input) a game needs before it can create scenes or nodes - call once during startup before adding the default scene below."""
     # registers services that provide basic engine functionality
     fb.register_service(fb.core.event.EventManager())
     fb.register_service(fb.core.files.FileManager())

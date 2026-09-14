@@ -16,6 +16,7 @@ def abstractmethod(func):
     the instance's class - `func`'s own body is never executed, regardless
     of what it contains."""
     def wrapper(*args, **kwargs):
+        """Raises `NotImplementedError` naming both `func` and the calling instance's class, instead of running `func`'s own body."""
         cls_name = args[0].__class__.__name__
         raise NotImplementedError(f"Method '{func.__name__}' is not implemented on '{cls_name}'.")
     return wrapper
@@ -85,23 +86,27 @@ except ImportError:
     HAS_NUMBA = False
 
 def fbjit(signature=None, *args, **kwargs):
+    """JIT-compiles the decorated function with `numba.jit(signature, **kwargs)` when numba is installed; otherwise warns once and falls back to the no-op `decorator` below, which returns the function unchanged - lets call sites use `@fbjit` unconditionally regardless of whether numba is available."""
     if HAS_NUMBA:
         return numba.jit(signature, **kwargs)
-    
+
     else:
         def decorator(func):
+            """No-op fallback used when numba isn't installed: returns `func` unmodified."""
             return func
-        
+
         warning('Could not import numba.')
         return decorator
 
 def fbnjit(*args, **kwargs):
+    """JIT-compiles the decorated function in nopython mode via `numba.njit(*args, **kwargs)` when numba is installed; otherwise warns once and falls back to the no-op `decorator` below, which returns the function unchanged."""
     if HAS_NUMBA:
         return numba.njit(*args, **kwargs)
     else:
         def decorator(func):
+            """No-op fallback used when numba isn't installed: returns `func` unmodified."""
             return func
-        
+
         warning('Could not import numba.')
         return decorator
 

@@ -16,6 +16,15 @@ PFD_MAIN_PLANE = 0
 
 
 def create_win32_opengl_context(window: 'Win32Window', debug):
+    """Sets up a GL context for `window` via WGL: builds a
+    PIXELFORMATDESCRIPTOR requesting a double-buffered, 32-bit RGBA,
+    24-bit-depth/8-bit-stencil pixel format, chooses and sets that format on
+    `window.hdc`, then creates and activates (`wglMakeCurrent`) a rendering
+    context bound to that HDC. No explicit version/profile is requested here
+    (unlike the Wayland/EGL path's explicit 3.3 core-profile attribs), so the
+    context WGL hands back is whatever the driver's default
+    `wglCreateContext` behavior yields. Returns the created `hrc`; `debug` is
+    currently unused on this backend."""
     hdc = window.hdc
 
     pfd = WGL.PIXELFORMATDESCRIPTOR()

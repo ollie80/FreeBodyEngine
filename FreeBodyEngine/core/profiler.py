@@ -29,6 +29,7 @@ class Profiler:
         self._active = False
 
         def format_float(x: float):
+            """Formats one `(name, total_seconds)` call-time entry's elapsed seconds to 3 decimal places, for the sorted print below."""
             return f'{x[1]:.3f}'
 
         sorted_frame_calls = [(x[0], format_float(x)) if format_float(x) != '0.000' else None for x in sorted(self.frame_calls.items())]

@@ -94,8 +94,10 @@ class CooldownManager(Service):
 def cooldown(seconds: float):
     """Decorator to add a cooldown to functions."""
     def decorator(method):
+        """Wraps `method` so each call checks (and, once expired, resets) this instance's frame-time cooldown before running it."""
 
         def wrapper(self, *args, **kwargs):
+            """Runs `method` only if `self`'s cooldown has expired (or was never started), resetting it to `seconds` first; otherwise does nothing and returns None. Silently skips the call every time if the `cooldown_manager` service isn't registered."""
             if service_exists('cooldown_manager'):
                 id_ = id(self)
                 manager = get_service('cooldown_manager')
@@ -115,9 +117,13 @@ def cooldown(seconds: float):
 def physics_cooldown(seconds: float):
     """Decorator to add a cooldown to physics based functions. """
     def decorator(method):
-        
+        """Wraps `method` so each physics step checks this instance's physics-time cooldown before running it."""
+
         @wraps(method)
         def wrapper(self, *args, **kwargs):
+            """Runs `method` only once `self`'s physics cooldown has already reached zero; the first call instead just seeds it to `seconds` and returns None without running `method`.
+
+            Note: unlike `cooldown()`'s wrapper, this never resets `physics_cooldowns[id_]` back to `seconds` after it fires - `CooldownManager.physics_update()` keeps decrementing it further negative every step, so once the cooldown first expires this branch keeps returning True and `method` runs on every subsequent physics step."""
             id_ = id(self)
 
             manager = get_service('cooldown_manager')

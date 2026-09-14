@@ -110,9 +110,18 @@ class MaterialInjector(Injector):
             ]
 
             def matcher(node, prop=prop):
+                """Matches a bare `Identifier` referencing this property's
+                uppercase name (e.g. `ALBEDO`) - `prop` is captured as a
+                default arg to bind the loop variable's current value
+                rather than whatever `prop` is by the time `replace_expr`
+                calls this."""
                 return isinstance(node, Identifier) and node.value == prop.upper()
 
             def replacer(node, cap=cap):
+                """Builds the `useTexture ? sample(Texture, uv) : Color`
+                ternary that replaces a matched `PROPERTY` identifier;
+                `cap` is captured as a default arg for the same
+                late-binding reason as `matcher`'s `prop`."""
                 return InlineIf(
                     then_expr=FuncCall("sample", [Identifier(f"{cap}_Texture"), Identifier("uv")]),
                     condition=Identifier(f"{cap}_useTexture"),

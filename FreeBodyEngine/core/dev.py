@@ -8,6 +8,7 @@ from FreeBodyEngine import warning
 
 @dataclass
 class Project:
+    """Describes a loaded project: its root `path`, plus the `assets`/`code`/`main_file` paths (relative to `path`) and `name`, all read from `fbproject.toml`."""
     path: str
     assets: str
     code: str
@@ -36,10 +37,12 @@ def _add_code_dir_to_path(project: Project):
             sys.path.insert(0, path)
 
 def find_project():
+    """Loads and caches the current project into the module-level `PROJECT` global, and puts its code directory on `sys.path` - but only when the `DEVMODE` flag is set, since a release build has no `fbproject.toml` to look up."""
     if get_flag(DEVMODE, False):
         global PROJECT
         PROJECT = load_project()
         _add_code_dir_to_path(PROJECT)
 
 def get_project() -> Project:
+    """Returns the project loaded by `find_project()`, or None if `find_project()` hasn't run yet (e.g. DEVMODE is off)."""
     return PROJECT

@@ -9,8 +9,17 @@ import io
 
 
 class GLTextureManager(TextureManager):
+    """The GL 3.3 implementation of TextureManager: owns the real GL texture
+    objects behind every standalone/atlas/font-atlas/stack id, and does the
+    actual `glActiveTexture`/`glBindTexture` slot bookkeeping (`texture_slots`/
+    `slot_textures`/`next_texture_slot`) that maps an engine-side id to a live
+    GPU texture unit for the current draw."""
 
     def __init__(self, *args, **kwargs):
+        """Initializes the (empty) slot-tracking dicts and queries the
+        driver's actual texture-unit limit (`GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS`)
+        into `max_texture_slots`, so `_allocate_slot` can refuse to overrun
+        real hardware capacity instead of silently binding past it."""
         super().__init__(*args, **kwargs)
 
         self.texture_slots = {}
@@ -19,6 +28,14 @@ class GLTextureManager(TextureManager):
         self.max_texture_slots = glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS)
 
     def begin_draw(self):
+        """Resets texture-unit allocation for a fresh draw: every
+        previously-bound slot is forgotten and `next_texture_slot` restarts
+        at 0. Called once per `GLShader.draw_mesh()` (see that method), so
+        each mesh's material rebinds its textures from unit 0 rather than
+        accumulating allocations across the whole frame - texture-buffer
+        bindings a compute kernel manages itself (see GLComputeShader's own
+        `_next_unit`) are deliberately independent of this and are never
+        reset by it."""
         self.texture_slots.clear()
         self.slot_textures.clear()
         self.next_texture_slot = 0
@@ -118,6 +135,10 @@ class GLTextureManager(TextureManager):
         return Texture(self, id, (0, 0, 1, 1))
 
     def set_texture_filter(self, id, nearest: bool):
+        """Looks up `id`'s underlying GL texture and applies nearest- or
+        linear-filtered sampling to both minification and magnification (see
+        the inline comment below for why minification specifically uses the
+        `_MIPMAP_NEAREST` variant rather than plain `GL_NEAREST`)."""
         target, texture = self._get_gl_texture(id)
         if texture is None:
             return
@@ -280,7 +301,10 @@ class GLTextureManager(TextureManager):
         return Texture(self, id, rect)
 
     def get_atlas_id_from_path(self, file_path: str):
-
+        """Reverse-looks-up the engine-side id already registered for the
+        atlas at `file_path`, or None if that atlas hasn't been uploaded yet
+        - used by `_create_atlas_texture` to dedupe repeated sub-images from
+        the same atlas file onto one GL texture."""
         for atlas in self.atlas_textures:
             if self.atlas_textures[atlas][1] == file_path:
                 return atlas
@@ -288,6 +312,8 @@ class GLTextureManager(TextureManager):
         return None
 
     def gen_id(self):
+        """Generates a fresh unique engine-side texture id (a uuid4) to key
+        one of `standalone_textures`/`atlas_textures`/`texture_stacks`."""
         return uuid.uuid4()
 
     def wrap_external_texture(self, gl_texture_id) -> Texture:
@@ -333,7 +359,9 @@ class GLTextureManager(TextureManager):
         return slot
 
     def bind_texture(self, id):
-
+        """Resolves `id` to its underlying GL_TEXTURE_2D and allocates (or
+        reuses) a texture unit for it via `_allocate_slot`, warning and
+        returning None instead if `id` doesn't resolve to a real texture."""
         target, texture = self._get_gl_texture(id)
 
         if texture is None:
@@ -343,7 +371,9 @@ class GLTextureManager(TextureManager):
         return self._allocate_slot(id, target, texture)
 
     def bind_texture_stack(self, id):
-
+        """Like bind_texture(), but for a GL_TEXTURE_2D_ARRAY-backed
+        TextureStack id - allocates (or reuses) a texture unit for the whole
+        array, not per-layer."""
         if id not in self.texture_stacks:
             warning(f"Cannot bind texture stack with id '{id}' as it doesn't exist.")
             return None
