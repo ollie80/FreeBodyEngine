@@ -155,4 +155,11 @@ class Scene:
         for node in physics_nodes:
             node._check_collisions()
 
-        
+        # Coexists with the loop above rather than replacing it - a scene
+        # can freely mix the older arcade-physics PhysicsBody with the
+        # newer, joint-capable RigidBody2D system; they're discovered by
+        # different node types and don't interact with each other.
+        from FreeBodyEngine.core.physics.world import step as physics_world_step
+        from FreeBodyEngine import physics_delta
+        physics_world_step(self, physics_delta())
+
