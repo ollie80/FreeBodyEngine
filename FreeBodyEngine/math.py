@@ -139,9 +139,21 @@ class Transform:
             [0,  0,  0,  1]
         ], dtype=float)
 
+        # Transposed from the "usual" [[cos,-sin],[sin,cos]] column-vector
+        # rotation matrix on purpose: this matrix is used in row-vector
+        # convention (v @ M, per this method's own docstring), where that
+        # form actually rotates *clockwise* for a positive angle - the
+        # opposite of every other rotation in the engine (Vector.rotated(),
+        # RectangleCollisionShape's corners, the whole physics/joints/IK
+        # system), all of which treat positive degrees as counter-
+        # clockwise. Confirmed via SpiderArena: a leg segment's rendered
+        # mesh rotated the opposite way from its own joint anchors,
+        # visibly not lining up between its hip/knee markers even though
+        # the joints themselves (and the markers, being circles, rotation-
+        # invariant in appearance) were positioned correctly.
         rotation = numpy.array([
-            [cos_r, -sin_r, 0, 0],
-            [sin_r,  cos_r, 0, 0],
+            [cos_r,  sin_r, 0, 0],
+            [-sin_r, cos_r, 0, 0],
             [0,      0,     1, 0],
             [0,      0,     0, 1]
         ], dtype=float)
