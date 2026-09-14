@@ -109,12 +109,12 @@ class Sound:
     into that in-memory array advanced by `get_frames`.
     """
 
-    def __init__(self, data, manager: AudioManager):
+    def __init__(self, data: any, manager: AudioManager):
         """Loads and, if needed, resamples/upmixes `data` to match `manager`'s
         stream format, ready to be played through it.
 
         Args:
-            data: Anything `soundfile.read` accepts (e.g. a path or file-like object).
+            data (any): Anything `soundfile.read` accepts (e.g. a path or file-like object).
             manager: The `AudioManager` this sound will be played through -
                 its sample rate/channel count is what `data` is converted to match.
         """

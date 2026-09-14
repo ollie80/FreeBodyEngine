@@ -157,7 +157,7 @@ class RectangleCollisionShape(CollisionShape):
         projections = [corner.dot(axis) for corner in corners]
         return min(projections), max(projections)
 
-    def collide_rectangle(self, other: "RectangleCollisionShape"):
+    def collide_rectangle(self, other: "RectangleCollisionShape") -> bool:
         """Checks for overlap with another rectangle using the separating axis theorem (SAT): tests both rectangles' face normals as candidate separating axes, and reports a collision only if no axis separates them.
 
         Returns:
@@ -177,7 +177,7 @@ class RectangleCollisionShape(CollisionShape):
 
         return True
 
-    def collide_point(self, point: Vector):
+    def collide_point(self, point: Vector) -> bool:
         """Checks whether `point` lies inside the rectangle by projecting it onto the rectangle's two (rotated) axes and testing against the rectangle's extent on each.
 
         Returns:
@@ -200,7 +200,7 @@ class RectangleCollisionShape(CollisionShape):
         min_b, max_b = self._project_onto_axis([point], axis2)
         return not (max_b < min_a or max_a < min_b)
 
-    def collide_circle(self, other: "CircleCollisionShape"):
+    def collide_circle(self, other: "CircleCollisionShape") -> bool:
         """Checks for overlap with a circle by clamping the circle's center onto the rectangle's bounds along each axis to find the closest point on the rectangle, then comparing that distance to the circle's radius.
 
         Returns:
@@ -396,7 +396,7 @@ class Ray2D:
         else:
             raise ValueError(f"Provided collider type is not supported, type: {collider.__class__}")
 
-    def cast(self, max_dist: float = 100):
+    def cast(self, max_dist: float = 100) -> Vector | None:
         """Finds the closest collider in the scene that this ray intersects.
 
         Only considers colliders whose own position is within `max_dist` of
