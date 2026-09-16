@@ -123,13 +123,27 @@ class UIRenderer(Service):
         row can be visible either, so this also caps how much of an
         offscreen subtree gets a draw call, not just its own background/
         text. (Full virtualization - skipping *layout*, not just drawing,
-        for offscreen rows - is a further improvement, not this one.)"""
+        for offscreen rows - is a further improvement, not this one.)
+
+        The "outside the scissor rect" test only applies when this element
+        itself has a real (positive) width and height. A zero-size element
+        is not the same thing as an off-screen one: a plain layout wrapper
+        with no explicit height (see ui/element.py's "auto" size docs -
+        before that existed, *every* such wrapper defaulted to height 0
+        from DEFAULT_STYLES) reports zero size for itself while still
+        having children with their own real, independent geometry
+        (fixed-pixel row heights inside it, say). Treating "zero size" as
+        "fully clipped, skip the whole subtree" - what this used to do -
+        discarded every one of those children's draw calls along with it,
+        silently: a search-results list, or any dynamically-populated
+        container built the obvious way (an unsized wrapper around rows
+        added later), rendered nothing at all despite every row existing
+        in the tree with the right text and a valid size of its own."""
         layout = element._layout
 
-        if scissor is not None:
+        if scissor is not None and layout.width > 0 and layout.height > 0:
             sx, sy, sw, sh = scissor
             if (
-                layout.width <= 0 or layout.height <= 0 or
                 layout.x >= sx + sw or layout.x + layout.width <= sx or
                 layout.y >= sy + sh or layout.y + layout.height <= sy
             ):

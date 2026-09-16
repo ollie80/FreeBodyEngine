@@ -72,6 +72,33 @@ hw
         "height": "50hw"
 
 
+auto
+    Fits this element to its own children's stacked size along its
+    `layout` direction - "height": "auto" with layout "vertical" (the
+    common case: a list container that should be exactly as tall as
+    its rows, not clipped to a guessed fixed number, and not squashed
+    to 0 by DEFAULT_STYLES if you forget to set a height at all) sums
+    every non-anchored child's own height plus the gaps between them;
+    "width": "auto" with layout "horizontal" does the same across
+    width. There's no cross-axis form ("width": "auto" under a
+    *vertical* layout, sized to the widest child, say) - that's a
+    different, not-yet-implemented computation, and falls back to 0
+    the same way an unparseable size would.
+
+    Example:
+
+        styles={
+            "width": "100w",
+            "height": "auto",
+            "layout": "vertical",
+        }
+
+    A child that's itself "auto" along the same axis can't be
+    measured without laying it out for real first, so it's treated as
+    contributing 0 rather than recursing indefinitely - auto-inside-
+    auto (on the same axis) isn't supported.
+
+
 PADDING
 -------------------------------------------------------------------------------
 
@@ -723,6 +750,16 @@ class UIElement(GenericElement):
 
             "69hw"
                 69% of root/window height.
+
+        "auto" is a valid *style* value (see the SIZE UNITS docs) but is
+        never passed to this method - calculate_layout() and
+        _measure_flow_extent() both special-case it before ever calling
+        _parse_size(). Reaching here with "auto" (or any other string this
+        doesn't recognize) is always a caller bug, not a legitimate size -
+        warned and treated as 0 rather than raising, consistent with how
+        the rest of this class handles bad style input (see
+        _apply_anchor's unknown-anchor handling, for instance) - one
+        malformed style shouldn't be able to crash the whole layout pass.
         """
 
         s = str(size).strip().lower()
@@ -742,13 +779,16 @@ class UIElement(GenericElement):
         #
         # Window-relative unit.
         #
-        if s[-2:] in ("ww", "hw"):
-            num = float(s[:-2])
-            suffix = s[-2:]
-
-        else:
-            num = float(s[:-1])
-            suffix = s[-1]
+        try:
+            if s[-2:] in ("ww", "hw"):
+                num = float(s[:-2])
+                suffix = s[-2:]
+            else:
+                num = float(s[:-1])
+                suffix = s[-1]
+        except ValueError:
+            warning(f'Could not parse size "{size}" - expected a number, or one of the w/h/ww/hw suffixes.')
+            return 0
 
         if suffix == "w":
             return int(parent_layout.width * (num / 100.0))
@@ -762,6 +802,7 @@ class UIElement(GenericElement):
         if suffix == "hw":
             return int(root_layout.height * (num / 100.0))
 
+        warning(f'Could not parse size "{size}" - unknown unit suffix "{suffix}".')
         return 0
 
     def get_style(self, name: str):
@@ -871,6 +912,45 @@ class UIElement(GenericElement):
         self._layout.x = int(origin_x - ((anchor_x + 1) / 2) * self._layout.width + x)
         self._layout.y = int(origin_y - ((1 - anchor_y) / 2) * self._layout.height + y)
 
+    def _measure_flow_extent(self, content_layout: Layout, root: 'RootElement', layout_dir: str, gap: float) -> float:
+        """Sum of non-anchored children's own size along `layout_dir`, plus
+        the gaps between them - a lightweight pass (just each child's own
+        size, not a full layout) shared by "auto" sizing and "scroll"
+        clamping, both of which need "how much space would my children
+        take up if I just laid them out." Doesn't depend on this element's
+        own size (only `content_layout`'s cross-axis and `root.layout`),
+        so computing it more than once a frame is cheap and always gives
+        the same answer."""
+        total_extent = 0.0
+        seen_first = False
+
+        for child in self.children.values():
+            child_anchored = (
+                child._has_own_style("anchor") or
+                child._has_own_style("parent_anchor")
+            )
+            if child_anchored:
+                continue
+
+            child_styles = child.get_current_styles()
+            child_size_style = child_styles.get("height" if layout_dir == "vertical" else "width", "0")
+
+            if child_size_style == "auto":
+                # A child that's *also* auto-sized along this same axis
+                # can't be measured without laying it out for real first -
+                # not supported (auto-inside-auto), so it contributes 0
+                # rather than recursing indefinitely.
+                extent = 0.0
+            else:
+                extent = self._parse_size(child_size_style, content_layout, root.layout)
+
+            if seen_first:
+                total_extent += gap
+            total_extent += extent
+            seen_first = True
+
+        return total_extent
+
     def calculate_layout(self, root: 'RootElement', parent_layout: Layout = None):
         """
         Calculate this element's size and position, then recursively
@@ -886,14 +966,26 @@ class UIElement(GenericElement):
             parent_layout = root.layout
 
         #
-        # Size
+        # Size. "auto" (see the SIZE UNITS docs) can't be resolved until
+        # children are measured, which itself needs the *other* axis
+        # already resolved (a vertical auto-height list still needs its
+        # own width settled first, so a "100w" child measures against a
+        # real number) - so an auto dimension is deferred (left at 0 here)
+        # and only actually resolved further down, after content_layout
+        # exists, via _measure_flow_extent().
         #
-        self._layout.width = self._parse_size(
-            styles.get("width", "0"), parent_layout, root.layout
+        layout_dir = styles.get("layout", "vertical")
+        width_style = styles.get("width", "0")
+        height_style = styles.get("height", "0")
+        auto_width = width_style == "auto"
+        auto_height = height_style == "auto"
+
+        self._layout.width = 0 if auto_width else self._parse_size(
+            width_style, parent_layout, root.layout
         )
 
-        self._layout.height = self._parse_size(
-            styles.get("height", "0"), parent_layout, root.layout
+        self._layout.height = 0 if auto_height else self._parse_size(
+            height_style, parent_layout, root.layout
         )
 
         #
@@ -961,50 +1053,42 @@ class UIElement(GenericElement):
         #
         # Child layout settings.
         #
-        layout_dir = styles.get("layout", "vertical")
-
         gap = self._parse_size(styles.get("gap", 0), content_layout, root.layout)
+
+        #
+        # Resolve any deferred "auto" dimension now that content_layout's
+        # cross-axis is settled - see the Size comment above.
+        #
+        if auto_width or auto_height:
+            measured_extent = self._measure_flow_extent(content_layout, root, layout_dir, gap)
+
+            if auto_height and layout_dir == "vertical":
+                self._layout.height = measured_extent + pad_top + pad_bottom
+                content_h = max(0, self._layout.height - pad_top - pad_bottom)
+                content_layout = Layout(content_x, content_y, content_w, content_h)
+            elif auto_width and layout_dir == "horizontal":
+                self._layout.width = measured_extent + pad_left + pad_right
+                content_w = max(0, self._layout.width - pad_left - pad_right)
+                content_layout = Layout(content_x, content_y, content_w, content_h)
+            # "auto" on the cross-axis (e.g. width:auto under a vertical
+            # layout) isn't resolved by this - it stays 0, the same as an
+            # otherwise-unresolvable size would. Fitting to the *widest*
+            # child (rather than the flow-summed extent) is a different,
+            # not-yet-needed computation.
 
         child_offset_x = content_x
         child_offset_y = content_y
 
         #
-        # Scrolling: measure total child extent along the flow direction
-        # (a lightweight pass - just each non-anchored child's own size,
-        # not a full layout) so the offset can be clamped to actual
-        # overflow before it's applied below. Sizes don't depend on scroll
-        # position (parse_size uses content_layout, which is scroll-
-        # independent), so this measurement doesn't change once children
-        # are laid out for real - measuring it twice per child is the
-        # tradeoff for not needing a separate pre-layout pass.
+        # Scrolling: clamp the offset to actual overflow, measured the
+        # same way "auto" sizing measures children (see
+        # _measure_flow_extent) - scroll and auto-size are mutually
+        # exclusive uses in practice (scrolling means "clip to a fixed
+        # size", auto means "grow to fit"), but nothing stops both styles
+        # being set at once, so this runs independently either way.
         #
         if styles.get("scroll", False):
-            total_extent = 0.0
-            seen_first = False
-
-            for child in self.children.values():
-                child_anchored = (
-                    child._has_own_style("anchor") or
-                    child._has_own_style("parent_anchor")
-                )
-                if child_anchored:
-                    continue
-
-                child_styles = child.get_current_styles()
-                if layout_dir == "vertical":
-                    extent = self._parse_size(
-                        child_styles.get("height", "0"), content_layout, root.layout
-                    )
-                else:
-                    extent = self._parse_size(
-                        child_styles.get("width", "0"), content_layout, root.layout
-                    )
-
-                if seen_first:
-                    total_extent += gap
-                total_extent += extent
-                seen_first = True
-
+            total_extent = self._measure_flow_extent(content_layout, root, layout_dir, gap)
             viewport_extent = content_h if layout_dir == "vertical" else content_w
             max_scroll = max(0.0, total_extent - viewport_extent)
             self._scroll_offset = max(0.0, min(self._scroll_offset, max_scroll))
