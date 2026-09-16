@@ -1,6 +1,7 @@
 from typing import Literal, Callable
-from FreeBodyEngine import get_flag, MAX_FPS, MAX_TPS
+from FreeBodyEngine import get_flag, MAX_FPS, MAX_TPS, warning
 from enum import Enum, auto
+import traceback
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -53,36 +54,69 @@ class UpdateCoordinator:
         """Removes `callback` from `phase`'s registered callbacks."""
         self._phases[phase] = [(p, cb) for (p, cb) in self._phases[phase] if cb != callback]
 
+    def _run(self, callback: Callable):
+        """Calls `callback`, catching and logging (rather than propagating)
+        any exception it raises.
+
+        Previously nothing here caught anything: one exception in one
+        callback - a bad style value, an unhandled API error shape,
+        anything - propagated straight out of update() and killed the
+        entire process, every frame/every service along with it, not just
+        whatever was actually broken. That's a much harsher failure mode
+        than users of an app built on this engine should ever see over a
+        single bug in one screen; it's also not how other engines behave
+        (Unity/Godot/Unreal all log a script error and keep the frame
+        going rather than tearing down the whole session). Logged with a
+        full traceback via `warning()` so the bug is still loud/visible in
+        the console - just not fatal to everything else running."""
+        try:
+            callback()
+        except Exception:
+            message = f"Unhandled exception in update callback {callback!r}:\n{traceback.format_exc()}"
+            try:
+                warning(message)
+            except Exception:
+                # warning() itself needs the 'logger' service (and a Main
+                # instance) to exist - true for the whole running app in
+                # practice, but not necessarily for a callback that raises
+                # before startup has gotten that far. The safety net can't
+                # be allowed to raise its own new exception; falling back
+                # to a bare print() keeps this method's one job (never
+                # propagate) true unconditionally.
+                print(message)
+
     def update(self):
         """Advances the loop by one iteration: runs EARLY callbacks once,
         then PHYSICS callbacks as many times as `physics_timestep` fits
         into the accumulated delta time (ticking `self.time` after each),
         then - once a full `update_timestep` has accumulated - UPDATE then
         DRAW callbacks a single time (advancing `self.time`'s frame
-        counter), then LATE callbacks once."""
+        counter), then LATE callbacks once. Each callback runs through
+        `_run()`, so one raising doesn't stop the rest from running this
+        frame, or any future frame."""
         for _, callback in self._phases[UpdatePhase.EARLY]:
-            callback()
+            self._run(callback)
 
         self.physics_accumulator += self.time.delta_time
         while self.physics_accumulator >= self.physics_timestep:
             for _, callback in self._phases[UpdatePhase.PHYSICS]:
-                callback()
-            
+                self._run(callback)
+
             self.physics_accumulator -= self.physics_timestep
             self.time.tick()
 
         self.update_accumulator += self.time.delta_time
         if self.update_accumulator >= self.update_timestep:
             for _, callback in self._phases[UpdatePhase.UPDATE]:
-                callback()
-            
+                self._run(callback)
+
             for _, callback in self._phases[UpdatePhase.DRAW]:
-                callback()
+                self._run(callback)
 
             self.update_accumulator -= self.update_timestep
             self.time.frame()
-        
+
         for _, callback in self._phases[UpdatePhase.LATE]:
-            callback()
+            self._run(callback)
 
         
