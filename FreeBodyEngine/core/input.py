@@ -388,13 +388,19 @@ class Input(Service):
         self.gamepads = {}
 
     def on_initialize(self):
-        """Registers update() to run every frame's EARLY phase and grabs the 'window' service ('window' is a declared dependency, so it's guaranteed to already be registered)."""
+        """Registers update() to run every frame's EARLY phase, grabs the 'window' service ('window' is a declared dependency, so it's guaranteed to already be registered), and registers the KEY_PRESS/KEY_RELEASE/KEY_REPEAT events _key_callback() emits - previously never registered anywhere, so anything subscribing to them with register_event_callback() (rather than just emitting/ignoring them, which emit_event() tolerates on an unregistered event) hit a raw KeyError. Input owns these constants, so it registers them, the same way Window.on_initialize() registers WINDOW_RESIZE/FRAMEBUFFER_RESIZE."""
         register_service_update(UpdatePhase.EARLY, self.update)
         self.window = get_service("window")
+        register_event(KEY_PRESS)
+        register_event(KEY_RELEASE)
+        register_event(KEY_REPEAT)
 
     def on_destroy(self):
-        """Unregisters update() from the EARLY update phase."""
+        """Unregisters update() from the EARLY update phase and the key events registered in on_initialize()."""
         unregister_service_update(UpdatePhase.EARLY, self.update)
+        unregister_event(KEY_PRESS)
+        unregister_event(KEY_RELEASE)
+        unregister_event(KEY_REPEAT)
 
     def set_actions(self, actions: dict[str, list[Action]]):
         """Replaces the entire action-bindings dict."""

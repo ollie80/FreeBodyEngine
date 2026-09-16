@@ -35,7 +35,12 @@ class EventManager(Service):
 
     def unregister_callback(self, event_name: str, callable: Callable):
             """Unregisters `callable` from `event_name`'s callbacks, warning
-            instead if it isn't currently registered there."""
+            instead if `event_name` isn't a registered event at all, or if
+            `callable` isn't currently registered on it."""
+            if event_name not in self.events:
+                warning(f'Could not unregister callback "{callable.__name__}" from event "{event_name}" because that event is not registered.')
+                return
+
             if callable not in self.events[event_name].callbacks:
                 warning(f'Could not unregister callback "{callable.__name__}" from event "{event_name}" because it is not registered.')
                 return
@@ -110,7 +115,12 @@ class EventManager(Service):
 
     def register_callback(self, event_name: str, callable: Callable):
         """Registers `callable` to run whenever `event_name` is emitted,
-        warning instead if it's already registered on that event."""
+        warning instead if `event_name` isn't a registered event at all, or
+        if `callable` is already registered on it."""
+        if event_name not in self.events:
+            warning(f'Could not register callback "{callable.__name__}" on event "{event_name}" because that event is not registered.')
+            return
+
         if callable in self.events[event_name].callbacks:
             warning(f'Could not register callback "{callable.__name__}" on event "{event_name}" because it is already registered.')
             return
