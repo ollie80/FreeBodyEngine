@@ -238,6 +238,13 @@ Example:
 
     button.on("click", lambda: play_track(track))
 
+Registered callbacks stay registered until off()/clear() removes them,
+including across re-renders of the same element - re-running the same
+on() call (e.g. to reflect new state on a "Follow"/"Unfollow" toggle)
+adds a second, third, ... callback rather than replacing the first.
+clear(event) removes every callback on `event` at once, for exactly
+that "about to re-attach the current handler" case.
+
 editable
     Marks this element as a text field. Clicking it focuses it (see
     the "selected"/FOCUSED state) and routes keyboard character/
@@ -598,6 +605,13 @@ class UIElement(GenericElement):
         """Unregisters `callback` from `event`, if it was registered."""
         if callback in self._event_callbacks.get(event, ()):
             self._event_callbacks[event].remove(callback)
+
+    def clear(self, event: str) -> None:
+        """Removes every callback registered for `event` via on() - for
+        re-rendering a element whose behavior changes with some state (a
+        follow button toggling between "Follow"/"Unfollow", say) without
+        accumulating a duplicate callback on it every time."""
+        self._event_callbacks.pop(event, None)
 
     def _emit(self, event: str, *args) -> None:
         """Calls every callback registered for `event` via `on()`, in
