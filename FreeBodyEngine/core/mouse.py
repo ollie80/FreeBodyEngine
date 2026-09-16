@@ -69,6 +69,13 @@ class Mouse(Service):
         """Returns the position `button`'s current drag started at, in world or screen space depending on `world`."""
         pass
 
+    def get_scroll_delta(self) -> Vector:
+        """Returns how far the scroll wheel moved this frame (x = horizontal,
+        y = vertical - positive y is scrolling up). Concrete default of
+        `Vector(0, 0)` (no scrolling) for backends that don't report a wheel
+        yet; GLFWMouse and WaylandMouse override this with real values."""
+        return Vector(0, 0)
+
     def get_drag_offset(self, button: int, world: bool = False) -> Vector:
         """Returns how far the cursor has moved since `button`'s drag started, in world or screen space depending on `world`."""
         if world:

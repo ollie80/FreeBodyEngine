@@ -176,11 +176,24 @@ class GLFWWindow(Window):
         glfw.make_context_current(self._window)
         glfw.set_window_size_callback(self._window, self.resize)
 
+        # Neither of these was ever wired up before - _key_callback existed
+        # as a method but nothing told GLFW to call it, so no KEY_PRESS/
+        # RELEASE/REPEAT event ever fired on this backend (Wayland's
+        # equivalent path, _on_keyboard_key, was already connected). Scroll
+        # is new: GLFWMouse.get_scroll_delta() reads self._scroll_accum,
+        # accumulated here and drained once per frame.
+        glfw.set_key_callback(self._window, self._key_callback)
+        glfw.set_scroll_callback(self._window, self._scroll_callback)
+        self._scroll_accum = Vector(0.0, 0.0)
+
     def _key_callback(self, window, key, scancode, action, mods):
         input_key = GLFW_CHARACTER_MAP[key]
         key_type = GLFW_KEY_CALLBACK_TYPE_MAP[action]
-        
+
         get_service('input')._key_callback(input_key, key_type)
+
+    def _scroll_callback(self, window, xoffset, yoffset):
+        self._scroll_accum += Vector(xoffset, yoffset)
 
     def set_title(self, new_title):
         """Sets the OS-level window title."""
@@ -334,6 +347,12 @@ class GLFWMouse(Mouse):
         self._dragging = [False] * 8
         self.last_click_time = -500
         self.drag_threshold = 0.2
+        self.scroll_delta = Vector(0, 0)
+
+    def get_scroll_delta(self) -> Vector:
+        """How far the scroll wheel moved this frame, drained from the
+        window's GLFW scroll callback each `update()`."""
+        return self.scroll_delta
 
     def get_pressed(self, button: int):
         """True on the frame `button` was pressed."""
@@ -372,6 +391,9 @@ class GLFWMouse(Mouse):
         self._pressed = [False] * 8
         self._released = [False] * 8
         self._double_clicked = [False] * 8
+
+        self.scroll_delta = self.window._scroll_accum
+        self.window._scroll_accum = Vector(0.0, 0.0)
 
         for i in range(len(self._pressed)):
             glfw_i = glfw_mouse_button_map[i]

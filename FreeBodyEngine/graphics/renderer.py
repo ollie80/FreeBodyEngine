@@ -12,6 +12,7 @@ from FreeBodyEngine.graphics.buffer import Buffer
 from FreeBodyEngine.graphics.mesh import Mesh
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType, Framebuffer
 from FreeBodyEngine.graphics.texture import TextureManager, Texture
+from FreeBodyEngine.graphics.material import BlendMode
 import numpy as np
 from FreeBodyEngine.core.service import Service
 
@@ -27,15 +28,30 @@ if TYPE_CHECKING:
 
 @dataclass
 class Call:
-    """The parameters of a single draw call, bundled together so a call can
-    be recorded and issued separately from where it's built."""
+    """One queued draw, recorded via Renderer.submit() and issued later by
+    Renderer.flush() rather than immediately - this indirection is what lets
+    flush() sort/group calls (by blend mode for correct transparency, and by
+    material/mesh to cut redundant state changes) instead of drawing in
+    whatever order the scene tree happened to be walked."""
     mesh: 'Mesh'
     transform: 'Transform'
     material: 'Material'
-    use_camera: bool
     camera: 'Camera'
-    is_instanced: bool
-    instances: int
+
+    @property
+    def blend_mode(self) -> BlendMode:
+        return self.material.blend_mode
+
+    def camera_distance(self) -> float:
+        """Squared distance from the camera to this call's world position -
+        used to sort transparent calls back-to-front. Squared (not sqrt'd)
+        since only the relative order matters, not the actual distance."""
+        pos = self.transform.position
+        cam_pos = self.camera.world_transform.position
+        dx = pos.x - cam_pos.x
+        dy = pos.y - cam_pos.y
+        dz = getattr(pos, 'z', 0.0) - getattr(cam_pos, 'z', 0.0)
+        return dx * dx + dy * dy + dz * dz
 
 class Renderer(Service):
     """Abstract base class for a graphics backend (GL33Renderer, GL44Renderer,
@@ -49,6 +65,7 @@ class Renderer(Service):
         super().__init__('renderer')
         self.texture_manager = TextureManager()
         self.calls: list[Call] = []
+        self._current_blend_mode: BlendMode = BlendMode.OPAQUE
 
 
     def on_initialize(self):
@@ -120,6 +137,81 @@ class Renderer(Service):
         """Updates the backend's viewport/surface to match the new framebuffer `size` (pixels). Called automatically on FRAMEBUFFER_RESIZE - see on_initialize()."""
         pass
 
+    def submit(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera'):
+        """Queues a draw instead of issuing it immediately - see
+        flush_opaque()/flush_transparent()."""
+        self.calls.append(Call(mesh, transform, material, camera))
+
+    def flush_opaque(self):
+        """Draws and dequeues every OPAQUE/ADDITIVE Call currently queued
+        (leaving any TRANSPARENT ones queued - see flush_transparent()),
+        grouped by (material, mesh) - via graphics.instancing.
+        group_by_state() - purely to cut redundant glUseProgram/uniform/
+        texture-bind churn between consecutive draws that share a material
+        (state-minimizing batching, not GPU instancing - see
+        graphics/instancing.py's module docstring for why real
+        per-instance-transform instancing isn't part of this). Drawn with
+        depth testing/writing on; ADDITIVE still writes depth (e.g. a glow
+        effect should still occlude/be occluded) while blending
+        additively, unlike TRANSPARENT.
+
+        Split from flush_transparent() (rather than one combined flush())
+        because a deferred pipeline needs a framebuffer rebind between the
+        two - see PBRPipeline.draw(): opaque calls render into the
+        multi-attachment G-buffer, and only after that pipeline's own
+        lighting composite pass runs do transparent calls get drawn,
+        forward-shaded onto the composite's single 'lit' output.
+        """
+        from FreeBodyEngine.graphics.instancing import group_by_state
+
+        opaque = [c for c in self.calls if c.blend_mode in (BlendMode.OPAQUE, BlendMode.ADDITIVE)]
+        self.calls = [c for c in self.calls if c.blend_mode == BlendMode.TRANSPARENT]
+
+        for group in group_by_state(opaque):
+            mode = group[0].blend_mode
+            self.set_blend_mode(mode)
+            for call in group:
+                self._draw_call(call)
+
+        self.set_blend_mode(BlendMode.OPAQUE)
+
+    def flush_transparent(self):
+        """Draws and dequeues every TRANSPARENT Call currently queued,
+        individually (no state-minimizing grouping - see flush_opaque()),
+        sorted back-to-front by camera distance (the only order that
+        composites correctly without per-pixel order-independent blending),
+        with alpha blending on and depth *testing* on but depth *writing*
+        off, so transparent objects don't occlude each other incorrectly or
+        block opaque geometry drawn earlier."""
+        transparent = [c for c in self.calls if c.blend_mode == BlendMode.TRANSPARENT]
+        self.calls = [c for c in self.calls if c.blend_mode != BlendMode.TRANSPARENT]
+
+        transparent.sort(key=lambda c: c.camera_distance(), reverse=True)
+        if transparent:
+            self.set_blend_mode(BlendMode.TRANSPARENT)
+            for call in transparent:
+                self._draw_call(call)
+            self.set_blend_mode(BlendMode.OPAQUE)
+
+    def _draw_call(self, call: Call):
+        """Sets `call.material`'s model/view/proj uniforms from
+        `call.transform`/`call.camera` and draws `call.mesh` - the actual
+        per-call work flush() drives once calls are grouped/sorted."""
+        call.material.shader['model'] = call.transform.model
+        call.material.shader['view'] = call.camera.view_matrix
+        call.material.shader['proj'] = call.camera.proj_matrix
+        self.draw_mesh(call.mesh, call.material)
+
+    @abstractmethod
+    def set_blend_mode(self, mode: BlendMode):
+        """Configures blending for subsequent draws: OPAQUE disables
+        blending entirely (and enables depth writes), TRANSPARENT enables
+        standard alpha blending with depth writes off (but depth testing
+        still on), ADDITIVE enables additive blending with depth writes on.
+        Called by flush() between groups, so a backend only needs to change
+        actual GL state when `mode` differs from what's already active."""
+        pass
+
     @abstractmethod
     def draw_line(self, start: tuple[float, float], end: tuple[float, float], width: float, color: 'Color'):
         """
@@ -135,13 +227,35 @@ class Renderer(Service):
         pass
 
     @abstractmethod
-    def draw_mesh_instanced(self, mesh: 'Mesh', instances: int, material: 'Material'):
-        """Draws `instances` copies of `mesh` in a single instanced draw call, using `material`."""
+    def draw_mesh_instanced(self, mesh: 'Mesh', material: 'Material', model_matrices: np.ndarray, camera: 'Camera'):
+        """Draws len(model_matrices) copies of `mesh` in a single GPU
+        instanced draw call, one per row of `model_matrices` (shape
+        (N, 4, 4)), using `material`. Not currently wired into flush()'s
+        automatic batching - see graphics/instancing.py's module docstring
+        for why. Real infrastructure for a caller that wants to submit
+        genuine GPU instancing explicitly."""
         pass
 
     @abstractmethod
     def draw_mesh(self, mesh: 'Mesh', material: 'Material'):
         """Draws `mesh` once, using `material`'s currently bound shader and uniforms."""
+        pass
+
+    def set_scissor(self, x: int, y: int, width: int, height: int):
+        """Restricts drawing to the (x, y, width, height) rectangle - top-
+        left origin, Y-down pixels, matching ui/renderer.py's own screen-
+        space convention - until the next set_scissor()/clear_scissor().
+        Concrete no-op default: a backend that doesn't override this (e.g.
+        DummyRenderer) just draws unclipped rather than raising, since
+        unclipped drawing is a correctness-preserving fallback (UIRenderer's
+        scroll-container clipping is a visual nicety, not something other
+        engine code depends on) - GL33Renderer/GL44Renderer override it
+        with a real glScissor."""
+        pass
+
+    def clear_scissor(self):
+        """Undoes set_scissor(), restoring unclipped drawing. See
+        set_scissor()'s docstring for why this defaults to a no-op."""
         pass
 
     def draw_model(self, model: 'Model', transform: 'Transform', camera: 'Camera2D'):

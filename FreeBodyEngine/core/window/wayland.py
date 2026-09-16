@@ -270,7 +270,7 @@ class WaylandWindow(Window):
             self._wl_pointer.dispatcher["leave"] = lambda *_: None
             self._wl_pointer.dispatcher["motion"] = self._on_pointer_motion
             self._wl_pointer.dispatcher["button"] = self._on_pointer_button
-            self._wl_pointer.dispatcher["axis"] = lambda *_: None
+            self._wl_pointer.dispatcher["axis"] = self._on_pointer_axis
 
         if has_keyboard and self._wl_keyboard is None:
             self._wl_keyboard = seat.get_keyboard()
@@ -316,6 +316,22 @@ class WaylandWindow(Window):
             return
         pressed = state == WlPointer.button_state.pressed.value
         self.mouse._on_button(index, pressed, time)
+
+    def _on_pointer_axis(self, pointer, time, axis, value):
+        # value is in "wl fixed" units already converted to float by
+        # pywayland - roughly 10.0 per traditional wheel notch (matching
+        # libinput's default), so this is scaled down to land in the same
+        # "about 1.0 per notch" range GLFW's scroll callback reports, and
+        # the sign is flipped for vertical so scrolling down (positive
+        # wl_pointer value) moves content up, matching every other scroll
+        # convention (terminals, browsers, waybar's own scroll bindings).
+        if self.mouse is None:
+            return
+        delta = value / 10.0
+        if axis == WlPointer.axis.vertical_scroll.value:
+            self.mouse._on_axis(0, -delta)
+        elif axis == WlPointer.axis.horizontal_scroll.value:
+            self.mouse._on_axis(delta, 0)
 
     # -- keyboard ---------------------------------------------------------
 
@@ -668,9 +684,18 @@ class WaylandMouse(Mouse):
         self.drag_threshold = 0.2
         self.position = Vector(0, 0)
         self.world_position = Vector(0, 0)
+        self._scroll_accum = Vector(0, 0)
+        self.scroll_delta = Vector(0, 0)
 
     def _set_position(self, x: float, y: float):
         self.position = Vector(x, y)
+
+    def _on_axis(self, dx: float, dy: float):
+        self._scroll_accum += Vector(dx, dy)
+
+    def get_scroll_delta(self) -> Vector:
+        """How far the scroll wheel moved this frame - see `_on_pointer_axis`."""
+        return self.scroll_delta
 
     def _on_button(self, index: int, pressed: bool, time: int):
         if pressed:
@@ -709,6 +734,9 @@ class WaylandMouse(Mouse):
         self._released = self._released_events
         self._pressed_events = [False] * 8
         self._released_events = [False] * 8
+
+        self.scroll_delta = self._scroll_accum
+        self._scroll_accum = Vector(0, 0)
 
         scene = get_service('scene_manager').get_active()
 

@@ -4,9 +4,9 @@ from FreeBodyEngine.graphics.gl33 import GLImage, GLMesh, GLFramebuffer
 from FreeBodyEngine.graphics.sprite import Sprite
 from FreeBodyEngine.graphics.gl33.shader import GLShader
 from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
-from fbusl.injector import Injector 
+from fbusl.injector import Injector
 from FreeBodyEngine.graphics.texture import Texture
-from FreeBodyEngine.graphics.material import Material
+from FreeBodyEngine.graphics.material import Material, BlendMode
 from FreeBodyEngine import DEVMODE, get_flag
 from FreeBodyEngine.graphics.gl33.buffer import UBOBuffer
 
@@ -27,7 +27,7 @@ if get_platform() == "win32":
 
 from OpenGL.GL import *
 from OpenGL.GL.ARB.debug_output import * # for debug_callback
-
+from FreeBodyEngine.core.files import get_file
 
 @GLDEBUGPROC
 def debug_callback(source, type, id, severity, length, message, userParam):
@@ -108,6 +108,9 @@ class GL33Renderer(Renderer):
         glViewport(0, 0, width, height)
 
         self.texture_manager = GLTextureManager()
+        self.line_shader = self.load_shader(get_file("engine://shader/line.fbvert"), get_file("engine://shader/line.fbfrag")) 
+
+
         
     def create_buffer(self, data):
         """Wraps `data` in a UBOBuffer, GL33's Buffer implementation."""
@@ -161,23 +164,68 @@ class GL33Renderer(Renderer):
         glClearColor(*color.float_normalized_a)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
-        glClear(GL_COLOR_BUFFER_BIT)
+    def set_blend_mode(self, mode: BlendMode):
+        """See Renderer.set_blend_mode. Skips the actual GL calls if `mode`
+        already matches the last mode set, since flush() calls this between
+        every group even when consecutive groups share a mode."""
+        if mode == self._current_blend_mode:
+            return
+        self._current_blend_mode = mode
 
-    def load_shader(self, vertex, fragment, injector: Injector = Injector, geometry=None):
+        if mode == BlendMode.OPAQUE:
+            glDisable(GL_BLEND)
+            glDepthMask(GL_TRUE)
+        elif mode == BlendMode.TRANSPARENT:
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glDepthMask(GL_FALSE)
+        elif mode == BlendMode.ADDITIVE:
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+            glDepthMask(GL_TRUE)
+
+    def load_shader(self, vertex, fragment, injector: Injector = Injector(), geometry=None):
         """Compiles `vertex`/`fragment` (and optional `geometry`) FBUSL source into a GLShader, using `injector` to resolve engine-provided builtins."""
         return GLShader(vertex, fragment, injector, geometry)
 
-    def draw_mesh_instanced(self, mesh, instances, material, transform, camera):
-        """Draws `instances` copies of `mesh` in one glDrawElementsInstanced
-        call, first setting `material`'s model/view/proj uniforms from
-        `transform`/`camera`."""
-        material.use(transform, camera)
+    def draw_mesh_instanced(self, mesh, material, model_matrices, camera):
+        """Draws one copy of `mesh` per row of `model_matrices` (shape
+        (N, 4, 4)) in a single glDrawElementsInstanced call. Builds a fresh
+        per-instance VBO each call (bound to consecutive locations after
+        `mesh`'s own vertex attributes, one per matrix column, each with
+        glVertexAttribDivisor(loc, 1)) - simple and correct, not the fastest
+        possible (a persistent, resized-as-needed buffer would avoid the
+        realloc), but this has no caller yet (see graphics/instancing.py's
+        module docstring) so there's nothing to profile against."""
+        material.shader['view'] = camera.view_matrix
+        material.shader['proj'] = camera.proj_matrix
+        material.use()
         material.shader.use()
 
         glBindVertexArray(mesh.vao)
-        glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), instances)
 
-        glBindVertexArray(0) 
+        base_location = len(mesh.attributes)
+        instance_data = np.ascontiguousarray(model_matrices, dtype=np.float32)
+        instance_vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+        glBufferData(GL_ARRAY_BUFFER, instance_data.nbytes, instance_data, GL_STREAM_DRAW)
+
+        stride = 16 * 4
+        for column in range(4):
+            location = base_location + column
+            glEnableVertexAttribArray(location)
+            glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(column * 16))
+            glVertexAttribDivisor(location, 1)
+
+        glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), len(model_matrices))
+
+        for column in range(4):
+            location = base_location + column
+            glVertexAttribDivisor(location, 0)
+            glDisableVertexAttribArray(location)
+
+        glBindVertexArray(0)
+        glDeleteBuffers(1, [instance_vbo])
 
     def enable_depth_testing(self):
         """Enables GL_DEPTH_TEST."""
@@ -209,6 +257,18 @@ class GL33Renderer(Renderer):
 
         glBindVertexArray(0)
 
+    def set_scissor(self, x: int, y: int, width: int, height: int):
+        """See Renderer.set_scissor(). `x`/`y` come in top-left-origin,
+        Y-down (UIRenderer's convention) - glScissor wants bottom-left
+        origin, so `y` is flipped against the framebuffer height."""
+        fb_height = self.window.framebuffer_size[1]
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(int(x), int(fb_height - y - height), max(0, int(width)), max(0, int(height)))
+
+    def clear_scissor(self):
+        """See Renderer.clear_scissor()."""
+        glDisable(GL_SCISSOR_TEST)
+
     def draw_line(self, start: tuple[int, int], end: tuple[int, int], width, color: 'Color'):
         """Draws a line segment from `start` to `end` using a dedicated line
         shader program (`self.line_program`), building a fresh 2-point
@@ -229,9 +289,9 @@ class GL33Renderer(Renderer):
 
         glBindVertexArray(0)
 
-        glUseProgram(self.line_program)
+        self.line_shader.set_uniform('line_color', color)
+        self.line_shader.use()
 
-        glUniform4f(glGetUniformLocation(self.line_program, "line_color"), *color.float_normalized_a)
 
         glBindVertexArray(vao)
         glDrawArrays(GL_LINES, 0, 2)

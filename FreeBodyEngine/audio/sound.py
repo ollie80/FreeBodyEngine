@@ -161,24 +161,45 @@ class Sound:
         return chunk
 
     def play(self):
-        """Starts (or restarts) playback from the beginning, registering this
-        sound with its manager if it isn't already being mixed."""
-        if self in self.manager.sounds:
+        """Resumes playback from wherever it was paused; restarts from the
+        beginning only if the sound was stopped (never started, or ran off
+        the end, or explicitly `stop()`ped) rather than merely paused.
+        Registers this sound with its manager if it isn't already being mixed."""
+        if self.stopped:
             self.position = 0
-            self.stopped = False
-            self.paused = False
-        else:
-            self.position = 0
-            self.stopped = False
-            self.paused = False
+
+        self.stopped = False
+        self.paused = False
+
+        if self not in self.manager.sounds:
             self.manager.add_sound(self)
 
     def pause(self):
-        """Pauses playback in place; `play()` resumes from the start, not where it paused."""
+        """Pauses playback in place; `play()` resumes from here, not the start."""
         self.paused = True
 
     def stop(self):
         """Stops playback and resets the position back to the start."""
         self.stopped = True
+        self.paused = False
         self.position = 0
+
+    def seek(self, position_s: float):
+        """Jumps playback to `position_s` seconds from the start, clamped to
+        the clip's actual length. Does not change paused/stopped state - call
+        alongside `play()` to seek-and-play."""
+        frame = max(0, min(int(position_s * self.sample_rate), len(self.data)))
+        self.position = frame
+        if frame < len(self.data):
+            self.stopped = False
+
+    @property
+    def duration(self) -> float:
+        """Total length of this clip, in seconds."""
+        return len(self.data) / self.sample_rate
+
+    @property
+    def position_s(self) -> float:
+        """Current playback position, in seconds."""
+        return self.position / self.sample_rate
 
