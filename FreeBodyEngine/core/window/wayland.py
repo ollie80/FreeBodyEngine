@@ -237,6 +237,15 @@ class WaylandWindow(Window):
         self._xdg_toplevel: XdgToplevel = self._xdg_surface.get_toplevel()
         self._xdg_toplevel.set_title(title)
         self._xdg_toplevel.set_app_id("FreeBodyEngine")
+        # The size passed to a window is also its minimum - without this a
+        # tiling compositor is free to shrink it to whatever fits its
+        # layout (a few hundred px, easily), and nothing in the UI system
+        # wraps or reflows content for a width it wasn't laid out for -
+        # fixed-width elements (most buttons/fields, by design - see
+        # ui/element.py's SIZE UNITS docs) just overflow past the window
+        # edge instead. Compositors aren't required to honor this, but
+        # every one of them attempts to.
+        self._xdg_toplevel.set_min_size(size[0], size[1])
         self._xdg_toplevel.dispatcher["configure"] = self._on_toplevel_configure
         self._xdg_toplevel.dispatcher["close"] = self._on_toplevel_close
 
