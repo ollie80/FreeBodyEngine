@@ -258,6 +258,18 @@ class Renderer(Service):
         set_scissor()'s docstring for why this defaults to a no-op."""
         pass
 
+    def enable_depth_testing(self):
+        """Enables GL_DEPTH_TEST (GL33Renderer/GL44Renderer). Concrete
+        no-op default so calling this is always safe regardless of
+        backend, matching set_scissor()'s reasoning."""
+        pass
+
+    def disable_depth_testing(self):
+        """Disables GL_DEPTH_TEST (GL33Renderer/GL44Renderer). UIRenderer
+        calls this before drawing every frame - see its own comment for
+        why a 2D UI overlay can't share the 3D pipeline's depth-test state."""
+        pass
+
     def draw_model(self, model: 'Model', transform: 'Transform', camera: 'Camera2D'):
         """Draws every sub-mesh of `model`, setting each one's mapped material's
         model/view/proj uniforms from `transform`/`camera` before delegating to

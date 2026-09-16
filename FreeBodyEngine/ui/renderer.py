@@ -51,10 +51,36 @@ class UIRenderer(Service):
         unregister_service_update(UpdatePhase.DRAW, self.draw)
 
     def draw(self):
-        """Draws every top-level element of the UI tree (and, recursively, their children)."""
+        """Draws every top-level element of the UI tree (and, recursively, their children).
+
+        Depth testing is explicitly turned off first, then back on after -
+        nothing here ever did this before, so the UI silently inherited
+        whatever depth-test state the 3D pipeline (PBRPipeline) happened to
+        leave behind (on for its opaque/lighting passes - see
+        graphics/pbr/pipeline.py - off only during its own composite step).
+        Every UI element's background and text share the same mesh, drawn
+        at the same implicit depth, in the same frame's depth buffer as
+        whatever 3D content came before - with depth testing left on and
+        GL's default depth func (GL_LESS), a background quad writes a
+        depth value that its own text quad, drawn microseconds later at
+        that identical depth, then fails to beat ("less than", not
+        "less-or-equal") - so the text silently doesn't draw. Which
+        specific elements this hits depends on incidental depth-buffer
+        contents from whatever 3D drawing happened to precede them that
+        frame, which is exactly the "some buttons show their label, some
+        don't, no obvious pattern" bug this fixes. A 2D overlay drawn last
+        in painter's-algorithm order (later siblings on top - see
+        _draw_element's docs) was never supposed to depend on the depth
+        buffer at all.
+        """
+        renderer = get_service('renderer')
+        renderer.disable_depth_testing()
+
         for element in self.ui.root.children.values():
             self._draw_element(element, None)
         self._apply_scissor(None)
+
+        renderer.enable_depth_testing()
 
     @staticmethod
     def _intersect_rect(a: tuple, b: tuple) -> tuple:
@@ -196,6 +222,7 @@ class UIRenderer(Service):
         pad_left = styles.get('padding_left', pad)
         pad_right = styles.get('padding_right', pad)
         pad_top = styles.get('padding_top', pad)
+        pad_bottom = styles.get('padding_bottom', pad)
 
         text_renderer = get_service('text_renderer')
 
@@ -217,8 +244,20 @@ class UIRenderer(Service):
                 truncated = truncated[:-1]
             text = (truncated + ellipsis) if truncated else ellipsis
 
+        # Vertically centered in the padded content box using the font's
+        # real ascender/descender (not just font_size) - previously this
+        # always baseline-aligned to the top (padding_top + font_size),
+        # which reads fine for a top-aligned multi-line block but left
+        # every single-line label (virtually everything - every button,
+        # every row) sitting near the top of its box with visibly more
+        # empty space below than above, instead of actually centered.
+        content_top = element._layout.y + pad_top
+        content_height = max(0, element._layout.height - pad_top - pad_bottom)
+        line_height = (font.ascender - font.descender) * font_size
+        baseline_y = content_top + (content_height - line_height) / 2 + font.ascender * font_size
+
         text_renderer.draw_text(
             font, text,
-            element._layout.x + pad_left, element._layout.y + pad_top + font_size,
+            element._layout.x + pad_left, baseline_y,
             font_size, styles.get('text_color', (1.0, 1.0, 1.0, 1.0)),
         )
