@@ -6,7 +6,7 @@ from FreeBodyEngine.graphics.gl44.shader import GL44Shader
 from FreeBodyEngine.graphics.gl44.texture import GL44TextureManager
 from fbusl.injector import Injector
 from FreeBodyEngine.graphics.texture import Texture
-from FreeBodyEngine.graphics.material import Material
+from FreeBodyEngine.graphics.material import Material, BlendMode
 from FreeBodyEngine import DEVMODE, get_flag, warning
 from FreeBodyEngine.graphics.gl44.buffer import UBOBuffer
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from FreeBodyEngine import get_service, service_exists
 from FreeBodyEngine.utils import get_platform
-
+from FreeBodyEngine.core.files import get_file
 import numpy as np
 
 if get_platform() == "win32":
@@ -117,6 +117,8 @@ class GL44Renderer(Renderer):
         glViewport(0, 0, width, height)
 
         self.texture_manager = GL44TextureManager()
+        
+        self.line_shader = self.load_shader(get_file("engine://shader/line.fbvert").read(), get_file("engine://shader/line.fbfrag").read()) 
 
     def create_buffer(self, data):
         """Wraps `data` in a UBOBuffer, GL44's Buffer implementation."""
@@ -167,23 +169,67 @@ class GL44Renderer(Renderer):
         """Clears the color and depth buffers of the currently bound framebuffer to `color`."""
         glClearColor(*color.float_normalized_a)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glClear(GL_COLOR_BUFFER_BIT)
 
-    def load_shader(self, vertex, fragment, injector: Injector = Injector, geometry=None):
+    def set_blend_mode(self, mode: BlendMode):
+        """See Renderer.set_blend_mode. Skips the actual GL calls if `mode`
+        already matches the last mode set, since flush() calls this between
+        every group even when consecutive groups share a mode."""
+        if mode == self._current_blend_mode:
+            return
+        self._current_blend_mode = mode
+
+        if mode == BlendMode.OPAQUE:
+            glDisable(GL_BLEND)
+            glDepthMask(GL_TRUE)
+        elif mode == BlendMode.TRANSPARENT:
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glDepthMask(GL_FALSE)
+        elif mode == BlendMode.ADDITIVE:
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE)
+            glDepthMask(GL_TRUE)
+
+    def load_shader(self, vertex, fragment, injector: Injector = Injector(), geometry=None):
         """Compiles `vertex`/`fragment` (and optional `geometry`) FBUSL source into a GL44Shader, using `injector` to resolve engine-provided builtins."""
         return GL44Shader(vertex, fragment, injector, geometry)
 
-    def draw_mesh_instanced(self, mesh, instances, material, transform, camera):
-        """Draws `instances` copies of `mesh` in one glDrawElementsInstanced
-        call, first setting `material`'s model/view/proj uniforms from
-        `transform`/`camera`."""
-        material.use(transform, camera)
+    def draw_mesh_instanced(self, mesh, material, model_matrices, camera):
+        """Draws one copy of `mesh` per row of `model_matrices` (shape
+        (N, 4, 4)) in a single glDrawElementsInstanced call - see
+        GL33Renderer.draw_mesh_instanced for the identical implementation
+        and its docstring (GL44 doesn't need anything version-specific for
+        instanced vertex-attribute arrays, so this is deliberately not
+        using GL44-only features like SSBOs)."""
+        material.shader['view'] = camera.view_matrix
+        material.shader['proj'] = camera.proj_matrix
+        material.use()
         material.shader.use()
 
         glBindVertexArray(mesh.vao)
-        glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), instances)
+
+        base_location = len(mesh.attributes)
+        instance_data = np.ascontiguousarray(model_matrices, dtype=np.float32)
+        instance_vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+        glBufferData(GL_ARRAY_BUFFER, instance_data.nbytes, instance_data, GL_STREAM_DRAW)
+
+        stride = 16 * 4
+        for column in range(4):
+            location = base_location + column
+            glEnableVertexAttribArray(location)
+            glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(column * 16))
+            glVertexAttribDivisor(location, 1)
+
+        glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), len(model_matrices))
+
+        for column in range(4):
+            location = base_location + column
+            glVertexAttribDivisor(location, 0)
+            glDisableVertexAttribArray(location)
 
         glBindVertexArray(0)
+        glDeleteBuffers(1, [instance_vbo])
 
     def enable_depth_testing(self):
         """Enables GL_DEPTH_TEST."""
@@ -215,6 +261,18 @@ class GL44Renderer(Renderer):
 
         glBindVertexArray(0)
 
+    def set_scissor(self, x: int, y: int, width: int, height: int):
+        """See Renderer.set_scissor(). `x`/`y` come in top-left-origin,
+        Y-down (UIRenderer's convention) - glScissor wants bottom-left
+        origin, so `y` is flipped against the framebuffer height."""
+        fb_height = self.window.framebuffer_size[1]
+        glEnable(GL_SCISSOR_TEST)
+        glScissor(int(x), int(fb_height - y - height), max(0, int(width)), max(0, int(height)))
+
+    def clear_scissor(self):
+        """See Renderer.clear_scissor()."""
+        glDisable(GL_SCISSOR_TEST)
+
     def draw_line(self, start: tuple[int, int], end: tuple[int, int], width, color: 'Color'):
         """Draws a line segment from `start` to `end` using a dedicated line
         shader program (`self.line_program`), building a fresh 2-point
@@ -222,7 +280,7 @@ class GL44Renderer(Renderer):
         glLineWidth(width)
         line_vertices = np.array([
             -start[0], start[1],
-            end[0], end[1]
+            -end[0], end[1]
         ], dtype=np.float32)
         vao = glGenVertexArrays(1)
         vbo = glGenBuffers(1)
@@ -235,10 +293,9 @@ class GL44Renderer(Renderer):
 
         glBindVertexArray(0)
 
-        glUseProgram(self.line_program)
-
-        glUniform4f(glGetUniformLocation(self.line_program, "line_color"), *color.float_normalized_a)
-
+        self.line_shader.use()
+        self.line_shader.set_uniform('line_color', color)
+       
         glBindVertexArray(vao)
         glDrawArrays(GL_LINES, 0, 2)
         glBindVertexArray(0)

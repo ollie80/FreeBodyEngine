@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import uuid
 from enum import Enum
+from typing import Callable
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.math import Curve, Linear
 from FreeBodyEngine import warning, delta
@@ -206,6 +207,62 @@ Example:
 
 State-specific values override the normal values returned by
 get_current_styles().
+
+
+INTERACTION
+-------------------------------------------------------------------------------
+
+UIManager drives hit-testing against every element's computed `_layout`
+each frame (topmost element under the cursor wins), and turns that into
+state transitions plus the callbacks registered with `UIElement.on()`:
+
+    "hover_enter" / "hover_exit"
+        Cursor entered/left this element's rect. Also drives the
+        "hover" state style automatically - no callback needed just to
+        change appearance on hover.
+
+    "press" / "release"
+        Left mouse button went down/up while this element was hit.
+        Also drives the "clicked" state style automatically.
+
+    "click"
+        Fired on release if the same element was still under the
+        cursor - i.e. press-and-release, not press-and-drag-off.
+
+    "submit"
+        Fired on an editable element (see below) when Enter is
+        pressed while it's focused. Called with the element's current
+        text as its one argument.
+
+Example:
+
+    button.on("click", lambda: play_track(track))
+
+editable
+    Marks this element as a text field. Clicking it focuses it (see
+    the "selected"/FOCUSED state) and routes keyboard character/
+    backspace/enter input into its "text" style. Clicking anywhere
+    else clears focus.
+
+        "editable": True
+
+    Text input here is deliberately minimal - plain ASCII letters,
+    digits, space and the common US-QWERTY punctuation keys, shifted
+    per whether shift is held. No IME, dead keys, or non-US layout
+    support; good enough for search boxes and short fields, not a
+    general text editor.
+
+scroll
+    Turns on mouse-wheel scrolling of this element's children along
+    its `layout` direction, and clips their drawing to this element's
+    own rect (children are never drawn outside their scrollable
+    ancestor's bounds, however far they scroll).
+
+        "scroll": True
+
+    The scroll offset is clamped every layout pass to the actual
+    overflow (0 if children fit without scrolling), and persists
+    across frames on the element itself - nothing else to wire up.
 
 
 ANIMATABLE STYLES
@@ -500,6 +557,9 @@ class UIElement(GenericElement):
         "font_size": 24,
         "font_weight": "regular",
         "text_color": (1.0, 1.0, 1.0, 1.0),
+
+        "editable": False,
+        "scroll": False,
     }
 
     def __init__(self, tag: str = None, styles={}):
@@ -515,6 +575,35 @@ class UIElement(GenericElement):
         self.id = uuid.uuid4()
         self.animations: list[UIAnimation] = []
         self._layout = Layout(0, 0, 0, 0)
+        self._scroll_offset = 0.0
+        self._event_callbacks: dict[str, list[Callable]] = {}
+
+    def on(self, event: str, callback: Callable) -> None:
+        """Registers `callback` to run when `event` fires on this element -
+        "hover_enter", "hover_exit", "press", "release", "click", or
+        "submit" (editable elements only) - see the INTERACTION style docs
+        above. Multiple callbacks may be registered for the same event."""
+        self._event_callbacks.setdefault(event, []).append(callback)
+
+    def off(self, event: str, callback: Callable) -> None:
+        """Unregisters `callback` from `event`, if it was registered."""
+        if callback in self._event_callbacks.get(event, ()):
+            self._event_callbacks[event].remove(callback)
+
+    def _emit(self, event: str, *args) -> None:
+        """Calls every callback registered for `event` via `on()`, in
+        registration order. Copies the callback list first so a callback
+        that itself calls on()/off() doesn't mutate the list mid-iteration."""
+        for callback in list(self._event_callbacks.get(event, ())):
+            callback(*args)
+
+    def scroll_by(self, delta_px: float) -> None:
+        """Adjusts this element's scroll offset by `delta_px` (only has any
+        visible effect if this element's "scroll" style is on). Clamped to
+        the valid range on the next layout pass, so over-scrolling here just
+        settles back to the nearest edge next frame rather than needing to
+        be clamped here against content it hasn't measured yet."""
+        self._scroll_offset += delta_px
 
     def _initialize(self, parent: GenericElement):
         self.parent = parent
@@ -855,6 +944,54 @@ class UIElement(GenericElement):
 
         child_offset_x = content_x
         child_offset_y = content_y
+
+        #
+        # Scrolling: measure total child extent along the flow direction
+        # (a lightweight pass - just each non-anchored child's own size,
+        # not a full layout) so the offset can be clamped to actual
+        # overflow before it's applied below. Sizes don't depend on scroll
+        # position (parse_size uses content_layout, which is scroll-
+        # independent), so this measurement doesn't change once children
+        # are laid out for real - measuring it twice per child is the
+        # tradeoff for not needing a separate pre-layout pass.
+        #
+        if styles.get("scroll", False):
+            total_extent = 0.0
+            seen_first = False
+
+            for child in self.children.values():
+                child_anchored = (
+                    child._has_own_style("anchor") or
+                    child._has_own_style("parent_anchor")
+                )
+                if child_anchored:
+                    continue
+
+                child_styles = child.get_current_styles()
+                if layout_dir == "vertical":
+                    extent = self._parse_size(
+                        child_styles.get("height", "0"), content_layout, root.layout
+                    )
+                else:
+                    extent = self._parse_size(
+                        child_styles.get("width", "0"), content_layout, root.layout
+                    )
+
+                if seen_first:
+                    total_extent += gap
+                total_extent += extent
+                seen_first = True
+
+            viewport_extent = content_h if layout_dir == "vertical" else content_w
+            max_scroll = max(0.0, total_extent - viewport_extent)
+            self._scroll_offset = max(0.0, min(self._scroll_offset, max_scroll))
+
+            if layout_dir == "vertical":
+                child_offset_y -= self._scroll_offset
+            else:
+                child_offset_x -= self._scroll_offset
+        else:
+            self._scroll_offset = 0.0
 
         #
         # Calculate children.

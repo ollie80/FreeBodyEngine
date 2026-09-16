@@ -7,7 +7,7 @@ def register_default_services():
     """Registers the baseline services (event bus, file manager, logger, cooldown manager, scene manager, window, renderer, PBR pipeline, input) a game needs before it can create scenes or nodes - call once during startup before adding the default scene below."""
     # registers services that provide basic engine functionality
     fb.register_service(fb.core.event.EventManager())
-    fb.register_service(fb.core.files.FileManager())
+    fb.register_service(fb.core.files.get_file_system())
     fb.register_service(fb.core.logger.Logger())
     fb.register_service(fb.core.time.CooldownManager())
     fb.register_service(fb.core.scene.SceneManager())

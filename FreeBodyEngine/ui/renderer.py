@@ -35,6 +35,12 @@ class UIRenderer(Service):
         # instead of duplicated as a second standalone texture.
         self._image_cache: dict[str, any] = {}
 
+        # The scissor rect (x, y, width, height) currently bound on the GPU,
+        # or None for unclipped - tracked so _apply_scissor only issues a
+        # real set_scissor/clear_scissor call when it's actually changing,
+        # rather than once per element regardless of whether it moved.
+        self._active_scissor = None
+
     def on_initialize(self):
         """Registers the draw callback and grabs a reference to the `ui` service's tree."""
         register_service_update(UpdatePhase.DRAW, self.draw)
@@ -47,22 +53,78 @@ class UIRenderer(Service):
     def draw(self):
         """Draws every top-level element of the UI tree (and, recursively, their children)."""
         for element in self.ui.root.children.values():
-            self._draw_element(element)
+            self._draw_element(element, None)
+        self._apply_scissor(None)
 
-    def _draw_element(self, element: 'UIElement'):
+    @staticmethod
+    def _intersect_rect(a: tuple, b: tuple) -> tuple:
+        """Intersection of two (x, y, width, height) rects, clamped to a
+        non-negative width/height (an empty intersection, not a negative one)."""
+        ax, ay, aw, ah = a
+        bx, by, bw, bh = b
+        x = max(ax, bx)
+        y = max(ay, by)
+        x2 = min(ax + aw, bx + bw)
+        y2 = min(ay + ah, by + bh)
+        return (x, y, max(0.0, x2 - x), max(0.0, y2 - y))
+
+    def _apply_scissor(self, rect: tuple):
+        """Binds `rect` as the active GPU scissor (or clears it for `None`),
+        skipping the actual renderer call if it's already what's bound."""
+        if rect == self._active_scissor:
+            return
+
+        self._active_scissor = rect
+        renderer = get_service('renderer')
+
+        if rect is None:
+            renderer.clear_scissor()
+        else:
+            renderer.set_scissor(*rect)
+
+    def _draw_element(self, element: 'UIElement', scissor: tuple):
         """Draws one element's background/text, then recurses into its own
         children - UIElement.calculate_layout() already computes correct
         layouts for arbitrarily nested trees (see ui/element.py), but until
         now this only ever drew direct children of the root, so nothing
         composed of nested elements (an avatar + bubble inside a message
-        row, say) ever actually rendered past its top-level container."""
+        row, say) ever actually rendered past its top-level container.
+
+        `scissor` is the (x, y, width, height) clip rect inherited from the
+        nearest "scroll" ancestor (see ui/element.py's INTERACTION docs), or
+        None if there isn't one. An element entirely outside it is skipped
+        along with its whole subtree - nothing under a scrolled-out-of-view
+        row can be visible either, so this also caps how much of an
+        offscreen subtree gets a draw call, not just its own background/
+        text. (Full virtualization - skipping *layout*, not just drawing,
+        for offscreen rows - is a further improvement, not this one.)"""
+        layout = element._layout
+
+        if scissor is not None:
+            sx, sy, sw, sh = scissor
+            if (
+                layout.width <= 0 or layout.height <= 0 or
+                layout.x >= sx + sw or layout.x + layout.width <= sx or
+                layout.y >= sy + sh or layout.y + layout.height <= sy
+            ):
+                return
+
+        self._apply_scissor(scissor)
+
         styles = element.get_current_styles()
 
         self._draw_background(element, styles)
         self._draw_text(element, styles)
 
+        child_scissor = scissor
+        if styles.get("scroll", False):
+            own_rect = (layout.x, layout.y, layout.width, layout.height)
+            child_scissor = (
+                self._intersect_rect(scissor, own_rect) if scissor is not None else own_rect
+            )
+
         for child in element.children.values():
-            self._draw_element(child)
+            self._draw_element(child, child_scissor)
 
     @staticmethod
     def _to_vec4(value) -> tuple:
@@ -125,9 +187,30 @@ class UIRenderer(Service):
         font_size = styles.get('font_size', 24)
         pad = styles.get('padding', 0)
         pad_left = styles.get('padding_left', pad)
+        pad_right = styles.get('padding_right', pad)
         pad_top = styles.get('padding_top', pad)
 
-        get_service('text_renderer').draw_text(
+        text_renderer = get_service('text_renderer')
+
+        # Elements have a fixed pixel width/height (or one resolved from a
+        # percentage - see UIElement._parse_size), so a track title or
+        # playlist name longer than that would otherwise just overflow
+        # past the element's edge with nothing to stop it (draw_text has no
+        # concept of a bound to stop at). Truncated with an ellipsis rather
+        # than wrapped - wrapping a single-line row's text would grow it
+        # into someone else's row; that's a real gap (see the engine design
+        # notes), just not one worth a multi-line text layout system for a
+        # first pass.
+        available_width = element._layout.width - pad_left - pad_right
+        if available_width > 0 and text_renderer.measure_text(font, text, font_size) > available_width:
+            ellipsis = '...'
+            ellipsis_width = text_renderer.measure_text(font, ellipsis, font_size)
+            truncated = text
+            while truncated and text_renderer.measure_text(font, truncated, font_size) + ellipsis_width > available_width:
+                truncated = truncated[:-1]
+            text = (truncated + ellipsis) if truncated else ellipsis
+
+        text_renderer.draw_text(
             font, text,
             element._layout.x + pad_left, element._layout.y + pad_top + font_size,
             font_size, styles.get('text_color', (1.0, 1.0, 1.0, 1.0)),
