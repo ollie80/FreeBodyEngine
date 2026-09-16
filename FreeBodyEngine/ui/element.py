@@ -252,6 +252,14 @@ editable
     support; good enough for search boxes and short fields, not a
     general text editor.
 
+secret
+    Masks an editable element's drawn text with bullets - a password
+    field. Only affects drawing: get_current_styles()["text"] (and a
+    "submit" callback's argument) still carry the real, unmasked value.
+
+        "editable": True,
+        "secret": True
+
 scroll
     Turns on mouse-wheel scrolling of this element's children along
     its `layout` direction, and clips their drawing to this element's
@@ -559,6 +567,7 @@ class UIElement(GenericElement):
         "text_color": (1.0, 1.0, 1.0, 1.0),
 
         "editable": False,
+        "secret": False,
         "scroll": False,
     }
 

@@ -179,6 +179,13 @@ class UIRenderer(Service):
         if not text or not font_path:
             return
 
+        # Masking happens here, drawing-only - get_current_styles()["text"]
+        # (what the "submit" callback receives, what add_playlist_track()
+        # etc. would actually send) still carries the real value; only the
+        # glyphs drawn to screen are replaced.
+        if styles.get('secret', False):
+            text = '•' * len(text)
+
         from FreeBodyEngine.core.files.loaders.font import resolve_font  # lazy - avoids a ui <-> core.files import cycle (utils.py imports ui.element early during core.files' own init)
         font = resolve_font(font_path, weight=styles.get('font_weight', 'regular'))
         if font is None:
