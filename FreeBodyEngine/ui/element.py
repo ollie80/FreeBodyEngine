@@ -395,10 +395,40 @@ class RootElement(GenericElement):
         super().__init__()
 
         self.styles = styles
-        self.width = width
-        self.height = height
-
         self.layout = Layout(0, 0, width, height)
+
+    @property
+    def width(self) -> int:
+        """Current root width, in pixels. A property reading straight from
+        `self.layout` (the one place UIManager.resize() actually updates)
+        rather than a separate stored value - `width`/`height` used to be
+        their own plain attributes, set once at construction and never
+        touched again, while `resize()` only ever updated `self.layout`'s
+        copy. Every window resize after the first frame left this
+        permanently stuck at whatever size the window happened to be at
+        launch: any code reading `root.width`/`root.height` directly (a
+        content area sizing itself to "the window height minus my
+        header/footer," say) silently kept computing against a stale
+        snapshot forever after, however many times the real window
+        resized - exactly the shape of "layout looks right on launch, then
+        the proportions are wrong forever after," which a tiling window
+        manager (retiling on every window open/close) triggers constantly.
+        A property means every existing read of `root.width`/`root.height`
+        just starts seeing the live value with no call-site changes."""
+        return self.layout.width
+
+    @width.setter
+    def width(self, value: int):
+        self.layout.width = value
+
+    @property
+    def height(self) -> int:
+        """See `width` - the same live-vs-stale fix, for height."""
+        return self.layout.height
+
+    @height.setter
+    def height(self, value: int):
+        self.layout.height = value
 
     def set_styles(self, styles: dict[str, any]):
         """Replaces the root's styles wholesale."""
