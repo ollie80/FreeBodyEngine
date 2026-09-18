@@ -170,7 +170,23 @@ def resize_wayland_opengl_surface(window: 'WaylandWindow', width: int, height: i
  
 
 def swap_wayland_opengl_buffers(window: 'WaylandWindow'):
-    """Equivalent of Win32's SwapBuffers(hdc); call this from window.draw()."""
+    """Equivalent of Win32's SwapBuffers(hdc); call this from window.draw().
+
+    Plain and unconditional. Two attempts at skipping this call while the
+    surface isn't actually visible (switched away to another workspace,
+    minimized, occluded) - to stop it blocking on presentation feedback
+    that wouldn't arrive until it became visible again, which is the root
+    cause of this app occasionally getting flagged "not responding" - were
+    each tried and reverted: skipping it directly based on the
+    xdg_toplevel "suspended" state (an optional v6+ addition no compositor
+    is guaranteed to actually deliver), then gating it on a
+    wl_surface.frame() "done" callback instead (reproduced a *worse*,
+    near-immediate freeze even while fully visible - almost certainly
+    fighting Mesa's own internal EGL presentation-feedback pacing on this
+    same surface, which neither attempt touched). See
+    WaylandWindow._on_toplevel_configure for the "suspended" tracking
+    that's still there but unused. The underlying freeze is real and
+    still unfixed as of this revert."""
     EGL.eglSwapBuffers(window.egl_display, window.egl_surface)
 
     pending = getattr(window, "_pending_egl_resize", None)

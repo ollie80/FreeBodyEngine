@@ -5,13 +5,25 @@ from FreeBodyEngine.graphics import renderer
 from FreeBodyEngine.graphics import material
 from FreeBodyEngine.graphics import mesh
 from FreeBodyEngine.graphics import sprite
-from FreeBodyEngine.graphics import gl33
 from FreeBodyEngine.graphics import pbr
 from FreeBodyEngine.graphics import pipeline
 from FreeBodyEngine.graphics import model
 from FreeBodyEngine.graphics import text
 
 import sys
+
+# gl33 (unlike every other submodule imported above) pulls in PyOpenGL at
+# its own top level (graphics/gl33/renderer.py's `from OpenGL.GL import
+# *`) - a ctypes wrapper around a real native libGL, which simply doesn't
+# exist to import inside a Pyodide/WASM browser session (sys.platform ==
+# "emscripten" - see utils.get_platform()'s docstring). Importing it
+# eagerly here, unconditionally, would make `import FreeBodyEngine` itself
+# crash on the web platform before get_renderer() ever got a chance to
+# pick WebGL2Renderer instead (see below) - guarded the same way
+# get_renderer()'s own web branch already lazily imports
+# graphics.webgl.renderer instead of this module importing it up front.
+if get_platform() != "web":
+    from FreeBodyEngine.graphics import gl33
 
 def get_renderer() -> type[renderer.Renderer]:
     """Get the correct renderer for the platform.
@@ -33,6 +45,10 @@ def get_renderer() -> type[renderer.Renderer]:
         return GL44Renderer
 
     platform = get_platform()
+
+    if platform == "web":
+        from FreeBodyEngine.graphics.webgl.renderer import WebGL2Renderer
+        return WebGL2Renderer
 
     if platform in ("win32", "linux", "darwin"):
         # By the time get_renderer() runs, the window (and its GL context)
@@ -119,12 +135,17 @@ def _is_gl44() -> bool:
 def create_compute_shader(source, injector=None, **kwargs):
     """Creates a compute shader using whichever backend this session is (or
     will be) running under - GL44's real glDispatchCompute if the GPU/
-    driver support it, GL33's fullscreen-quad-emulated fallback otherwise -
-    entirely transparently. Code written against the returned ComputeShader
-    never needs to know or branch on which backend actually produced it.
-    Creates a GPU context automatically (see ensure_gpu_context()) if one
-    doesn't exist yet."""
+    driver support it, GL33's fullscreen-quad-emulated fallback otherwise,
+    or WebGL2's own (also fullscreen-quad-emulated, plus a buffer-texture
+    workaround of its own - see graphics/webgl/compute.py) version under a
+    browser - entirely transparently. Code written against the returned
+    ComputeShader never needs to know or branch on which backend actually
+    produced it. Creates a GPU context automatically (see
+    ensure_gpu_context()) if one doesn't exist yet."""
     ensure_gpu_context()
+    if get_platform() == "web":
+        from FreeBodyEngine.graphics.webgl.compute import WebGL2ComputeShader
+        return WebGL2ComputeShader(source, injector, **kwargs)
     if _is_gl44():
         from FreeBodyEngine.graphics.gl44.compute import GL44ComputeShader
         return GL44ComputeShader(source, injector, **kwargs)
@@ -132,12 +153,33 @@ def create_compute_shader(source, injector=None, **kwargs):
     return GLComputeShader(source, injector, **kwargs)
 
 
+def create_raytrace_shader(source, injector=None):
+    """Creates a raytrace ('@raytrace') kernel using whichever backend this
+    session is (or will be) running under. Unlike create_compute_shader(),
+    there's no GL44 branch yet - raytracing here is always the same
+    software-BVH-over-a-fullscreen-pass emulation (see graphics/gl33/
+    compute.py's GLRaytraceShader / graphics/webgl/compute.py's
+    WebGL2RaytraceShader), just against a samplerBuffer-backed scene on
+    desktop or a 2D-data-texture-backed one on web."""
+    ensure_gpu_context()
+    if get_platform() == "web":
+        from FreeBodyEngine.graphics.webgl.compute import WebGL2RaytraceShader
+        return WebGL2RaytraceShader(source, injector)
+    from FreeBodyEngine.graphics.gl33.compute import GLRaytraceShader
+    return GLRaytraceShader(source, injector)
+
+
 def create_compute_buffer(data):
     """Creates whatever buffer type the current compute backend's `buffer`
     blocks actually need - a real read/write SSBO under GL44, a read-only
-    texture buffer under GL33 - so code calling ComputeShader.bind_buffer()
-    doesn't need to know or care which one it got either."""
+    texture buffer under GL33, a read-only 2D-data-texture-backed buffer
+    under WebGL2 (see graphics/webgl/buffer.py's WebGL2TextureBuffer) - so
+    code calling ComputeShader.bind_buffer() doesn't need to know or care
+    which one it got either."""
     ensure_gpu_context()
+    if get_platform() == "web":
+        from FreeBodyEngine.graphics.webgl.buffer import WebGL2TextureBuffer
+        return WebGL2TextureBuffer(data)
     if _is_gl44():
         from FreeBodyEngine.graphics.gl44.buffer import SSBOBuffer
         return SSBOBuffer(data)
@@ -146,4 +188,4 @@ def create_compute_buffer(data):
 
 
 __all__ = ["color", "mesh", "material", "renderer", "pipeline", "image", 'pbr', "gl33", 'sprite', 'model', 'text',
-           'get_renderer', 'ensure_gpu_context', 'create_compute_shader', 'create_compute_buffer']
+           'get_renderer', 'ensure_gpu_context', 'create_compute_shader', 'create_raytrace_shader', 'create_compute_buffer']

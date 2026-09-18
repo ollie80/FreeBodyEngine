@@ -89,3 +89,17 @@ class Framebuffer:
     def bind(self):
         """Binds the framebuffer to allow for drawing."""
         pass
+
+    @abstractmethod
+    def set_draw_buffers(self, names: list[str]):
+        """Restricts subsequent draws to only the named color attachments,
+        leaving every other attachment's storage untouched (this reconfigures
+        which draw-buffer slots are active, it doesn't delete/resize
+        anything). Needed by a pass that must write just one attachment of
+        a multi-attachment framebuffer without touching the others still
+        bound to it - e.g. PBRPipeline's lighting composite/forward-
+        transparent passes writing only 'lit' on the same G-buffer FBO the
+        opaque pass wrote every other channel of. `bind()` does not reset
+        this - a later pass that needs the full attachment set back must
+        call this again."""
+        pass

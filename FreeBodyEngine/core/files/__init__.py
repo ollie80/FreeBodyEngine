@@ -11,6 +11,20 @@ def get_file(path: str) -> 'FileResource':
     """Shorthand for `get_service('files').get_file(path)`."""
     return get_service('files').get_file(path)
 
+def path_exists(path: str) -> bool:
+    """Returns whether `path` (a virtual asset path - see FileSystem.
+    get_file()) resolves to a real file under the active FileSystem.
+    `get_file()` itself already returns None rather than raising for a
+    path that doesn't resolve, so this is just that check spelled out -
+    added because engine_assets/default_main_file.py (the template every
+    new project starts from via `fb init`) called a same-purpose
+    `path_exsists` (note the typo) that had never actually existed here
+    at all, on any platform: a fresh project with no `actions.toml` (the
+    common case - it's optional input-action config) crashed with
+    AttributeError the instant register_default_services() ran, before
+    ever reaching main.run()."""
+    return get_service('files').get_file(path) is not None
+
 loaders = {}
 
 MODEL_FILE = "MODEL_FILE"
@@ -132,10 +146,21 @@ def get_file_system() -> FileSystem:
     running: an AssetPackFileSystem (reading bundled `.pak`s) unless the
     DEVMODE flag is set, in which case a DevFileSystem rooted at the
     current project's asset directory. Returns None on an unsupported
-    platform (anything other than win32/darwin/linux)."""
+    platform (anything other than win32/darwin/linux/web).
+
+    DevFileSystem itself has no platform-specific code at all (see
+    core/files/dev.py's open_file() - a plain builtin open(), which reads
+    from Pyodide's own virtual filesystem transparently once a web dev
+    build's bootstrap has unpacked the project's files into it - see
+    build/builder.py's build_for_dev_web()) - "web" only needed adding to
+    this tuple, not a whole new branch, for `fb run --web` dev builds to
+    get a real FileSystem instead of silently None. A release build's
+    AssetPackFileSystem path isn't reachable for "web" yet regardless
+    (see Builder.build_for_web() - web release builds aren't implemented
+    at all), so that half of this function is unchanged."""
     platform = get_platform()
 
-    if platform in ("win32", "darwin", "linux"):
+    if platform in ("win32", "darwin", "linux", "web"):
         if not get_flag(DEVMODE, False):
             return AssetPackFileSystem()
         else:

@@ -1,0 +1,11 @@
+@output
+depth: vec4
+
+def main() -> void:
+    # Nothing meaningful to write - this pass's framebuffer has no color
+    # attachments (see PBRPipeline._render_shadow_maps(), a depth-only
+    # Framebuffer), so this never lands anywhere. What matters is the real
+    # GL depth buffer write the fixed-function pipeline does automatically
+    # from VERTEX_POSITION.z (see shadow_depth.fbvert) - that's the actual
+    # shadow map. FBUSL requires at least one @output, hence this.
+    depth = vec4(1.0, 1.0, 1.0, 1.0)

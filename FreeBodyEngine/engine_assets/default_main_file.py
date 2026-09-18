@@ -15,8 +15,8 @@ def register_default_services():
     fb.register_service(fb.graphics.get_renderer()())
     fb.register_service(fb.graphics.pbr.pipeline.PBRPipeline())
 
-    if fb.core.files.path_exsists('actions.toml'):
-        action_source = fb.load_toml('actions.toml')
+    if fb.core.files.path_exists('actions.toml'):
+        action_source = fb.core.files.load_toml('actions.toml')
     else:
         action_source = {}
 

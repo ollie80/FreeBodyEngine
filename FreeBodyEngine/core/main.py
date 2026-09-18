@@ -44,23 +44,99 @@ class Main:
         """Runs the engine's main loop until `quit()` is called: advances
         time and drives every registered update phase through
         `self.updater` each iteration. Wraps each iteration in a `Profiler`
-        start/stop if the PROFILER flag is set."""
+        start/stop if the PROFILER flag is set.
+
+        Under Pyodide (`sys.platform == "emscripten"` - a browser tab, see
+        utils.get_platform()'s docstring) this delegates to `_run_web()`
+        instead of looping here directly - see that method for why a
+        blocking `while` loop is fundamentally incompatible with a browser
+        tab at all, not just a style difference."""
+        if sys.platform == "emscripten":
+            self._run_web()
+            return
+
         if get_flag(PROFILER, False):
-            profiler = Profiler() 
+            profiler = Profiler()
 
         while self.running:
-            
+
             self.time.update()
-            
+
             if get_flag(PROFILER, False):
-            
+
                 profiler.start()
-            
+
             self.updater.update()
 
             if get_flag(PROFILER, False):
-            
+
                 profiler.stop()
 
         if get_flag(PROFILER, False):
             profiler.close()
+
+    def _run_web(self):
+        """The browser-tab equivalent of run()'s blocking `while self.
+        running` loop: a real `while` here would never yield back to the
+        browser at all, which would freeze the tab solid on the very first
+        iteration (a browser only repaints, delivers input, or runs *any*
+        other JS between tasks it was already given - a synchronous
+        infinite loop inside one task starves all of that forever, forever
+        being the operative word since nothing ever gets to interrupt a
+        WASM `while` loop from outside).
+
+        The fix is the standard one for porting a native game loop to the
+        web: turn each iteration into its own `requestAnimationFrame`
+        callback that reschedules itself, so control genuinely returns to
+        the browser between frames the exact same way a native OS's own
+        event loop gets a turn between this engine's frames there. `run()`
+        itself returns immediately after kicking off the first frame -
+        the project's main.py finishes executing right after calling
+        `main.run()`, same as it always looks from the game code's side,
+        but the engine keeps running because the browser keeps calling
+        this callback, not because anything here is still blocking."""
+        import js
+        from pyodide.ffi import create_proxy
+
+        if get_flag(PROFILER, False):
+            profiler = Profiler()
+        else:
+            profiler = None
+
+        frame_count = [0]
+
+        def frame(_timestamp):
+            if not self.running:
+                return
+
+            self.time.update()
+
+            if profiler is not None:
+                profiler.start()
+
+            frame_count[0] += 1
+            if frame_count[0] <= 5 or frame_count[0] % 60 == 0:
+                from FreeBodyEngine import warning as _dbg
+                _dbg(f"[DEBUG frame] #{frame_count[0]} starting updater.update()")
+
+            try:
+                self.updater.update()
+            except Exception as e:
+                from FreeBodyEngine import warning as _dbg
+                import traceback
+                _dbg(f"[DEBUG frame] EXCEPTION in updater.update(): {e}\n{traceback.format_exc()}")
+                raise
+
+            if frame_count[0] <= 5 or frame_count[0] % 60 == 0:
+                from FreeBodyEngine import warning as _dbg
+                _dbg(f"[DEBUG frame] #{frame_count[0]} finished updater.update()")
+
+            if profiler is not None:
+                profiler.stop()
+
+            if self.running:
+                js.window.requestAnimationFrame(create_proxy(frame))
+            elif profiler is not None:
+                profiler.close()
+
+        js.window.requestAnimationFrame(create_proxy(frame))

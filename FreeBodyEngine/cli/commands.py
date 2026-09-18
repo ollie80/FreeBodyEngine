@@ -149,24 +149,35 @@ class Command:
 
 def build_handler(env, args):
     """`fb build` handler: builds the given project (or the detected one),
-    passing `--dev` through as the dev-build flag."""
-    dev = False
-    if "--dev" in args:
-        dev = True
-    if len(args) == 0:
+    passing `--dev` through as the dev-build flag. `args` is filtered down
+    to its non-flag (non-`--...`) entries before treating the first one as
+    a project id - `fb build --dev`/`fb build --web` (no explicit project)
+    used to fall into the "id given" branch with `args[0] == "--dev"`/
+    `"--web"` itself, looking up a project literally named that instead of
+    correctly falling back to the detected one."""
+    dev = "--dev" in args
+    positional = [a for a in args if not a.startswith("--")]
+    if len(positional) == 0:
         if env.project_path:
             build(env.project_path, dev)
         else:
             print("No project specified or detected.")
-    
+
     else:
-        build(env.project_registry.get_project_path(args[0]), dev)
+        build(env.project_registry.get_project_path(positional[0]), dev)
 
 def run_handler(env, args):
     """`fb run` handler: runs the given project (or the detected one),
     swallowing Ctrl+C so stopping the game doesn't surface as a CLI
-    traceback."""
-    if len(args) == 0:
+    traceback. `args` is filtered down to its non-flag entries before
+    treating the first one as a project id - see build_handler()'s own
+    comment for why (`fb run --web` hit exactly this: `args[0]` was
+    `"--web"` itself, reported as a nonexistent project, instead of
+    running the detected project with `--web` forwarded to run_project()
+    via `sys.argv`, which is how it actually reads the flag - see
+    dev/run.py's main())."""
+    positional = [a for a in args if not a.startswith("--")]
+    if len(positional) == 0:
         if env.project_path:
             try:
                 run_project(env.project_path)
@@ -175,7 +186,7 @@ def run_handler(env, args):
         else:
             print("No project specified or detected.")
     else:
-        id = args[0]
+        id = positional[0]
         if env.project_registry.project_exists(id):
             path = env.project_registry.get_project_path(id)
             try:

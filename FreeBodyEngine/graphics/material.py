@@ -35,6 +35,16 @@ class PropertyType(Enum):
 
     TEXTURE = auto()
 
+class BlendMode(Enum):
+    """How a Material's draws combine with what's already in the
+    framebuffer - drives both the draw queue's opaque/transparent split
+    (see Renderer.submit/flush) and which shader pair a Material loads by
+    default (an opaque material writes the G-buffer; a transparent/additive
+    one is forward-shaded directly against 'lit' - see PBRPipeline)."""
+    OPAQUE = auto()
+    TRANSPARENT = auto()
+    ADDITIVE = auto()
+
 class MaterialInjector(Injector):
     """Lets a shader reference a material property (e.g. `ALBEDO`) as a bare
     identifier and have it transparently resolve to `sample(prop_Texture, uv)`
@@ -143,11 +153,21 @@ class Material:
     attributes (`material.albedo`) and as dict items (`material['albedo']`),
     transparently redirected to `self.properties` via `__getattribute__`/
     `__setattr__`/`__getitem__`/`__setitem__` below."""
-    def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = Injector()):
+    def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = Injector(),
+                 default_vert: str = 'engine://shader/default_shader.fbvert',
+                 default_frag: str = 'engine://shader/default_shader.fbfrag'):
         """Parses `data` against `property_definitions` into
         `self.properties`, and compiles this material's shader (from
-        `data['shader']`, defaulting to the engine's default_shader) via the
-        renderer."""
+        `data['shader']`, defaulting to `default_vert`/`default_frag`) via
+        the renderer.
+
+        `default_vert`/`default_frag` exist so a GraphicsPipeline-specific
+        Material subclass can pick its own defaults (e.g. PBRMaterial
+        selecting a forward-lit shader pair for a non-opaque blend mode,
+        since its deferred G-buffer can't hold a blended surface) without
+        this generic base class knowing anything about that pipeline's
+        rendering model - see PBRMaterial in graphics/pbr/material.py.
+        """
         self.data = data
         self.properties = self.parse_properties(property_definitions)
         self.property_definitions = property_definitions
@@ -157,9 +177,15 @@ class Material:
         # sheet whose whole look depends on crisp pixel boundaries.
         self.pixel_filter = str(data.get('filter', 'linear')).lower() == 'nearest'
 
+        self.blend_mode = {
+            'opaque': BlendMode.OPAQUE,
+            'transparent': BlendMode.TRANSPARENT,
+            'additive': BlendMode.ADDITIVE,
+        }.get(str(data.get('blend', 'opaque')).lower(), BlendMode.OPAQUE)
+
         shader = data.get('shader', {})
-        frag_source = shader.get('frag','engine://shader/default_shader.fbfrag')
-        vert_source = shader.get('vert', 'engine://shader/default_shader.fbvert')
+        frag_source = shader.get('frag', default_frag)
+        vert_source = shader.get('vert', default_vert)
         geom_source = shader.get('geom', None)
 
         # Remembered (as plain path strings, not the FileResource itself) so
@@ -189,6 +215,11 @@ class Material:
         separately if the shader *source* files changed instead."""
         self.data = data
         self.pixel_filter = str(data.get('filter', 'linear')).lower() == 'nearest'
+        self.blend_mode = {
+            'opaque': BlendMode.OPAQUE,
+            'transparent': BlendMode.TRANSPARENT,
+            'additive': BlendMode.ADDITIVE,
+        }.get(str(data.get('blend', 'opaque')).lower(), BlendMode.OPAQUE)
         self.properties = self.parse_properties(self.property_definitions)
 
     def reload_shader(self):

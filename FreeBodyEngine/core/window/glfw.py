@@ -150,8 +150,14 @@ class GLFWWindow(Window):
     polling itself, so this class is mostly a thin translation layer between
     GLFW's API and the engine's Window/Mouse contracts.
     """
-    def __init__(self, size: tuple[int, int], title: str):
-        """Initializes GLFW, creates the window and its OpenGL 4.3 core context, and makes it current."""
+    def __init__(self, size: tuple[int, int], title: str, visible: bool = True):
+        """Initializes GLFW, creates the window and its OpenGL 4.3 core context, and makes it current.
+
+        `visible=False` (used by TestWindow, a thin subclass of this
+        class) still creates a real, GL-rendering window - it just never
+        maps it on screen, so an automated test session never pops up or
+        steals focus.
+        """
         super().__init__(size, title)
         self.window_type = 'glfw'
 
@@ -167,6 +173,7 @@ class GLFWWindow(Window):
         glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
         glfw.window_hint(glfw.OPENGL_DEBUG_CONTEXT, get_flag(DEVMODE, False))
         glfw.window_hint(glfw.DEPTH_BITS, 24)
+        glfw.window_hint(glfw.VISIBLE, glfw.TRUE if visible else glfw.FALSE)
 
         self._window = glfw.create_window(size[0], size[1], title, None, None)
         if not self._window:
@@ -301,6 +308,22 @@ class GLFWWindow(Window):
     def _set_cursor(self, cursor: 'Cursor'):
         pass
 
+    def get_clipboard_text(self) -> str | None:
+        """GLFW abstracts clipboard access across X11/Wayland/Win32 itself -
+        no protocol-specific work needed here, unlike the Wayland backend's
+        own implementation. Returns None for an empty/non-text clipboard,
+        same as GLFW's own glfwGetClipboardString (NULL on those)."""
+        raw = glfw.get_clipboard_string(self._window)
+        if not raw:
+            return None
+        return raw.decode("utf-8", errors="replace")
+
+    def set_clipboard_text(self, text: str):
+        """Same story as get_clipboard_text - GLFW already abstracts this
+        across every backend it supports, no serial/data-source dance
+        needed the way the Wayland backend's own implementation does."""
+        glfw.set_clipboard_string(self._window, text)
+
     def create_mouse(self):
         """Creates and returns this window's GLFWMouse."""
         return GLFWMouse(self)
@@ -336,6 +359,19 @@ glfw_mouse_button_map = {
 
 class GLFWMouse(Mouse):
     """Mouse implementation for the GLFW backend - polls button/position state from GLFW each frame."""
+
+    # GLFW doesn't have a "text"/"grab" cursor for every name this engine's
+    # UI hover system asks for (see ui/manager.py) - the ones it lacks fall
+    # back to the closest visual equivalent it does have, rather than to
+    # ARROW_CURSOR, so a text field still looks meaningfully different from
+    # a button on this backend.
+    _GLFW_CURSOR_SHAPES = {
+        "default": "ARROW_CURSOR", "pointer": "POINTING_HAND_CURSOR",
+        "text": "IBEAM_CURSOR", "crosshair": "CROSSHAIR_CURSOR",
+        "grab": "HAND_CURSOR", "grabbing": "HAND_CURSOR",
+        "not_allowed": "NOT_ALLOWED_CURSOR", "wait": "ARROW_CURSOR",
+    }
+
     def __init__(self, window: GLFWWindow):
         """Sets up per-button state tracking for `window`."""
         super().__init__()
@@ -348,6 +384,20 @@ class GLFWMouse(Mouse):
         self.last_click_time = -500
         self.drag_threshold = 0.2
         self.scroll_delta = Vector(0, 0)
+        self._glfw_cursors = {}  # shape name -> created GLFWcursor, built lazily and reused
+
+    def set_cursor(self, shape: str = "default"):
+        """Sets the system cursor's shape via GLFW's standard-cursor API."""
+        constant_name = self._GLFW_CURSOR_SHAPES.get(shape, "ARROW_CURSOR")
+        cursor = self._glfw_cursors.get(constant_name)
+        if cursor is None:
+            cursor = glfw.create_standard_cursor(getattr(glfw, constant_name))
+            self._glfw_cursors[constant_name] = cursor
+        glfw.set_cursor(self.window._window, cursor)
+
+    def hide_cursor(self):
+        """Hides the system cursor for this window."""
+        glfw.set_input_mode(self.window._window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
 
     def get_scroll_delta(self) -> Vector:
         """How far the scroll wheel moved this frame, drained from the

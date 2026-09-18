@@ -1,13 +1,22 @@
 from FreeBodyEngine import get_main, warning, get_flag, get_service
 from typing import Literal, overload
 
-def get_platform() -> Literal['win32','darwin','linux']:
+def get_platform() -> Literal['win32', 'darwin', 'linux', 'web']:
     """Returns the identifier for the current host platform, or None if it
-    isn't one of the three recognized here (other platforms - e.g. mobile,
-    console - aren't handled yet)."""
+    isn't one of the ones recognized here (other platforms - e.g. mobile,
+    console - aren't handled yet).
+
+    `sys.platform` reports `"emscripten"` under Pyodide (a browser tab
+    running this engine compiled to WASM - see core/window/web.py) -
+    normalized to `"web"` here so the rest of the engine (graphics.
+    get_renderer(), core/window/__init__.py's get_window()) has one
+    consistent name to branch on instead of every call site needing to
+    know the raw `sys.platform` string Pyodide happens to report."""
     sys_plat = sys.platform
     if sys_plat in ['win32', 'darwin', 'linux']:
         return sys_plat
+    if sys_plat == 'emscripten':
+        return 'web'
     # handle stuff like android, IOs, console
 
 def abstractmethod(func):
@@ -35,10 +44,22 @@ def load_dlls():
     Returns the resolved directory.
 
     Raises:
-        RuntimeError: if the host platform isn't win32/darwin/linux.
+        RuntimeError: if the host platform isn't win32/darwin/linux/web.
         FileNotFoundError: if the expected library directory doesn't exist."""
     system = sys.platform
     arch = platform.machine()
+
+    # A WASM binary running inside the browser sandbox (Pyodide) can't
+    # dynamically load a desktop shared library at all - there's no
+    # concept of an OS-level dynamic linker search path to extend, and
+    # nothing under lib/windows|macos|linux would even load if there
+    # were. No-op instead of raising: fb.init() calls this unconditionally
+    # regardless of platform, and a *native* dependency this engine has
+    # anywhere (PyOpenGL, SDL2) simply isn't imported on the web code path
+    # in the first place (see core.window.web/graphics.webgl), so there's
+    # nothing this actually needed to find here.
+    if system == "emscripten":
+        return None
 
     if system == "win32":
         arch_folder = "x64" if sys.maxsize > 2**32 else "x86"

@@ -24,6 +24,14 @@ from FreeBodyEngine.cli.cpp.compile import compile_cpp_scripts, SCRIPTS_DIR_NAME
 
 SUPPORTED_PLATFORMS = ["windows", "darwin", "linux"]
 
+# A pinned, verified-complete Pyodide "full" distribution on jsdelivr's CDN
+# - see build_for_dev_web()'s own docstring for why this engine's bundled
+# lib/pyodide/ files aren't used instead (they're missing several files
+# `loadPyodide()` needs and hang rather than erroring). Pinned to an exact
+# version, not "latest", so a dev build's behavior doesn't shift under a
+# project out from under it.
+PYODIDE_CDN_URL = "https://cdn.jsdelivr.net/pyodide/v0.26.4/full/"
+
 FONT_FILE_TYPES = ["ttf", "otf"]
 DATA_FILE_TYPES = ["txt", "json", "fbusl", "fbvert", "fbfrag", "fbmat", "fbspr", "fbanim", "fbsheet", 'mp3', 'wav', 'toml']
 IMAGE_FILE_TYPES = ["png", "jpg", "jpeg"]
@@ -85,6 +93,7 @@ class Builder:
         if self.fbusl_source_path:
             self.dependencies = [d for d in self.dependencies if d.split()[0].split(">=")[0].split("==")[0] != "fbusl"]
 
+        self.project_path_root = os.path.abspath(path)
         self.asset_path = os.path.abspath(os.path.join(path, self.get_user_setting('assets')))
         self.code_path = os.path.abspath(os.path.join(path, self.get_user_setting('code')))
         self.build_path = os.path.abspath(f'{path}/build/')
@@ -104,12 +113,13 @@ class Builder:
         
         self.build_cache = self.get_build_cache()
 
-        if self.platform == "web" and not dev:
-            self.build_for_web()
-        elif self.platform == "web":
-            print("Cannot build for web in dev mode, building for your system platform instead.")
-
-        if dev:
+        if self.platform == "web":
+            if dev:
+                self.web_output_path = os.path.abspath(f'{path}/dev/web/')
+                self.build_for_dev_web()
+            else:
+                self.build_for_web()
+        elif dev:
             self.output_path = os.path.abspath(f'{path}/dev/assets/')
 
             self.build_for_dev()
@@ -721,10 +731,307 @@ class Builder:
             self.progress.done(f"Built {built_count} model(s), {skipped_count} unchanged")
         return manifest, data_files, image_files
 
-    def build_for_web(self, args):
-        """Placeholder for a web build target - always raises, since web
-        builds aren't implemented yet."""
-        raise NotImplementedError("Web builds not yet implemented.")
+    def build_for_web(self):
+        """Placeholder for a *release* web build target - packaging a
+        project's code+assets into a standalone, deployable static bundle
+        (minified/optimized, no dev server involved) isn't implemented
+        yet. Dev-mode web builds are a separate, already-implemented path
+        - see build_for_dev_web()."""
+        raise NotImplementedError("Web release builds not yet implemented - see build_for_dev_web() for dev-mode web builds.")
+
+    def build_for_dev_web(self):
+        """Prepares a development build for the web platform: a small,
+        self-contained `dev/web/` directory a caller (see dev/run.py's web
+        branch) serves over plain HTTP and points a browser at. Unlike
+        build_for_dev() (which reads everything straight off disk at
+        runtime, since it's still a normal local Python process), a
+        browser tab has no filesystem of its own at all - so this instead
+        packages two zip archives Pyodide unpacks into its own virtual
+        filesystem at page-load time (see _write_web_bootstrap_py()):
+          - `vendor.zip`: this engine's own Python source plus FBUSL's
+            (both pure Python - no native extension in either, see
+            FBUSL's own source tree - so a straight file copy is all
+            "installing" them into Pyodide's filesystem needs, unlike the
+            real venv+pip install a native/release build's setup_venv()
+            does).
+          - `project.zip`: the project file, main_file, and everything
+            under the asset/code directories, laid out at the exact same
+            relative paths DevFileSystem already expects on every other
+            platform - unpacked to `/project` inside Pyodide, so
+            `open()`/tomllib-reading code needs zero changes to work
+            there unmodified.
+        Both are rebuilt fresh on every `fb run --web` (a real rebuild,
+        not a live dev-server proxy to the actual project files) - editing
+        a project file needs rerunning `fb run --web` and reloading the
+        page to see the change, unlike build_for_dev()'s native path
+        where DevFileSystem reads current file content straight off disk
+        every time. A follow-up could fetch project files individually
+        instead of zipping them, to get that live-edit convenience back;
+        deferred for now in favor of the simpler, more robust archive
+        approach for a first working web dev loop.
+
+        Loads the Pyodide runtime itself from jsdelivr's CDN
+        (PYODIDE_CDN_URL below), not the `lib/pyodide/` files bundled
+        with this engine - those turned out to be only pyodide.js/
+        .asm.wasm, a partial/experimental copy missing pyodide.asm.js,
+        pyodide-lock.json (needed to resolve `loadPackage(["numpy",
+        "Pillow"])` to real wheel URLs) and python_stdlib.zip (needed to
+        boot the standard library at all) - `loadPyodide()` against it
+        hung indefinitely on "Loading Pyodide runtime..." instead of
+        erroring, since the missing files are fetched lazily rather than
+        checked up front. A real offline-capable vendor copy is a
+        reasonable follow-up (mirror the CDN's whole `full/` directory
+        for the pinned version instead of two loose files), but pulling a
+        known-complete distribution from the CDN is what actually works
+        today.
+
+        Pre-bakes project fonts straight into the project's own asset
+        directory first, same as build_for_dev() does for every other
+        platform, so project.zip picks up the baked files like any other
+        asset."""
+        self.progress.stage("Preparing web development build")
+        _, _, _, fonts = self.locate_assets()
+        self.build_fonts(fonts, self.asset_path)
+
+        if os.path.exists(self.web_output_path):
+            shutil.rmtree(self.web_output_path)
+        os.makedirs(self.web_output_path)
+
+        self.progress.stage("Packaging engine source for the browser")
+        self._write_vendor_zip()
+        self.progress.done("Packaged engine source for the browser")
+
+        self.progress.stage("Packaging project files for the browser")
+        self._write_project_zip()
+        self.progress.done("Packaged project files for the browser")
+
+        self._write_web_index_html()
+        self._write_web_bootstrap_py()
+
+        self.progress.done("Successfully built game for web development.")
+
+    def _add_dir_to_zip(self, zf, src_dir: str, arc_prefix: str, ignore_dirnames=frozenset({"__pycache__"})):
+        """Adds every file under `src_dir` to already-open ZipFile `zf`,
+        each named `arc_prefix/<path relative to src_dir>` inside the
+        archive (forward-slash separated regardless of host OS, since
+        that's what unzips inside Pyodide's own POSIX-style virtual
+        filesystem) - skipping directories in `ignore_dirnames` (bytecode
+        caches have no business inside a fresh Pyodide filesystem)."""
+        for dir_path, dir_names, file_names in os.walk(src_dir):
+            dir_names[:] = [d for d in dir_names if d not in ignore_dirnames]
+            for file_name in file_names:
+                if file_name.endswith((".pyc", ".pyo")):
+                    continue
+                abs_path = os.path.join(dir_path, file_name)
+                rel_path = os.path.relpath(abs_path, src_dir).replace(os.sep, "/")
+                zf.write(abs_path, f"{arc_prefix}/{rel_path}")
+
+    def _write_vendor_zip(self):
+        """Writes `vendor.zip`: this engine's own installed source
+        (`FreeBodyEngine/`) plus FBUSL's (`fbusl/`), each at the top level
+        of the archive - unpacked to `/pylib` inside Pyodide (see
+        _write_web_bootstrap_py()), so `import FreeBodyEngine`/`import
+        fbusl` resolve there exactly like any other installed package
+        once `/pylib` is on `sys.path`."""
+        import zipfile
+
+        engine_spec = importlib.util.find_spec("FreeBodyEngine")
+        if engine_spec is None or engine_spec.origin is None:
+            raise RuntimeError("Could not locate the 'FreeBodyEngine' package to package for the web build.")
+        fbusl_spec = importlib.util.find_spec("fbusl")
+        if fbusl_spec is None or fbusl_spec.origin is None:
+            raise RuntimeError("Could not locate the 'fbusl' package to package for the web build.")
+
+        zip_path = os.path.join(self.web_output_path, "vendor.zip")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            # "lib" (native DLLs for every desktop platform, ~100MB+ on
+            # Windows alone, plus this same vendored Pyodide runtime
+            # bundled a second time - see build_for_dev_web()'s own
+            # separate _pyodide/ copy) and "cli"/"build" (this very build
+            # system and its CLI - development/packaging tooling, not
+            # something the running game itself ever imports) are never
+            # reached by anything the web platform's own import chain
+            # actually touches (utils.load_dlls() is a no-op there - see
+            # its own platform guard), so excluding them keeps this
+            # archive down to what a running game needs instead of
+            # bloating every dev build with irrelevant megabytes.
+            self._add_dir_to_zip(
+                zf, os.path.dirname(engine_spec.origin), "FreeBodyEngine",
+                ignore_dirnames=frozenset({"__pycache__", "lib", "cli", "build"}),
+            )
+            self._add_dir_to_zip(zf, os.path.dirname(fbusl_spec.origin), "fbusl")
+
+    def _write_project_zip(self):
+        """Writes `project.zip`: `fbproject.toml`, `main_file`, and every
+        file under the asset/code directories, each archived at its path
+        relative to the project root - unpacked to `/project` inside
+        Pyodide (see _write_web_bootstrap_py()), reproducing the exact
+        relative layout DevFileSystem already reads natively."""
+        import zipfile
+
+        zip_path = os.path.join(self.web_output_path, "project.zip")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.write(os.path.join(self.project_path_root, "fbproject.toml"), "fbproject.toml")
+
+            main_rel = os.path.relpath(self.main_file, self.project_path_root).replace(os.sep, "/")
+            zf.write(self.main_file, main_rel)
+
+            asset_rel = os.path.relpath(self.asset_path, self.project_path_root).replace(os.sep, "/")
+            self._add_dir_to_zip(zf, self.asset_path, asset_rel)
+
+            code_rel = os.path.relpath(self.code_path, self.project_path_root).replace(os.sep, "/")
+            self._add_dir_to_zip(zf, self.code_path, code_rel)
+
+    def _write_web_index_html(self):
+        """Writes the page the dev server's URL actually points at: a
+        `<canvas>` (WebWindow looks for/creates one with this id - see
+        core/window/web.py's CANVAS_ID) sized to fill the viewport, a
+        script tag for the vendored Pyodide runtime, and a tiny inline
+        script that loads Pyodide and hands off to bootstrap.py (see
+        _write_web_bootstrap_py()) for everything else - kept minimal
+        deliberately, so almost all of the actual boot logic lives in
+        Python (bootstrap.py), not scattered into inline JS that's harder
+        to iterate on."""
+        name = self.build_settings.get('name', 'FreeBodyGame')
+        # The project's own declared dependencies (fbproject.toml's
+        # `dependencies` - a *native* build never actually auto-installs
+        # these today, per that key's own doc comment in most projects'
+        # fbproject.toml; this web path is the first thing that actually
+        # reads it back). Installed via micropip rather than
+        # `pyodide.loadPackage()` - unlike numpy/Pillow (pyodide's own
+        # precompiled built-in packages, faster to fetch), an arbitrary
+        # project dependency is far more likely to be a pure-Python PyPI
+        # package with no pyodide-native build at all, which only
+        # micropip can fetch and install directly from PyPI. Empty-string
+        # entries (a real project file shape - see Builder.__init__'s own
+        # comment on why) are dropped first.
+        project_deps = [d for d in self.build_settings.get('dependencies', []) if d]
+        import json as _json
+        project_deps_json = _json.dumps(project_deps)
+        html = f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{name}</title>
+<style>
+  html, body {{ margin: 0; padding: 0; overflow: hidden; background: #000; }}
+  canvas {{ display: block; width: 100vw; height: 100vh; }}
+  #fb-boot-status {{
+    position: fixed; left: 0; top: 0; padding: 8px 12px;
+    font: 12px monospace; color: #0f0; background: rgba(0,0,0,0.6);
+    white-space: pre-wrap; z-index: 1000;
+  }}
+</style>
+</head>
+<body>
+<div id="fb-boot-status">Loading Pyodide...</div>
+<canvas id="fb-canvas"></canvas>
+<script src="{PYODIDE_CDN_URL}pyodide.js"></script>
+<script type="text/javascript">
+async function main() {{
+  const statusEl = document.getElementById("fb-boot-status");
+  const setStatus = (msg) => {{ statusEl.textContent = msg; console.log("[fb-boot]", msg); }};
+
+  try {{
+    setStatus("Loading Pyodide runtime...");
+    const pyodide = await loadPyodide({{ indexURL: "{PYODIDE_CDN_URL}" }});
+    window.pyodide = pyodide;
+
+    setStatus("Loading numpy/Pillow...");
+    await pyodide.loadPackage(["numpy", "Pillow", "micropip"]);
+
+    const projectDeps = {project_deps_json};
+    if (projectDeps.length > 0) {{
+      setStatus("Installing project dependencies: " + projectDeps.join(", "));
+      const micropip = pyodide.pyimport("micropip");
+      await micropip.install(projectDeps);
+    }}
+
+    setStatus("Fetching bootstrap.py...");
+    const bootstrapSrc = await (await fetch("bootstrap.py")).text();
+
+    setStatus("Running project bootstrap...");
+    await pyodide.runPythonAsync(bootstrapSrc);
+
+    statusEl.remove();
+  }} catch (err) {{
+    setStatus("Boot failed - see browser console for the full traceback:\\n" + err);
+    console.error(err);
+    throw err;
+  }}
+}}
+main();
+</script>
+</body>
+</html>
+"""
+        with open(os.path.join(self.web_output_path, "index.html"), "w") as f:
+            f.write(html)
+
+    def _write_web_bootstrap_py(self):
+        """Writes `bootstrap.py` - run inside Pyodide (via
+        `pyodide.runPythonAsync`, see _write_web_index_html()) once numpy/
+        Pillow are already loaded. Unpacks vendor.zip to `/pylib` and
+        project.zip to `/project` (both via pyodide.http's own
+        `FetchResponse.unpack_archive()` - no per-file fetch loop needed),
+        puts `/pylib` and the project's code directory on `sys.path`, sets
+        the same flags dev/run.py's native subprocess launch would, then
+        `exec()`s main_file's own source with `__name__ == "__main__"` -
+        standing in for that subprocess launch, which isn't possible at
+        all inside a browser tab (there is no second process to launch):
+        main_file's own `if __name__ == "__main__":` block (present in
+        every project template - see cli/project.py) runs exactly the
+        same code path either way, just via `exec()` in this same
+        interpreter instead of a new one."""
+        name = self.build_settings.get('name', 'FreeBodyGame')
+        main_rel = os.path.relpath(self.main_file, self.project_path_root).replace(os.sep, "/")
+        code_rel = os.path.relpath(self.code_path, self.project_path_root).replace(os.sep, "/")
+
+        bootstrap = f'''
+import js
+from pyodide.http import pyfetch
+
+def _set_status(msg):
+    el = js.document.getElementById("fb-boot-status")
+    if el is not None:
+        el.textContent = msg
+
+async def run():
+    import sys
+
+    _set_status("Unpacking engine source...")
+    vendor_resp = await pyfetch("vendor.zip")
+    await vendor_resp.unpack_archive(extract_dir="/pylib", format="zip")
+    sys.path.insert(0, "/pylib")
+
+    _set_status("Unpacking project files...")
+    project_resp = await pyfetch("project.zip")
+    await project_resp.unpack_archive(extract_dir="/project", format="zip")
+    sys.path.insert(0, "/project/{code_rel}")
+
+    import FreeBodyEngine as fb
+    fb.set_flag(fb.DEVMODE, True)
+    fb.set_flag(fb.PROJECT_PATH, "/project")
+    fb.set_flag(fb.NAME, {name!r})
+
+    sys.argv = ["main.py", "--dev", "--path=/project", "--name={name}"]
+
+    main_path = "/project/{main_rel}"
+    with open(main_path) as f:
+        source = f.read()
+
+    _set_status("Starting...")
+    status_el = js.document.getElementById("fb-boot-status")
+    if status_el is not None:
+        status_el.remove()
+
+    g = {{"__name__": "__main__", "__file__": main_path}}
+    exec(compile(source, main_path, "exec"), g)
+
+await run()
+'''
+        with open(os.path.join(self.web_output_path, "bootstrap.py"), "w") as f:
+            f.write(bootstrap)
 
     def build_for_release(self):
         """Runs the full release pipeline: scans project and engine assets,
