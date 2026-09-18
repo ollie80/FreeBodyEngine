@@ -22,6 +22,18 @@ def get_window() -> type[Window]:
         from FreeBodyEngine.core.window.web import WebWindow
         return WebWindow
 
+    if "ANDROID_ARGUMENT" in os.environ:
+        # Checked unconditionally, with no `platform == "linux"`
+        # precondition - see utils.get_platform()'s own docstring for why
+        # that precondition was actually wrong (confirmed on a real
+        # device: it isn't safe to assume p4a's CPython build always
+        # reports plain `sys.platform == "linux"`). Checked before every
+        # other branch below regardless of what `sys.platform` turns out
+        # to be, so Android can never fall through into a desktop Wayland/
+        # X11 branch and try to import bindings that don't exist there.
+        from FreeBodyEngine.core.window.android import AndroidWindow
+        return AndroidWindow
+
     if get_flag("GLFW_WINDOW", False):
         from FreeBodyEngine.core.window.glfw import GLFWWindow
 

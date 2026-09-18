@@ -13,11 +13,18 @@ from FreeBodyEngine.utils import get_platform
 # graphics/__init__.py guards its own PyOpenGL-dependent gl33 import.
 
 def get_audio_manager():
-    if get_platform() != "web":
-        from FreeBodyEngine.audio import sound_file
-        return sound_file.SoundFileAudioManager() 
-    else:
+    platform = get_platform()
+    if platform == "web":
         from FreeBodyEngine.audio import web
         return web.PyodideAudioManager()
+    elif platform == "android":
+        # sounddevice (PortAudio) has no Android backend at all - see
+        # audio/android.py's own module docstring for the SDL2_mixer-based
+        # replacement used here instead.
+        from FreeBodyEngine.audio import android
+        return android.AndroidAudioManager()
+    else:
+        from FreeBodyEngine.audio import sound_file
+        return sound_file.SoundFileAudioManager()
 
 

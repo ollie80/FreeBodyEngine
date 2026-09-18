@@ -50,6 +50,10 @@ def get_renderer() -> type[renderer.Renderer]:
         from FreeBodyEngine.graphics.webgl.renderer import WebGL2Renderer
         return WebGL2Renderer
 
+    if platform == "android":
+        from FreeBodyEngine.graphics.gles.renderer import GLESRenderer
+        return GLESRenderer
+
     if platform in ("win32", "linux", "darwin"):
         # By the time get_renderer() runs, the window (and its GL context)
         # already exists and is current - register_default_services()

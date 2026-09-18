@@ -146,7 +146,7 @@ def get_file_system() -> FileSystem:
     running: an AssetPackFileSystem (reading bundled `.pak`s) unless the
     DEVMODE flag is set, in which case a DevFileSystem rooted at the
     current project's asset directory. Returns None on an unsupported
-    platform (anything other than win32/darwin/linux/web).
+    platform (anything other than win32/darwin/linux/web/android).
 
     DevFileSystem itself has no platform-specific code at all (see
     core/files/dev.py's open_file() - a plain builtin open(), which reads
@@ -157,10 +157,17 @@ def get_file_system() -> FileSystem:
     get a real FileSystem instead of silently None. A release build's
     AssetPackFileSystem path isn't reachable for "web" yet regardless
     (see Builder.build_for_web() - web release builds aren't implemented
-    at all), so that half of this function is unchanged."""
+    at all), so that half of this function is unchanged.
+
+    "android" needed adding for the same reason "web" did: Android's own
+    per-app private storage (where build_for_dev_android() copies the
+    project's assets - see its own docstring) is a completely ordinary
+    POSIX filesystem underneath, so DevFileSystem's plain open() calls
+    need nothing platform-specific here either - just a dispatch entry
+    that wasn't there yet, not a new FileSystem implementation."""
     platform = get_platform()
 
-    if platform in ("win32", "darwin", "linux", "web"):
+    if platform in ("win32", "darwin", "linux", "web", "android"):
         if not get_flag(DEVMODE, False):
             return AssetPackFileSystem()
         else:
