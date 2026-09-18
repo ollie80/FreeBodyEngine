@@ -424,6 +424,7 @@ class WebMouse(Mouse):
         self.last_click_time = [-500.0, -500.0, -500.0]
         self.drag_threshold = 4.0
         self.double_click_threshold = 0.4
+        self.scroll_delta = Vector(0.0, 0.0)
 
     def lock_position(self):
         """Requests Pointer Lock on the canvas - the browser equivalent of
@@ -455,7 +456,16 @@ class WebMouse(Mouse):
         return self._drag_start[button]
 
     def get_scroll_delta(self) -> Vector:
-        return self.window._scroll_accum
+        """How far the scroll wheel moved this frame - drained from
+        `_scroll_accum` (the live, wheel-event-fed accumulator - see
+        WebWindow._on_wheel()) into this stable snapshot once per
+        update(), the same as GLFWMouse.get_scroll_delta()'s own
+        docstring describes for its GLFW callback equivalent. This used
+        to return `_scroll_accum` directly, which update() *also* resets
+        to zero every frame - whichever ran first each frame, this read
+        the reset value, not the accumulated one, so mouse-wheel scroll
+        events were silently discarded 100% of the time on web."""
+        return self.scroll_delta
 
     def set_cursor(self, shape: str = "default"):
         """Sets the canvas's CSS `cursor` style - a real implementation
@@ -529,4 +539,5 @@ class WebMouse(Mouse):
 
             self._down[i] = is_down
 
+        self.scroll_delta = self.window._scroll_accum
         self.window._scroll_accum = Vector(0.0, 0.0)
