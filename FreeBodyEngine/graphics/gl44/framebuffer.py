@@ -92,11 +92,25 @@ class GL44Framebuffer(Framebuffer):
                 color_attachment_index += 1
 
             elif att_type == AttachmentType.DEPTH:
-                self.depth_renderbuffer = glGenRenderbuffers(1)
-                glBindRenderbuffer(GL_RENDERBUFFER, self.depth_renderbuffer)
+                # A texture, not a renderbuffer (unlike STENCIL/DEPTH_STENCIL
+                # below) - a shadow-map pass needs to sample this back as a
+                # regular texture in a later shader (see PBRPipeline's
+                # directional-light shadow pass). See GLFramebuffer (gl33)
+                # for the identical rationale/implementation.
+                tex = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, tex)
                 internal_format = GL_ATTACHMENT_FORMAT[att_format]
-                glRenderbufferStorage(GL_RENDERBUFFER, internal_format, width, height)
-                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
+                fmt, typ = GL_ATTACHMENT_TYPE[att_format]
+                glTexImage2D(GL_TEXTURE_2D, 0, internal_format, width, height, 0, fmt, typ, None)
+
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32))
+
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex, 0)
+                self.textures[name] = tex
 
             elif att_type == AttachmentType.STENCIL:
                 self.depth_renderbuffer = glGenRenderbuffers(1)
@@ -134,6 +148,22 @@ class GL44Framebuffer(Framebuffer):
 
     def _draw_depth_texture(tex, size):
         pass
+
+    def clear_color_attachment(self, name: str, value=(0.0, 0.0, 0.0, 0.0)):
+        """Clears the named color attachment to `value` via
+        `glClearBufferfv(GL_COLOR, draw_buffer_index, ...)` - see
+        GLFramebuffer.clear_color_attachment (gl33) for why this targets
+        only one draw buffer rather than every bound one. This was missing
+        entirely from GL44Framebuffer (PBRPipeline.draw() calls it
+        unconditionally to keep gWorldPos.w a reliable sentinel), so
+        PBRPipeline could never actually run on GL44Renderer before this."""
+        if name not in self.attachments:
+            raise ValueError(f"No attachment named '{name}'")
+        if self._attachments[name][0] != AttachmentType.COLOR:
+            raise ValueError(f"Attachment '{name}' is not a color attachment")
+
+        draw_buffer_index = self.attachments[name] - GL_COLOR_ATTACHMENT0
+        glClearBufferfv(GL_COLOR, draw_buffer_index, np.array(value, dtype=np.float32))
 
     def draw(self, attachment, size: tuple[int,int] = None):
         """Draw a named attachment to the screen."""
@@ -233,7 +263,24 @@ class GL44Framebuffer(Framebuffer):
                 draw_buffers.append(attachment_enum)
                 color_attachment_index += 1
 
-            elif att_type in (AttachmentType.DEPTH, AttachmentType.STENCIL, AttachmentType.DEPTH_STENCIL):
+            elif att_type == AttachmentType.DEPTH:
+                glDeleteTextures(1, [self.textures[name]])
+
+                tex = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, tex)
+                fmt, typ = GL_ATTACHMENT_TYPE[att_format]
+                glTexImage2D(GL_TEXTURE_2D, 0, internal_format, self.width, self.height, 0, fmt, typ, None)
+
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32))
+
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex, 0)
+                self.textures[name] = tex
+
+            elif att_type in (AttachmentType.STENCIL, AttachmentType.DEPTH_STENCIL):
                 if hasattr(self, "depth_renderbuffer"):
                     glDeleteRenderbuffers(1, [self.depth_renderbuffer])
 
@@ -241,9 +288,7 @@ class GL44Framebuffer(Framebuffer):
                 glBindRenderbuffer(GL_RENDERBUFFER, self.depth_renderbuffer)
                 glRenderbufferStorage(GL_RENDERBUFFER, internal_format, self.width, self.height)
 
-                if att_type == AttachmentType.DEPTH:
-                    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
-                elif att_type == AttachmentType.STENCIL:
+                if att_type == AttachmentType.STENCIL:
                     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
                 elif att_type == AttachmentType.DEPTH_STENCIL:
                     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
@@ -272,3 +317,9 @@ class GL44Framebuffer(Framebuffer):
         restore the previous viewport, so callers that resized it should
         reset that themselves."""
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
+
+    def set_draw_buffers(self, names: list[str]):
+        """See Framebuffer.set_draw_buffers / GLFramebuffer.set_draw_buffers
+        (gl33) - identical implementation. Assumes this FBO is already
+        bound."""
+        glDrawBuffers(len(names), [self.attachments[name] for name in names])

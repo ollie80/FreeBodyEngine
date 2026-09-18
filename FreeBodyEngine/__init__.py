@@ -19,6 +19,7 @@ DEFAULT_NAME = "FREEBODY_PROJECT"
 # flag constants
 HEADLESS = "HEADLESS"
 DEVMODE = "DEVMODE"
+TEST_WINDOW = "TEST_WINDOW"  # fb.set_flag(fb.TEST_WINDOW, True) before init() - see core.window.testwindow.TestWindow
 PROJECT_PATH = "PROJECT_PATH"
 PROFILER = "PROFILER"
 NAME = "NAME"
@@ -187,12 +188,35 @@ def physics_delta() -> float:
     return get_main().updater.physics_timestep
 
 def warning(msg):
-    """Raises an warning."""
-    get_service('logger').warning(msg)
+    """Raises an warning.
+
+    Falls back to a plain `print()` if no `Main`/'logger' service exists
+    yet - a module can legitimately call this from its own top-level
+    import-time code (e.g. utils.fbnjit()'s "numba isn't installed"
+    notice, hit whenever a module using it is imported anywhere before
+    numba-dependent code runs, not just after fb.init()), and get_service()
+    itself requires a live Main to even ask whether 'logger' is
+    registered. This used to crash instead (AttributeError on
+    `None.warning(...)`, since get_service() returns None rather than
+    raising when the service or the Main it needs doesn't exist) -
+    surfaced by the web platform specifically (see core/tilemap/
+    renderer.py's own comment: numba is never installed there, so this
+    fallback path - previously untested on any platform that has numba -
+    ran for the first time and crashed the whole import chain instead of
+    just printing a warning like every other platform silently never
+    exercised this line to notice)."""
+    if main_exists() and service_exists('logger'):
+        get_service('logger').warning(msg)
+    else:
+        print(f"[warning] {msg}")
 
 def error(msg):
-    """Throws an error."""
-    get_service('logger').error(msg)
+    """Throws an error. See warning()'s own docstring for why this falls
+    back to plain `print()` before a Main/'logger' service exists."""
+    if main_exists() and service_exists('logger'):
+        get_service('logger').error(msg)
+    else:
+        print(f"[error] {msg}")
 
 def _handle_signal(signal, frame):
     get_main().quit()

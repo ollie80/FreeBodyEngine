@@ -101,11 +101,31 @@ class GLFramebuffer(Framebuffer):
                 color_attachment_index += 1
 
             elif att_type == AttachmentType.DEPTH:
-                self.depth_renderbuffer = glGenRenderbuffers(1)
-                glBindRenderbuffer(GL_RENDERBUFFER, self.depth_renderbuffer)
+                # A texture, not a renderbuffer (unlike STENCIL/DEPTH_STENCIL
+                # below) - a shadow-map pass needs to sample this back as a
+                # regular texture in a later shader (see PBRPipeline's
+                # directional-light shadow pass), which a renderbuffer can't
+                # be. GL_NEAREST since depth-comparison shadow sampling does
+                # its own bias/PCF rather than relying on hardware filtering,
+                # and GL_CLAMP_TO_BORDER with a border depth of 1.0 (max/far)
+                # so sampling outside the map's bounds reads as "not in
+                # shadow" instead of wrapping/repeating garbage.
+                tex = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, tex)
                 internal_format = GL_ATTACHMENT_FORMAT[att_format]
-                glRenderbufferStorage(GL_RENDERBUFFER, internal_format, width, height)
-                glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
+                fmt, typ = GL_ATTACHMENT_TYPE[att_format]
+                glTexImage2D(GL_TEXTURE_2D, 0, internal_format, width, height, 0, fmt, typ, None)
+
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32))
+
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex, 0)
+
+                self.textures[name] = tex
+                self.depth_texture_name = name
 
             elif att_type == AttachmentType.STENCIL:
                 self.depth_renderbuffer = glGenRenderbuffers(1)
@@ -123,6 +143,8 @@ class GLFramebuffer(Framebuffer):
 
             else:
                 raise ValueError(f"Unsupported attachment type: {att_type}")
+
+        self.num_color_attachments = color_attachment_index
 
         if draw_buffers:
             glDrawBuffers(len(draw_buffers), draw_buffers)
@@ -260,7 +282,25 @@ class GLFramebuffer(Framebuffer):
                 draw_buffers.append(attachment_enum)
                 color_attachment_index += 1
 
-            elif att_type in (AttachmentType.DEPTH, AttachmentType.STENCIL, AttachmentType.DEPTH_STENCIL):
+            elif att_type == AttachmentType.DEPTH:
+                # Texture-backed, matching __init__ - see the comment there.
+                glDeleteTextures(1, [self.textures[name]])
+
+                tex = glGenTextures(1)
+                glBindTexture(GL_TEXTURE_2D, tex)
+                fmt, typ = GL_ATTACHMENT_TYPE[att_format]
+                glTexImage2D(GL_TEXTURE_2D, 0, internal_format, self.width, self.height, 0, fmt, typ, None)
+
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32))
+
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex, 0)
+                self.textures[name] = tex
+
+            elif att_type in (AttachmentType.STENCIL, AttachmentType.DEPTH_STENCIL):
                 if hasattr(self, "depth_renderbuffer"):
                     glDeleteRenderbuffers(1, [self.depth_renderbuffer])
 
@@ -268,12 +308,12 @@ class GLFramebuffer(Framebuffer):
                 glBindRenderbuffer(GL_RENDERBUFFER, self.depth_renderbuffer)
                 glRenderbufferStorage(GL_RENDERBUFFER, internal_format, self.width, self.height)
 
-                if att_type == AttachmentType.DEPTH:
-                    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
-                elif att_type == AttachmentType.STENCIL:
+                if att_type == AttachmentType.STENCIL:
                     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
                 elif att_type == AttachmentType.DEPTH_STENCIL:
                     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, self.depth_renderbuffer)
+
+        self.num_color_attachments = color_attachment_index
 
         if draw_buffers:
             glDrawBuffers(len(draw_buffers), draw_buffers)
@@ -294,6 +334,33 @@ class GLFramebuffer(Framebuffer):
         previously-bound target left set."""
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
         glViewport(0, 0, self.width, self.height)
+
+    def set_draw_buffers(self, names: list[str]):
+        """See Framebuffer.set_draw_buffers. Assumes this FBO is already
+        bound.
+
+        Builds the same full-width, position-equals-attachment-index array
+        WebGL2Framebuffer.set_draw_buffers() is forced to use (GL_NONE at
+        every color attachment not in `names`) rather than the more
+        compact `[self.attachments[n] for n in names]` this used to be -
+        desktop GL doesn't require that shape (it can remap an arbitrary
+        subset onto sequential fragment-output locations starting at 0),
+        but PBRPipeline's shaders (see graphics/pbr/shaders.py's
+        LIGHTING_COMPOSITE_FRAG/default_forward.fbfrag) declare their real
+        `@output` field at whatever location its physical attachment index
+        is - padded with unused leading fields to get there - specifically
+        so the *same* FBUSL source compiles correctly on WebGL2, which has
+        no remapping at all (see WebGL2Framebuffer.set_draw_buffers()'s
+        own docstring). Matching that convention here means one shared
+        assumption ("output location N always means physical attachment
+        N") holds on both backends instead of desktop silently tolerating
+        a mismatch WebGL2 can't."""
+        requested = {self.attachments[name] for name in names}
+        bufs = [
+            (GL_COLOR_ATTACHMENT0 + i) if (GL_COLOR_ATTACHMENT0 + i) in requested else GL_NONE
+            for i in range(self.num_color_attachments)
+        ]
+        glDrawBuffers(len(bufs), bufs)
 
     def unbind(self):
         """Rebinds the default framebuffer (0), i.e. the window's own

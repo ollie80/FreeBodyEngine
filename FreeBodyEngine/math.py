@@ -750,9 +750,35 @@ class Vector3:
 
     def __repr__(self):
         return f"Vector3({self.x}, {self.y}, {self.z})"
-    
+
     def __iter__(self):
         return iter((self.x, self.y, self.z))
+
+    @property
+    def magnitude(self):
+        """This vector's length."""
+        return math.sqrt(self.x**2 + self.y**2 + self.z**2)
+
+    @property
+    def normalized(self):
+        """This vector scaled to length 1, or `(0, 0, 0)` if it's already
+        the zero vector (rather than raising a divide-by-zero error)."""
+        mag = self.magnitude
+        if mag == 0:
+            return Vector3(0, 0, 0)
+        return Vector3(self.x / mag, self.y / mag, self.z / mag)
+
+    def dot(self, other: 'Vector3') -> float:
+        """Returns the dot product of this vector and `other`."""
+        return self.x * other.x + self.y * other.y + self.z * other.z
+
+    def cross(self, other: 'Vector3') -> 'Vector3':
+        """Returns the cross product of this vector and `other`."""
+        return Vector3(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
 
 class Curve(ABC):
     """Base class for easing curves: given a progress value `x` (typically

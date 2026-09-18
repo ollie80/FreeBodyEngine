@@ -1,0 +1,15 @@
+
+@uniform
+model: mat4
+
+@input
+vertex: vec3
+uvs: vec2
+normal: vec3
+
+@output
+uv: vec2
+
+def main():
+    uv = uvs
+    VERTEX_POSITION = model * vec4(vertex.x, vertex.y, vertex.z, 1.0)

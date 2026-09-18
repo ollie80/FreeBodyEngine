@@ -2,7 +2,7 @@ from FreeBodyEngine.math import Vector
 from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.core.service import Service
 from FreeBodyEngine.core.update import UpdatePhase
-from FreeBodyEngine import register_service_update, unregister_service_update
+from FreeBodyEngine import register_service_update, unregister_service_update, warning
 
 class Mouse(Service):
     """Base mouse service - tracks cursor position, button state, dragging, and double-clicks. Each window backend (GLFW/X11/Wayland) provides a concrete subclass implementing the abstract methods below."""
@@ -19,7 +19,8 @@ class Mouse(Service):
         
         self._cursor_hidden = False
         self._interal_cursor_hidden = False
-        self.double_click_threshold = 0.4 
+        self.double_click_threshold = 0.4
+        self._warned_no_cursor_support = False
     
     def on_initialize(self):
         """Registers update() to run every frame's EARLY phase."""
@@ -84,15 +85,24 @@ class Mouse(Service):
             return self.get_drag_start(button, world) + self.position
 
 
-    @abstractmethod
     def hide_cursor(self):
-        """Hides the system cursor."""
-        pass
+        """Hides the system cursor. Concrete no-op (with a one-time warning)
+        for backends that haven't implemented real cursor control yet -
+        see WaylandMouse/GLFWMouse for the backends that actually do."""
+        if not self._warned_no_cursor_support:
+            warning(f"hide_cursor() is not implemented on '{self.__class__.__name__}' - ignoring.")
+            self._warned_no_cursor_support = True
 
-    @abstractmethod
-    def set_cursor(self):
-        """Sets the system cursor's appearance."""
-        pass
+    def set_cursor(self, shape: str = "default"):
+        """Sets the system cursor's shape - one of "default", "pointer",
+        "text", "grab", "grabbing", "crosshair", "wait", "not_allowed"
+        (backends may support more; unsupported names fall back to
+        "default"). Concrete no-op (with a one-time warning) for backends
+        that haven't implemented real cursor control yet - see
+        WaylandMouse/GLFWMouse for the backends that actually do."""
+        if not self._warned_no_cursor_support:
+            warning(f"set_cursor() is not implemented on '{self.__class__.__name__}' - ignoring.")
+            self._warned_no_cursor_support = True
 
     @abstractmethod
     def update(self):

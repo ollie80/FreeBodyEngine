@@ -4,7 +4,7 @@ from FreeBodyEngine.core.tilemap.chunk import Chunk
 from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine import get_service
-from FreeBodyEngine.utils import fbnjit
+from FreeBodyEngine.utils import fbnjit, HAS_NUMBA
 from fbusl.injector import Injector
 from FreeBodyEngine.graphics.texture import TextureStack
 from FreeBodyEngine.core.files.loader import load_file
@@ -13,12 +13,28 @@ from FreeBodyEngine.core.files import TEXTURE_STACK_FILE
 from typing import TYPE_CHECKING
 from FreeBodyEngine.graphics.mesh import AttributeType, BufferUsage
 import numpy as np
-from numba import types
 
 if TYPE_CHECKING:
     from FreeBodyEngine.core.tilemap.tilemap import Tilemap
 
-chunk_mesh_sig = types.Tuple((types.float32[:, :], types.float32[:, :], types.uint32[:]))(types.uint8[:], types.int32, types.int32)
+# A raw `from numba import types` (unlike fbnjit() below, which already
+# degrades gracefully via utils.HAS_NUMBA) used to sit here unconditionally -
+# fine on desktop, where numba is a real dependency, but numba itself has
+# no Pyodide/WASM build at all (it JIT-compiles to native machine code via
+# LLVM, which is fundamentally incompatible with running inside a WASM
+# sandbox that can't JIT its own native code) - so importing it eagerly
+# crashed `import FreeBodyEngine` itself on the web platform, the moment
+# anything pulled in PBRPipeline (which imports TilemapRenderer
+# unconditionally). Tilemap rendering isn't implemented for the web
+# backend yet regardless, so `chunk_mesh_sig` is just left None there -
+# fbnjit()'s own HAS_NUMBA fallback already ignores its signature argument
+# when numba isn't installed, so this doesn't change desktop behavior at
+# all, only what happens when numba genuinely isn't available.
+if HAS_NUMBA:
+    from numba import types
+    chunk_mesh_sig = types.Tuple((types.float32[:, :], types.float32[:, :], types.uint32[:]))(types.uint8[:], types.int32, types.int32)
+else:
+    chunk_mesh_sig = None
 
 @fbnjit(chunk_mesh_sig, cache=True)
 def generate_chunk_mesh(chunk_data: np.ndarray, tile_size: int, chunk_size: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

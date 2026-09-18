@@ -2,3 +2,4 @@ __pycache__
 FreeBodyEngine.egg-info/
 build/
 site/
+assets/cache/

@@ -1,7 +1,7 @@
 from FreeBodyEngine.core.window.generic import Window, Cursor, WINDOW_RESIZE, FRAMEBUFFER_RESIZE
-from FreeBodyEngine import get_main, warning, get_flag, HEADLESS
+from FreeBodyEngine import get_main, warning, get_flag, HEADLESS, TEST_WINDOW
 import sys
-import os 
+import os
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -10,9 +10,30 @@ if TYPE_CHECKING:
 def get_window() -> type[Window]:
     """Gets the correct window class for the platform."""
     platform = sys.platform
-    
+
+    if platform == "emscripten":
+        # Running under Pyodide, inside an actual browser tab - see
+        # utils.get_platform()'s docstring for why `sys.platform` reports
+        # this. Checked first, before every other flag/platform branch
+        # below: none of GLFW/Wayland/X11/Win32/SDL2 (headless) even
+        # import successfully here (they wrap native libraries that don't
+        # exist inside the WASM sandbox), so this can't fall through to
+        # them the way a misconfigured flag on a real desktop might.
+        from FreeBodyEngine.core.window.web import WebWindow
+        return WebWindow
+
     if get_flag("GLFW_WINDOW", False):
         from FreeBodyEngine.core.window.glfw import GLFWWindow
+
+    elif get_flag(TEST_WINDOW, False):
+        # A real, GL-rendering GLFW window that's simply never made
+        # visible - lets automated tests drive/screenshot a session
+        # without a real window ever appearing (see testwindow.py's
+        # module docstring). Checked before HEADLESS: that flag means no
+        # GL context at all, which is the opposite of what testing the
+        # actual rendered UI needs.
+        from FreeBodyEngine.core.window.testwindow import TestWindow
+        return TestWindow
 
     elif get_flag(HEADLESS, False):
         from FreeBodyEngine.core.window.headless import HeadlessWindow

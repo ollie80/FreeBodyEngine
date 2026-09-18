@@ -43,6 +43,14 @@ class DummyRenderer(Renderer):
         """No-op stub - see Renderer.draw_mesh()."""
         pass
 
+    def draw_mesh_instanced(self, mesh, material, model_matrices, camera):
+        """No-op stub - see Renderer.draw_mesh_instanced()."""
+        pass
+
+    def set_blend_mode(self, mode):
+        """No-op stub - see Renderer.set_blend_mode()."""
+        pass
+
     def draw_circle(self, radius: float, position: tuple[float, float], color):
         """
         Draws a filled circle at the position.

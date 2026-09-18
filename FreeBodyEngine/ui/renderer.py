@@ -1,11 +1,12 @@
 from FreeBodyEngine.core.service import Service
-from FreeBodyEngine import register_service_update, unregister_service_update, get_service, warning
+from FreeBodyEngine import register_service_update, unregister_service_update, get_service, warning, get_time
 from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine.graphics.mesh import generate_quad
 from FreeBodyEngine.math import Transform, Vector
 from FreeBodyEngine.core.camera import Camera, CAMERA_PROJECTION
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.core.files import load_file
+from FreeBodyEngine.ui.element import ElementStates
 import numpy as np
 
 from typing import TYPE_CHECKING
@@ -117,8 +118,8 @@ class UIRenderer(Service):
         row, say) ever actually rendered past its top-level container.
 
         `scissor` is the (x, y, width, height) clip rect inherited from the
-        nearest "scroll" ancestor (see ui/element.py's INTERACTION docs), or
-        None if there isn't one. An element entirely outside it is skipped
+        nearest ancestor whose overflow isn't "visible" (see ui/element.py's
+        OVERFLOW docs), or None if there isn't one. An element entirely outside it is skipped
         along with its whole subtree - nothing under a scrolled-out-of-view
         row can be visible either, so this also caps how much of an
         offscreen subtree gets a draw call, not just its own background/
@@ -157,7 +158,7 @@ class UIRenderer(Service):
         self._draw_text(element, styles)
 
         child_scissor = scissor
-        if styles.get("scroll", False):
+        if element.get_overflow(styles) != "visible":
             own_rect = (layout.x, layout.y, layout.width, layout.height)
             child_scissor = (
                 self._intersect_rect(scissor, own_rect) if scissor is not None else own_rect
@@ -214,9 +215,16 @@ class UIRenderer(Service):
         get_service('renderer').draw_mesh(self.quad, self.material)
 
     def _draw_text(self, element: 'UIElement', styles: dict):
-        text = styles.get('text')
+        text = styles.get('text') or ''
         font_path = styles.get('font')
-        if not text or not font_path:
+
+        # A focused, editable field still needs its caret drawn even with
+        # no text yet (an empty search box you've just clicked into is the
+        # most common case) - so this can't bail out just because `text`
+        # is empty the way it used to; only a missing font (nothing at all
+        # could be drawn) or "neither text nor a cursor to draw" bails.
+        show_cursor = styles.get('editable', False) and element.state == ElementStates.FOCUSED
+        if font_path is None or (not text and not show_cursor):
             return
 
         # Masking happens here, drawing-only - get_current_styles()["text"]
@@ -239,18 +247,48 @@ class UIRenderer(Service):
         pad_bottom = styles.get('padding_bottom', pad)
 
         text_renderer = get_service('text_renderer')
+        editable = styles.get('editable', False)
 
         # Elements have a fixed pixel width/height (or one resolved from a
-        # percentage - see UIElement._parse_size), so a track title or
-        # playlist name longer than that would otherwise just overflow
-        # past the element's edge with nothing to stop it (draw_text has no
-        # concept of a bound to stop at). Truncated with an ellipsis rather
-        # than wrapped - wrapping a single-line row's text would grow it
-        # into someone else's row; that's a real gap (see the engine design
-        # notes), just not one worth a multi-line text layout system for a
-        # first pass.
+        # percentage - see UIElement._parse_size), so text longer than
+        # that would otherwise just overflow past the element's edge with
+        # nothing to stop it (draw_text has no concept of a bound to stop
+        # at). An editable field scrolls horizontally to keep the cursor
+        # in view instead - the right call for something you're actively
+        # typing into (eliding the *end* with "..." would hide what you
+        # just typed the moment a search query got long); every other
+        # element keeps eliding with an ellipsis, same as before.
         available_width = element._layout.width - pad_left - pad_right
-        if available_width > 0 and text_renderer.measure_text(font, text, font_size) > available_width:
+        draw_x = element._layout.x + pad_left
+        clip_rect = None
+
+        # Clamped here (not just wherever it's mutated in manager.py) so a
+        # cursor left past the end of shorter text - the field's own text
+        # was set programmatically out from under it, say - never indexes
+        # past the string it's about to be measured against below.
+        element._cursor_index = max(0, min(element._cursor_index, len(text)))
+        cursor_index = element._cursor_index
+
+        if editable:
+            full_width = text_renderer.measure_text(font, text, font_size)
+            cursor_px = text_renderer.measure_text(font, text[:cursor_index], font_size)
+
+            view_offset = element._text_view_offset
+            if available_width > 0:
+                if full_width <= available_width:
+                    view_offset = 0.0
+                else:
+                    if cursor_px - view_offset < 0:
+                        view_offset = cursor_px
+                    elif cursor_px - view_offset > available_width:
+                        view_offset = cursor_px - available_width
+                    view_offset = max(0.0, min(view_offset, full_width - available_width))
+            element._text_view_offset = view_offset
+
+            draw_x -= view_offset
+            if full_width > available_width:
+                clip_rect = (element._layout.x + pad_left, element._layout.y, max(0, available_width), element._layout.height)
+        elif available_width > 0 and text_renderer.measure_text(font, text, font_size) > available_width:
             ellipsis = '...'
             ellipsis_width = text_renderer.measure_text(font, ellipsis, font_size)
             truncated = text
@@ -270,8 +308,37 @@ class UIRenderer(Service):
         line_height = (font.ascender - font.descender) * font_size
         baseline_y = content_top + (content_height - line_height) / 2 + font.ascender * font_size
 
-        text_renderer.draw_text(
-            font, text,
-            element._layout.x + pad_left, baseline_y,
-            font_size, styles.get('text_color', (1.0, 1.0, 1.0, 1.0)),
-        )
+        text_color = styles.get('text_color', (1.0, 1.0, 1.0, 1.0))
+
+        # A scrolled/overflowing editable field needs its own clip so the
+        # part scrolled "off-screen" doesn't just draw past the field's
+        # edge into whatever's next to it - nothing about a plain
+        # UIElement clips its own text to its own bounds otherwise (see
+        # _draw_element's docs on "overflow" - that's about clipping
+        # *children*, not an element's own content). Scoped to just this
+        # draw call and restored after, rather than left active, so it
+        # doesn't clip whatever's drawn next.
+        previous_scissor = self._active_scissor
+        if clip_rect is not None:
+            new_scissor = self._intersect_rect(previous_scissor, clip_rect) if previous_scissor is not None else clip_rect
+            self._apply_scissor(new_scissor)
+
+        if text:
+            text_renderer.draw_text(font, text, draw_x, baseline_y, font_size, text_color)
+
+        if show_cursor:
+            # Blinks at 1Hz (on for the first half-second of each second,
+            # off for the second) - a solid, unblinking caret reads as
+            # part of the text ("Search|" looks like a typo), same reason
+            # every OS text field blinks its own. Drawn as a plain "|"
+            # glyph through the same text pipeline rather than a separate
+            # quad, positioned from `cursor_index` (see ui/manager.py's
+            # _on_key, which moves/inserts/deletes at it) rather than
+            # always trailing the text - the cursor can now sit mid-string,
+            # not just at the end.
+            if int(get_time() * 2) % 2 == 0:
+                cursor_x = draw_x + text_renderer.measure_text(font, text[:cursor_index], font_size)
+                text_renderer.draw_text(font, '|', cursor_x, baseline_y, font_size, text_color)
+
+        if clip_rect is not None:
+            self._apply_scissor(previous_scissor)

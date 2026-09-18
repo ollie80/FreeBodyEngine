@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Callable
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.math import Curve, Linear
-from FreeBodyEngine import warning, delta
+from FreeBodyEngine import warning, delta, get_service
 import re
 
 
@@ -294,17 +294,94 @@ secret
         "editable": True,
         "secret": True
 
-scroll
-    Turns on mouse-wheel scrolling of this element's children along
-    its `layout` direction, and clips their drawing to this element's
-    own rect (children are never drawn outside their scrollable
-    ancestor's bounds, however far they scroll).
+overflow
+    Controls what happens when this element's children don't fit in
+    its own box, along its `layout` direction - the CSS-like property
+    name this was missing. One of:
 
-        "scroll": True
+        "visible" (default)
+            Children draw past this element's own edges, uncontained -
+            today's default behavior for every element that doesn't
+            opt into anything else.
+
+        "hidden"
+            Clips children to this element's own rect (a scissor, so
+            nothing draws outside it - see UIRenderer._draw_element),
+            but does not scroll: content past the edge is just cut off,
+            with no way to reach it via the mouse wheel or a scrollbar.
+
+        "scroll"
+            Clips *and* always shows a scrollbar along the scroll axis,
+            even when the content already fits and there's nothing to
+            scroll to - matching CSS's own "scroll" (as opposed to
+            "auto"'s content-dependent visibility).
+
+        "auto"
+            Clips, scrolls, and shows a scrollbar *only* while the
+            content actually overflows - the common case, and what
+            every scrollable list in this app actually wants.
+
+    Example:
+
+        "overflow": "auto"
 
     The scroll offset is clamped every layout pass to the actual
     overflow (0 if children fit without scrolling), and persists
     across frames on the element itself - nothing else to wire up.
+    Scrolling responds to both the mouse wheel and dragging the
+    scrollbar thumb directly.
+
+    "scroll": True is still accepted as an alias for "overflow": "auto"
+    - every scrollable element from before "overflow" existed keeps
+    working unchanged, it just also gets a real, draggable scrollbar
+    drawn now instead of being wheel-only.
+
+SCROLLBAR STYLES
+-------------------------------------------------------------------------------
+
+Only relevant on an element whose `overflow` is "scroll" or "auto".
+The scrollbar itself is two real, ordinary UIElements (a track and a
+thumb inside it) that this element manages internally - not something
+app code has to build - so anything a UIElement can normally be styled
+with (base_color, border_radius, border_width/color, and per-state
+"hover"/"clicked" overrides included) works on them too, via:
+
+    scrollbar_track
+        Style dict merged over the default track appearance (a thin,
+        mostly-invisible strip the thumb slides in).
+
+    scrollbar_thumb
+        Style dict merged over the default thumb appearance - give it
+        a "hover" and/or "clicked" override here for the same kind of
+        color-change-on-hover feedback a button gets.
+
+    scrollbar_width
+        Thickness of the bar, in pixels (default 8).
+
+    scrollbar_margin
+        Gap between the bar and this element's own edge, in pixels
+        (default 2).
+
+    scrollbar_min_thumb
+        The thumb never gets shorter than this, in pixels (default
+        24), so a very long list's thumb stays big enough to grab
+        rather than shrinking to a sliver.
+
+    Example - a thicker, brighter-on-hover scrollbar:
+
+        styles={
+            "overflow": "auto",
+            "scrollbar_width": 12,
+            "scrollbar_thumb": {
+                "base_color": (0.4, 0.4, 0.4, 0.8),
+                "border_radius": 6,
+                "hover": {"base_color": (0.6, 0.6, 0.6, 0.9)},
+            },
+        }
+
+    Drawn as an overlay (on top of content, not reserving space that
+    shrinks it) along this element's right edge for a vertical layout,
+    or bottom edge for a horizontal one.
 
 
 ANIMATABLE STYLES
@@ -602,6 +679,25 @@ class UIElement(GenericElement):
         "bottom_left", "bottom_center", "bottom_right",
     }
 
+    VALID_OVERFLOWS = {"visible", "hidden", "scroll", "auto"}
+
+    # Base appearance for the two internal UIElements every "scroll"/"auto"
+    # overflow element manages (see _update_scrollbar()) - deliberately
+    # understated (a thin, mostly-invisible track; a plain translucent grey
+    # thumb) since these are meant to be restyled per-app via the
+    # "scrollbar_track"/"scrollbar_thumb" style keys (see the SCROLLBAR
+    # STYLES docs above), not to look finished on their own.
+    _DEFAULT_SCROLLBAR_TRACK_STYLE = {
+        "base_color": (0.0, 0.0, 0.0, 0.0),
+        "border_radius": 0,
+    }
+    _DEFAULT_SCROLLBAR_THUMB_STYLE = {
+        "base_color": (0.5, 0.5, 0.5, 0.5),
+        "border_radius": 0,
+        "hover": {"base_color": (0.65, 0.65, 0.65, 0.7)},
+        "clicked": {"base_color": (0.8, 0.8, 0.8, 0.85)},
+    }
+
     DEFAULT_STYLES = {
         "width": 0,
         "height": 0,
@@ -632,7 +728,17 @@ class UIElement(GenericElement):
 
         "editable": False,
         "secret": False,
+
+        # "scroll" predates "overflow" and is kept only as a back-compat
+        # alias for "overflow": "auto" (see get_overflow()) - every element
+        # written against the old boolean keeps working unchanged.
         "scroll": False,
+        "overflow": "visible",
+        "scrollbar_width": 8,
+        "scrollbar_margin": 2,
+        "scrollbar_min_thumb": 24,
+        "scrollbar_track": {},
+        "scrollbar_thumb": {},
     }
 
     def __init__(self, tag: str = None, styles={}):
@@ -650,6 +756,34 @@ class UIElement(GenericElement):
         self._layout = Layout(0, 0, 0, 0)
         self._scroll_offset = 0.0
         self._event_callbacks: dict[str, list[Callable]] = {}
+
+        # Editable-field cursor state - see ui/manager.py's _on_key() (owns
+        # moving/inserting/deleting at this index) and ui/renderer.py's
+        # _draw_text() (owns drawing the caret at it, and keeping it in
+        # view by adjusting _text_view_offset when it would otherwise
+        # scroll outside the field). Meaningless on a non-editable element,
+        # same as _scroll_offset is meaningless without "overflow" set -
+        # cheap enough to just always have rather than conditionally
+        # creating.
+        self._cursor_index = 0
+        self._text_view_offset = 0.0
+
+        # Populated on demand by _update_scrollbar() the first time this
+        # element's overflow actually needs a scrollbar - see that method
+        # and the SCROLLBAR STYLES docs above. Left None otherwise so a
+        # plain, non-scrolling element (the overwhelming majority) doesn't
+        # pay for two extra UIElements it'll never use.
+        self._scrollbar_track: 'UIElement | None' = None
+        self._scrollbar_thumb: 'UIElement | None' = None
+        # Snapshot of this element's own scroll geometry, refreshed every
+        # layout pass it's actually scrollable - read by UIManager while
+        # dragging this element's thumb (see manager.py's _handle_mouse),
+        # since the manager has no other way to know how a pixel of mouse
+        # movement should translate into a scroll offset change.
+        self._scroll_dir = "vertical"
+        self._scroll_max = 0.0
+        self._scroll_viewport_extent = 0.0
+        self._scroll_content_extent = 0.0
 
     def on(self, event: str, callback: Callable) -> None:
         """Registers `callback` to run when `event` fires on this element -
@@ -728,6 +862,30 @@ class UIElement(GenericElement):
             return True
 
         return False
+
+    def get_overflow(self, styles: dict = None) -> str:
+        """Resolves the effective "overflow" mode - "visible", "hidden",
+        "scroll", or "auto" - taking the "scroll": True legacy alias into
+        account (see the OVERFLOW docs above). Checked via _has_own_style
+        rather than the merged dict for the same reason anchor detection
+        is: DEFAULT_STYLES always contains "overflow": "visible", so a
+        plain presence check could never tell "explicitly set" apart from
+        "just the default" - and an explicit "overflow" always wins over
+        the older "scroll" flag if an element somehow has both."""
+        if styles is None:
+            styles = self.get_current_styles()
+
+        if self._has_own_style("overflow"):
+            value = styles.get("overflow", "visible")
+            if value not in self.VALID_OVERFLOWS:
+                warning(f'Unknown overflow "{value}". Expected one of: {", ".join(sorted(self.VALID_OVERFLOWS))}')
+                return "visible"
+            return value
+
+        if styles.get("scroll", False):
+            return "auto"
+
+        return "visible"
 
     def get_current_styles(self) -> dict[str, any]:
         """
@@ -959,18 +1117,41 @@ class UIElement(GenericElement):
                 child._has_own_style("anchor") or
                 child._has_own_style("parent_anchor")
             )
-            if child_anchored:
+            # The scrollbar track (see _update_scrollbar()) is real content
+            # of this element in the sense that it's a real child, but it's
+            # not part of what's being scrolled - it's the control *for*
+            # scrolling, positioned manually rather than through flow/
+            # anchor, and must never count toward "how much space would my
+            # children take up" (that would make an element's own overflow
+            # measurement depend on whether it has a scrollbar yet, which
+            # depends on that same measurement - a feedback loop).
+            if child_anchored or getattr(child, "_is_scrollbar_part", False):
                 continue
 
             child_styles = child.get_current_styles()
             child_size_style = child_styles.get("height" if layout_dir == "vertical" else "width", "0")
 
             if child_size_style == "auto":
-                # A child that's *also* auto-sized along this same axis
-                # can't be measured without laying it out for real first -
-                # not supported (auto-inside-auto), so it contributes 0
-                # rather than recursing indefinitely.
-                extent = 0.0
+                # Can't resolve "auto" here without laying the child out
+                # for real first - this pass is deliberately lighter than
+                # that (see the docstring). Falls back to the child's own
+                # _layout from the *last* full layout pass instead of
+                # hardcoding 0: calculate_layout() runs every frame, and
+                # this measurement itself runs before this element's own
+                # children are laid out for the current frame (needed
+                # first, to clamp the scroll offset / size this element
+                # before positioning them) - so "last frame's value" is
+                # one frame stale at worst, and self-corrects every frame
+                # after, the same tradeoff "auto" sizing itself already
+                # makes elsewhere. Hardcoding 0 instead made any scrollable
+                # element with an "auto"-sized child (a plain vertical list
+                # of rows, the single most common scrollable content there
+                # is) measure as having virtually no content to scroll to,
+                # regardless of how much it actually overflowed - scroll
+                # clamping silently locked to ~0 rather than a real bug
+                # anyone could point at, since the *label* said "auto" and
+                # "auto" resolved fine everywhere else it was used.
+                extent = child._layout.height if layout_dir == "vertical" else child._layout.width
             else:
                 extent = self._parse_size(child_size_style, content_layout, root.layout)
 
@@ -1040,6 +1221,46 @@ class UIElement(GenericElement):
         )
 
         #
+        # Resolve any deferred "auto" dimension - using a *position-less*
+        # content box (real width/height, but x/y at the origin) since
+        # _measure_flow_extent only ever reads a content box's width/
+        # height (for a percentage-sized child, or a percentage gap right
+        # below), never its position. This has to happen *before* this
+        # element's own x/y (and anchor placement especially) are resolved
+        # - see the Size comment above for why "auto" can't resolve any
+        # earlier than this, and the docs on _apply_anchor(): anchor
+        # placement (unlike plain flow position) is a function of this
+        # element's own width/height, e.g. "center" placing this element's
+        # own midpoint on the origin. Anchoring against a still-deferred
+        # "auto" size (0, until resolved) used to place the anchor point
+        # correctly for a box of height/width 0, then leave it there even
+        # once the real, much larger size was resolved a few lines later -
+        # every anchored *and* "auto"-sized element (a popup that sizes to
+        # its own content, say) rendered with its top-left corner sitting
+        # where its *center* should have been, the rest of its real size
+        # just spilling downward/rightward past that point instead of
+        # actually being centered on it.
+        #
+        content_w = max(0, self._layout.width - pad_left - pad_right)
+        content_h = max(0, self._layout.height - pad_top - pad_bottom)
+        gap = self._parse_size(styles.get("gap", 0), Layout(0, 0, content_w, content_h), root.layout)
+
+        if auto_width or auto_height:
+            measured_extent = self._measure_flow_extent(Layout(0, 0, content_w, content_h), root, layout_dir, gap)
+
+            if auto_height and layout_dir == "vertical":
+                self._layout.height = measured_extent + pad_top + pad_bottom
+                content_h = max(0, self._layout.height - pad_top - pad_bottom)
+            elif auto_width and layout_dir == "horizontal":
+                self._layout.width = measured_extent + pad_left + pad_right
+                content_w = max(0, self._layout.width - pad_left - pad_right)
+            # "auto" on the cross-axis (e.g. width:auto under a vertical
+            # layout) isn't resolved by this - it stays 0, the same as an
+            # otherwise-unresolvable size would. Fitting to the *widest*
+            # child (rather than the flow-summed extent) is a different,
+            # not-yet-needed computation.
+
+        #
         # Default flow position.
         #
         self._layout.x = parent_layout.x
@@ -1070,41 +1291,13 @@ class UIElement(GenericElement):
             self._layout.y += styles.get("y", 0)
 
         #
-        # Calculate this element's content rectangle.
+        # Calculate this element's content rectangle - only now, using
+        # this element's final x/y (anchor-resolved, if applicable) and
+        # final width/height ("auto"-resolved, if applicable).
         #
         content_x = self._layout.x + pad_left
         content_y = self._layout.y + pad_top
-
-        content_w = max(0, self._layout.width - pad_left - pad_right)
-        content_h = max(0, self._layout.height - pad_top - pad_bottom)
-
         content_layout = Layout(content_x, content_y, content_w, content_h)
-
-        #
-        # Child layout settings.
-        #
-        gap = self._parse_size(styles.get("gap", 0), content_layout, root.layout)
-
-        #
-        # Resolve any deferred "auto" dimension now that content_layout's
-        # cross-axis is settled - see the Size comment above.
-        #
-        if auto_width or auto_height:
-            measured_extent = self._measure_flow_extent(content_layout, root, layout_dir, gap)
-
-            if auto_height and layout_dir == "vertical":
-                self._layout.height = measured_extent + pad_top + pad_bottom
-                content_h = max(0, self._layout.height - pad_top - pad_bottom)
-                content_layout = Layout(content_x, content_y, content_w, content_h)
-            elif auto_width and layout_dir == "horizontal":
-                self._layout.width = measured_extent + pad_left + pad_right
-                content_w = max(0, self._layout.width - pad_left - pad_right)
-                content_layout = Layout(content_x, content_y, content_w, content_h)
-            # "auto" on the cross-axis (e.g. width:auto under a vertical
-            # layout) isn't resolved by this - it stays 0, the same as an
-            # otherwise-unresolvable size would. Fitting to the *widest*
-            # child (rather than the flow-summed extent) is a different,
-            # not-yet-needed computation.
 
         child_offset_x = content_x
         child_offset_y = content_y
@@ -1117,23 +1310,45 @@ class UIElement(GenericElement):
         # size", auto means "grow to fit"), but nothing stops both styles
         # being set at once, so this runs independently either way.
         #
-        if styles.get("scroll", False):
+        overflow = self.get_overflow(styles)
+        self._scroll_dir = layout_dir
+
+        if overflow in ("scroll", "auto"):
             total_extent = self._measure_flow_extent(content_layout, root, layout_dir, gap)
             viewport_extent = content_h if layout_dir == "vertical" else content_w
             max_scroll = max(0.0, total_extent - viewport_extent)
             self._scroll_offset = max(0.0, min(self._scroll_offset, max_scroll))
+
+            self._scroll_max = max_scroll
+            self._scroll_viewport_extent = viewport_extent
+            self._scroll_content_extent = total_extent
 
             if layout_dir == "vertical":
                 child_offset_y -= self._scroll_offset
             else:
                 child_offset_x -= self._scroll_offset
         else:
+            # "hidden" clips (see the scissor logic in
+            # UIRenderer._draw_element) but never actually offsets content -
+            # there's no wheel/scrollbar path to reach the clipped-off part,
+            # unlike "scroll"/"auto".
             self._scroll_offset = 0.0
+            self._scroll_max = 0.0
+            self._scroll_viewport_extent = content_h if layout_dir == "vertical" else content_w
+            self._scroll_content_extent = self._scroll_viewport_extent
 
         #
         # Calculate children.
         #
         for child in self.children.values():
+
+            # The scrollbar track/thumb (see _update_scrollbar(), called
+            # after this loop) are real children for draw/hit-test
+            # purposes, but they're positioned directly from this
+            # element's own scroll state, not through flow or anchoring -
+            # skipped here the same way _measure_flow_extent skips them.
+            if getattr(child, "_is_scrollbar_part", False):
+                continue
 
             #
             # See the comment in RootElement.calculate_layout - this
@@ -1173,6 +1388,107 @@ class UIElement(GenericElement):
                     f'Unknown layout direction "{layout_dir}". '
                     f'Expected "vertical" or "horizontal".'
                 )
+
+        if overflow in ("scroll", "auto"):
+            self._update_scrollbar(styles, overflow, layout_dir, content_x, content_y, content_w, content_h)
+        elif self._scrollbar_track is not None:
+            # No longer scrollable (overflow changed under it, or content
+            # stopped overflowing) - zero out rather than destroy, so
+            # nothing draws or hit-tests here without rebuilding the
+            # elements if it becomes scrollable again later.
+            self._scrollbar_track._layout = Layout(0, 0, 0, 0)
+            self._scrollbar_thumb._layout = Layout(0, 0, 0, 0)
+
+    def _update_scrollbar(
+        self, styles: dict, overflow: str, layout_dir: str,
+        content_x: float, content_y: float, content_w: float, content_h: float,
+    ):
+        """Creates (once) and repositions (every call) this element's
+        scrollbar track+thumb - see the SCROLLBAR STYLES docs above.
+
+        Deliberately two real UIElements rather than a special-cased draw
+        call: adding them to `self.children` (thumb nested inside track)
+        means UIRenderer's draw traversal and UIManager's hit-test/hover/
+        click dispatch already reach them for free, with zero changes
+        needed in either - the only things that *do* need to know about
+        them are calculate_layout()/_measure_flow_extent() (skip them via
+        `_is_scrollbar_part`, see above) and UIManager's drag handling
+        (find them via `_is_scrollbar_thumb`, see manager.py)."""
+        first_time = self._scrollbar_track is None
+
+        if first_time:
+            track = UIElement(None)
+            thumb = UIElement(None)
+            track._is_scrollbar_part = True
+            thumb._is_scrollbar_part = True
+            track._is_scrollbar_track = True
+            thumb._is_scrollbar_thumb = True
+            thumb._scrollbar_owner = self
+            self.add(track)
+            track.add(thumb)
+            self._scrollbar_track = track
+            self._scrollbar_thumb = thumb
+
+            def on_track_click():
+                # Only reached for a click that misses the thumb (a click
+                # that hits the thumb resolves to the thumb itself, the
+                # more specific hit - see UIManager._hit_test) - jumps
+                # straight to the clicked fraction of the track rather
+                # than paging, the more predictable of the two for a
+                # thumb that's usually a large fraction of the track
+                # anyway in a UI this size.
+                mouse = get_service('mouse')
+                if self._scroll_dir == "vertical":
+                    click_pos = mouse.position.y - track._layout.y
+                    available = max(1.0, track._layout.height - thumb._layout.height)
+                else:
+                    click_pos = mouse.position.x - track._layout.x
+                    available = max(1.0, track._layout.width - thumb._layout.width)
+                fraction = max(0.0, min(1.0, click_pos / available))
+                self._scroll_offset = fraction * self._scroll_max
+
+            track.on("click", on_track_click)
+
+        track = self._scrollbar_track
+        thumb = self._scrollbar_thumb
+
+        # "auto" only actually shows the bar once there's real overflow to
+        # scroll to - "scroll" always shows it, per the OVERFLOW docs.
+        if overflow == "auto" and self._scroll_max <= 0:
+            track._layout = Layout(0, 0, 0, 0)
+            thumb._layout = Layout(0, 0, 0, 0)
+            return
+
+        track.styles = {**self._DEFAULT_SCROLLBAR_TRACK_STYLE, **styles.get("scrollbar_track", {})}
+        thumb.styles = {**self._DEFAULT_SCROLLBAR_THUMB_STYLE, **styles.get("scrollbar_thumb", {})}
+
+        width = styles.get("scrollbar_width", 8)
+        margin = styles.get("scrollbar_margin", 2)
+        min_thumb = styles.get("scrollbar_min_thumb", 24)
+
+        viewport = self._scroll_viewport_extent
+        content_extent = self._scroll_content_extent
+        ratio = (viewport / content_extent) if content_extent > 0 else 1.0
+        fraction = (self._scroll_offset / self._scroll_max) if self._scroll_max > 0 else 0.0
+
+        if layout_dir == "vertical":
+            track_x = content_x + content_w - width - margin
+            track_y = content_y
+            track_w, track_h = width, content_h
+
+            thumb_h = max(min_thumb, min(track_h, track_h * ratio))
+            travel = max(0.0, track_h - thumb_h)
+            thumb._layout = Layout(track_x, track_y + fraction * travel, width, thumb_h)
+        else:
+            track_x = content_x
+            track_y = content_y + content_h - width - margin
+            track_w, track_h = content_w, width
+
+            thumb_w = max(min_thumb, min(track_w, track_w * ratio))
+            travel = max(0.0, track_w - thumb_w)
+            thumb._layout = Layout(track_x + fraction * travel, track_y, thumb_w, width)
+
+        track._layout = Layout(track_x, track_y, track_w, track_h)
 
     def _update(self):
         for animation in self.animations:

@@ -1,0 +1,13 @@
+@uniform
+view: mat4
+proj: mat4
+model: mat4
+
+@input
+vertex: vec3
+uvs: vec2
+normal: vec3
+
+def main():
+    world: vec4 = model * vec4(vertex.x, vertex.y, vertex.z, 1.0)
+    VERTEX_POSITION = proj * view * world

@@ -1,6 +1,6 @@
 from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.core.update import UpdatePhase
-from FreeBodyEngine import register_event, unregister_event, register_service_update, register_event_category, unregister_event_category, unregister_service_update, get_service, service_exists
+from FreeBodyEngine import register_event, unregister_event, register_service_update, register_event_category, unregister_event_category, unregister_service_update, get_service, service_exists, warning
 from typing import TYPE_CHECKING, Union, Literal
 from FreeBodyEngine.core.input import Key
 from FreeBodyEngine.core.mouse import Mouse
@@ -44,6 +44,7 @@ class Window(Service):
         """
         super().__init__('window')
         self.window_type = None
+        self._warned_no_clipboard_support = False
 
     def on_initialize(self):
         """Hooks window update/draw into the engine's per-frame update phases and registers the window resize events."""
@@ -116,6 +117,26 @@ class Window(Service):
     @abstractmethod
     def _set_cursor(self, cursor: 'Cursor'):
         pass
+
+    def get_clipboard_text(self) -> str | None:
+        """Returns the system clipboard's current text content, or None if
+        it's empty, isn't text, or this backend hasn't implemented real
+        clipboard access yet - see WaylandWindow/GLFWWindow for the
+        backends that actually do. Concrete no-op (with a one-time
+        warning) rather than a crash-on-call abstract, since ui/manager.py
+        calls this unconditionally on Ctrl+V regardless of backend."""
+        if not self._warned_no_clipboard_support:
+            warning(f"get_clipboard_text() is not implemented on '{self.__class__.__name__}' - ignoring.")
+            self._warned_no_clipboard_support = True
+        return None
+
+    def set_clipboard_text(self, text: str):
+        """Sets the system clipboard's text content - see get_clipboard_text
+        just above for why this is a concrete no-op (with the same
+        one-time warning flag) rather than a crash-on-call abstract."""
+        if not self._warned_no_clipboard_support:
+            warning(f"set_clipboard_text() is not implemented on '{self.__class__.__name__}' - ignoring.")
+            self._warned_no_clipboard_support = True
 
     @abstractmethod
     def _get_key_down(self, key: Key) -> float:

@@ -1,0 +1,8 @@
+@uniform
+line_color: vec4
+@output
+color: vec4
+
+def main():
+    color = line_color
+

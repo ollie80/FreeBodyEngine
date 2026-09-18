@@ -1,0 +1,269 @@
+@output
+# 7 unused leading fields so `result` lands at location 7, matching 'lit'
+# 's physical color-attachment index on PBRPipeline's main_framebuffer
+# (albedo, normal, emmisive, roughness, metallic, gWorldPos, gWorldNormal
+# each take one slot before it - see PBRPipeline.on_initialize()). Both
+# backends' set_draw_buffers() now build a full-width array where array
+# position == attachment index (see graphics/gl33/framebuffer.py and
+# graphics/webgl/framebuffer.py's set_draw_buffers()), and @output
+# locations are assigned purely by declaration order starting at 0 (see
+# WebGL2Generator.generate_inout()) - so a single real output has to be
+# preceded by one throwaway field per earlier G-buffer channel to land in
+# the one active slot ('lit') at all. Never read back; types don't need
+# to match the real channels they're standing in for.
+_pad0: vec4
+_pad1: vec4
+_pad2: vec4
+_pad3: vec4
+_pad4: vec4
+_pad5: vec4
+_pad6: vec4
+result: vec4
+
+@uniform
+Albedo_Texture: texture
+Albedo_Color: vec4
+Albedo_useTexture: bool
+Normal_Texture: texture
+Normal_Color: vec4
+Normal_useTexture: bool
+Emmisive_Texture: texture
+Emmisive_Color: vec4
+Emmisive_useTexture: bool
+Roughness_Texture: texture
+Roughness_Color: float
+Roughness_useTexture: bool
+Metallic_Texture: texture
+Metallic_Color: float
+Metallic_useTexture: bool
+
+@uniform
+Light0_Active: bool
+Light0_Type: int
+Light0_Position: vec3
+Light0_Direction: vec3
+Light0_Color: vec3
+Light0_Intensity: float
+Light0_Range: float
+Light0_SpotCos: float
+Light1_Active: bool
+Light1_Type: int
+Light1_Position: vec3
+Light1_Direction: vec3
+Light1_Color: vec3
+Light1_Intensity: float
+Light1_Range: float
+Light1_SpotCos: float
+Light2_Active: bool
+Light2_Type: int
+Light2_Position: vec3
+Light2_Direction: vec3
+Light2_Color: vec3
+Light2_Intensity: float
+Light2_Range: float
+Light2_SpotCos: float
+Light3_Active: bool
+Light3_Type: int
+Light3_Position: vec3
+Light3_Direction: vec3
+Light3_Color: vec3
+Light3_Intensity: float
+Light3_Range: float
+Light3_SpotCos: float
+Light4_Active: bool
+Light4_Type: int
+Light4_Position: vec3
+Light4_Direction: vec3
+Light4_Color: vec3
+Light4_Intensity: float
+Light4_Range: float
+Light4_SpotCos: float
+Light5_Active: bool
+Light5_Type: int
+Light5_Position: vec3
+Light5_Direction: vec3
+Light5_Color: vec3
+Light5_Intensity: float
+Light5_Range: float
+Light5_SpotCos: float
+Light6_Active: bool
+Light6_Type: int
+Light6_Position: vec3
+Light6_Direction: vec3
+Light6_Color: vec3
+Light6_Intensity: float
+Light6_Range: float
+Light6_SpotCos: float
+Light7_Active: bool
+Light7_Type: int
+Light7_Position: vec3
+Light7_Direction: vec3
+Light7_Color: vec3
+Light7_Intensity: float
+Light7_Range: float
+Light7_SpotCos: float
+
+Ambient: vec3
+ViewPos: vec3
+
+ShadowEnabled: bool
+ShadowMap: texture
+ShadowMatrix: mat4
+
+@input
+uv: vec2
+worldPos: vec4
+worldNormal: vec4
+
+
+def pbr_distribution_ggx(n_dot_h: float, roughness: float) -> float:
+    a: float = roughness * roughness
+    a2: float = a * a
+    d: float = (n_dot_h * n_dot_h) * (a2 - 1.0) + 1.0
+    # 3.14159265 (pi) inlined directly - @define is parsed but never
+    # actually registered anywhere in semantic analysis or codegen in this
+    # FBUSL version (grep fbusl/semantic.py and fbusl/generator.py for
+    # "Define" - neither references it), so a named @define constant
+    # compiles the section itself fine but is unresolvable everywhere it's
+    # actually used.
+    return a2 / max(3.14159265 * d * d, 0.0001)
+
+def pbr_geometry_schlick_ggx(n_dot_x: float, roughness: float) -> float:
+    r: float = roughness + 1.0
+    k: float = (r * r) / 8.0
+    return n_dot_x / max(n_dot_x * (1.0 - k) + k, 0.0001)
+
+def pbr_geometry_smith(n_dot_v: float, n_dot_l: float, roughness: float) -> float:
+    return pbr_geometry_schlick_ggx(n_dot_v, roughness) * pbr_geometry_schlick_ggx(n_dot_l, roughness)
+
+def pbr_fresnel_schlick(cos_theta: float, f0: vec3) -> vec3:
+    p: float = pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0)
+    return f0 + (vec3(1.0, 1.0, 1.0) - f0) * p
+
+def light_contribution(world_pos: vec3, normal: vec3, view_dir: vec3, albedo: vec3, f0: vec3, roughness: float, metallic: float, l_active: bool, l_type: int, l_pos: vec3, l_dir: vec3, l_color: vec3, l_intensity: float, l_range: float, l_spot_cos: float) -> vec3:
+    if l_active == False:
+        return vec3(0.0, 0.0, 0.0)
+
+    to_light: vec3 = vec3(0.0, 0.0, 0.0)
+    atten: float = 1.0
+
+    if l_type == 1:
+        # DIRECTIONAL - l_dir is the direction the light shines *toward*.
+        to_light = normalize(l_dir * -1.0)
+    else:
+        diff: vec3 = l_pos - world_pos
+        dist: float = length(diff)
+        to_light = diff / max(dist, 0.0001)
+        falloff: float = clamp(1.0 - (dist / max(l_range, 0.0001)), 0.0, 1.0)
+        atten = falloff * falloff
+
+        if l_type == 2:
+            # SPOT - restrict POINT's falloff to a cone around l_dir.
+            surface_dir: vec3 = normalize(diff * -1.0)
+            spot_dot: float = dot(l_dir, surface_dir)
+            edge: float = 0.08
+            spot_factor: float = clamp((spot_dot - l_spot_cos) / max(edge, 0.0001), 0.0, 1.0)
+            atten = atten * spot_factor
+
+    n_dot_l: float = max(dot(normal, to_light), 0.0)
+    if n_dot_l <= 0.0:
+        return vec3(0.0, 0.0, 0.0)
+
+    half_vec: vec3 = normalize(to_light + view_dir)
+    n_dot_v: float = max(dot(normal, view_dir), 0.0001)
+    n_dot_h: float = max(dot(normal, half_vec), 0.0)
+    v_dot_h: float = max(dot(view_dir, half_vec), 0.0)
+
+    d: float = pbr_distribution_ggx(n_dot_h, roughness)
+    g: float = pbr_geometry_smith(n_dot_v, n_dot_l, roughness)
+    f: vec3 = pbr_fresnel_schlick(v_dot_h, f0)
+
+    specular: vec3 = (f * (d * g)) / (4.0 * n_dot_v * n_dot_l + 0.0001)
+    kd: vec3 = (vec3(1.0, 1.0, 1.0) - f) * (1.0 - metallic)
+    diffuse: vec3 = (kd * albedo) / 3.14159265
+
+    radiance: vec3 = l_color * (l_intensity * atten)
+    return (diffuse + specular) * radiance * n_dot_l
+
+def shadow_factor(world_pos: vec3) -> float:
+    if ShadowEnabled == False:
+        return 1.0
+
+    clip: vec4 = ShadowMatrix * vec4(world_pos.x, world_pos.y, world_pos.z, 1.0)
+    ndc: vec3 = vec3(clip.x, clip.y, clip.z) / clip.w
+    shadow_uv: vec2 = vec2(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5)
+
+    # Written as separate ifs rather than one `or`-chained condition -
+    # FBUSL's expression parser doesn't fold keyword-lexed "and"/"or" into
+    # its binary-operator precedence climb (they have PRECEDENCE table
+    # entries but the parser's main loop only continues for
+    # TokenType.OPERATOR, never TokenType.KEYWORD), so a chained boolean
+    # condition silently truncates instead of raising - a real FBUSL parser
+    # gap, not something to work around per-shader with a guess.
+    in_bounds: bool = True
+    if shadow_uv.x < 0.0:
+        in_bounds = False
+    if shadow_uv.x > 1.0:
+        in_bounds = False
+    if shadow_uv.y < 0.0:
+        in_bounds = False
+    if shadow_uv.y > 1.0:
+        in_bounds = False
+
+    if in_bounds == False:
+        return 1.0
+
+    frag_depth: float = ndc.z * 0.5 + 0.5
+    map_depth: float = sample(ShadowMap, shadow_uv).x
+    bias: float = 0.0025
+    biased_depth: float = frag_depth - bias
+
+    # The trailing (map_depth) parens are load-bearing, not style: FBUSL's
+    # parser mis-parses a condition whose very last token is a bare
+    # identifier directly followed by ":" - it speculatively treats that
+    # identifier as the start of a new `name: type` var-decl statement
+    # (see parse_identifier's `tok.value == ":"` branch in fbusl/parser.py)
+    # and then fails looking for a type annotation that was never meant to
+    # be there. Any bare identifier ending a condition needs this same
+    # wrapping (a literal or a `== True`/`== False` comparison doesn't).
+    if biased_depth > (map_depth):
+        return 0.0
+    return 1.0
+
+def accumulate_lighting(world_pos: vec3, normal: vec3, view_pos: vec3, albedo: vec3, roughness: float, metallic: float, emissive: vec3, ambient: vec3) -> vec3:
+    view_dir: vec3 = normalize(view_pos - world_pos)
+    f0: vec3 = mix(vec3(0.04, 0.04, 0.04), albedo, metallic)
+
+    total: vec3 = vec3(0.0, 0.0, 0.0)
+    c0: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light0_Active, Light0_Type, Light0_Position, Light0_Direction, Light0_Color, Light0_Intensity, Light0_Range, Light0_SpotCos)
+    total = total + c0 * shadow_factor(world_pos)
+    c1: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light1_Active, Light1_Type, Light1_Position, Light1_Direction, Light1_Color, Light1_Intensity, Light1_Range, Light1_SpotCos)
+    total = total + c1
+    c2: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light2_Active, Light2_Type, Light2_Position, Light2_Direction, Light2_Color, Light2_Intensity, Light2_Range, Light2_SpotCos)
+    total = total + c2
+    c3: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light3_Active, Light3_Type, Light3_Position, Light3_Direction, Light3_Color, Light3_Intensity, Light3_Range, Light3_SpotCos)
+    total = total + c3
+    c4: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light4_Active, Light4_Type, Light4_Position, Light4_Direction, Light4_Color, Light4_Intensity, Light4_Range, Light4_SpotCos)
+    total = total + c4
+    c5: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light5_Active, Light5_Type, Light5_Position, Light5_Direction, Light5_Color, Light5_Intensity, Light5_Range, Light5_SpotCos)
+    total = total + c5
+    c6: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light6_Active, Light6_Type, Light6_Position, Light6_Direction, Light6_Color, Light6_Intensity, Light6_Range, Light6_SpotCos)
+    total = total + c6
+    c7: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light7_Active, Light7_Type, Light7_Position, Light7_Direction, Light7_Color, Light7_Intensity, Light7_Range, Light7_SpotCos)
+    total = total + c7
+    return albedo * ambient + total + emissive
+
+
+def main() -> void:
+    albedo4: vec4 = sample(Albedo_Texture, vec2(uv.x, uv.y)) if Albedo_useTexture else Albedo_Color
+    emissive4: vec4 = sample(Emmisive_Texture, uv) if Emmisive_useTexture else Emmisive_Color
+    roughness: float = clamp(sample(Roughness_Texture, uv).x if Roughness_useTexture else Roughness_Color, 0.04, 1.0)
+    metallic: float = sample(Metallic_Texture, uv).x if Metallic_useTexture else Metallic_Color
+
+    n: vec3 = normalize(vec3(worldNormal.x, worldNormal.y, worldNormal.z))
+    world_pos: vec3 = vec3(worldPos.x, worldPos.y, worldPos.z)
+    albedo: vec3 = vec3(albedo4.x, albedo4.y, albedo4.z)
+    emissive: vec3 = vec3(emissive4.x, emissive4.y, emissive4.z)
+
+    lit: vec3 = accumulate_lighting(world_pos, n, ViewPos, albedo, roughness, metallic, emissive, Ambient)
+    result = vec4(lit.x, lit.y, lit.z, albedo4.w)

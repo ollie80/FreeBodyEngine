@@ -172,7 +172,12 @@ def resize_wayland_opengl_surface(window: 'WaylandWindow', width: int, height: i
  
 
 def swap_wayland_opengl_buffers(window: 'WaylandWindow'):
-    """Equivalent of Win32's SwapBuffers(hdc); call this from window.draw()."""
+    """Equivalent of Win32's SwapBuffers(hdc); call this from window.draw().
+
+    Plain and unconditional - see the gl33 context module's identical copy
+    of this function for the history of two reverted attempts at skipping
+    it while the surface isn't visible, and why both were removed rather
+    than kept."""
     EGL.eglSwapBuffers(window.egl_display, window.egl_surface)
 
     pending = getattr(window, "_pending_egl_resize", None)

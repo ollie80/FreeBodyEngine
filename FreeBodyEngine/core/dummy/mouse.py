@@ -46,7 +46,7 @@ class DummyMouse:
         """No-op - there is no real cursor to hide."""
         pass
 
-    def set_cursor(self):
+    def set_cursor(self, shape: str = "default"):
         """No-op - there is no real cursor to set."""
         pass
 

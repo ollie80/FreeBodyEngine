@@ -58,6 +58,20 @@ class UIManager(Service):
         self._pressed: UIElement = None
         self._focused: UIElement = None
 
+        # Scrollbar-thumb drag state - see _handle_mouse()'s drag block.
+        # Tracked here rather than on the thumb itself since a drag must
+        # keep updating even once the cursor moves off the thumb's own
+        # rect (every other UI toolkit's scrollbar behaves this way -
+        # once grabbed, it follows the cursor, not just while directly
+        # under it).
+        self._dragging_thumb: UIElement = None
+        self._drag_start_pos: float = 0.0
+        self._drag_start_offset: float = 0.0
+
+        # Last shape passed to Mouse.set_cursor() - tracked so _handle_mouse
+        # only calls it on an actual change, not every single frame.
+        self._cursor_shape: str = "default"
+
     def on_initialize(self):
         """Registers the resize/draw/update callbacks this service needs while active."""
         register_event_callback(FRAMEBUFFER_RESIZE, self.resize)
@@ -125,11 +139,11 @@ class UIManager(Service):
         return None
 
     def _find_scroll_target(self, element: UIElement) -> UIElement:
-        """Walks up from `element` (inclusive) to the nearest ancestor with
-        the "scroll" style on, or None if there isn't one."""
+        """Walks up from `element` (inclusive) to the nearest ancestor whose
+        overflow is "scroll" or "auto", or None if there isn't one."""
         node = element
         while isinstance(node, UIElement):
-            if node.get_current_styles().get("scroll", False):
+            if node.get_overflow() in ("scroll", "auto"):
                 return node
             node = node.parent if isinstance(node.parent, GenericElement) else None
         return None
@@ -147,6 +161,11 @@ class UIManager(Service):
 
         if element is not None:
             element.set_state(ElementStates.FOCUSED)
+            # Cursor starts at the end of whatever's already there, same
+            # as clicking into a browser's address bar - not at the start,
+            # which would put the very next character typed in the middle
+            # of the existing text.
+            element._cursor_index = len(element.get_current_styles().get("text", ""))
 
     def _handle_mouse(self):
         if not self.root.children:
@@ -173,6 +192,27 @@ class UIManager(Service):
             self._hovered = hit
 
         #
+        # System cursor shape - "text" over an editable field, "pointer"
+        # over anything with a registered click handler (covers every
+        # button plus click-to-seek bars etc. for free, since they're all
+        # wired up via the same on("click", ...)), "default" otherwise.
+        # Only calls into the backend on an actual change - see
+        # Mouse.set_cursor()'s docs for the supported shape names.
+        #
+        if hit is None:
+            shape = "default"
+        elif hit.get_current_styles().get("editable", False):
+            shape = "text"
+        elif hit._event_callbacks.get("click"):
+            shape = "pointer"
+        else:
+            shape = "default"
+
+        if shape != self._cursor_shape:
+            mouse.set_cursor(shape)
+            self._cursor_shape = shape
+
+        #
         # Press / focus. A click anywhere clears focus unless it landed on
         # an editable element - so clicking a button or empty space while a
         # search box is focused defocuses it, same as every other UI.
@@ -188,8 +228,41 @@ class UIManager(Service):
                     self._set_focus(hit)
                 else:
                     self._set_focus(None)
+
+                if getattr(hit, "_is_scrollbar_thumb", False):
+                    owner = hit._scrollbar_owner
+                    self._dragging_thumb = hit
+                    self._drag_start_pos = point.y if owner._scroll_dir == "vertical" else point.x
+                    self._drag_start_offset = owner._scroll_offset
             else:
                 self._set_focus(None)
+
+        #
+        # Scrollbar drag. Kept going for as long as the button stays down,
+        # regardless of what's under the cursor right now - grabbing a
+        # thumb and dragging past its own edges (very easy to do, since
+        # it's usually a thin bar) shouldn't drop the drag, matching every
+        # other UI toolkit's scrollbar.
+        #
+        if self._dragging_thumb is not None:
+            if mouse.get_down(LEFT_MOUSE_BUTTON):
+                owner = self._dragging_thumb._scrollbar_owner
+                vertical = owner._scroll_dir == "vertical"
+                current_pos = point.y if vertical else point.x
+                mouse_delta = current_pos - self._drag_start_pos
+
+                thumb_extent = self._dragging_thumb._layout.height if vertical else self._dragging_thumb._layout.width
+                travel = max(1.0, owner._scroll_viewport_extent - thumb_extent)
+                # The thumb travels a *shorter* distance than the content
+                # actually scrolls (its track is only as long as the
+                # viewport, not the full content) - scale the raw mouse
+                # delta up by how much further the content has to move
+                # per pixel of thumb travel.
+                content_delta = mouse_delta * (owner._scroll_max / travel)
+
+                owner._scroll_offset = max(0.0, min(self._drag_start_offset + content_delta, owner._scroll_max))
+            else:
+                self._dragging_thumb = None
 
         #
         # Release / click.
@@ -227,26 +300,91 @@ class UIManager(Service):
         if self._focused is None:
             return
 
-        styles = self._focused.get_current_styles()
+        field = self._focused
+        styles = field.get_current_styles()
         text = styles.get("text", "")
+        # Clamped the same way _draw_text clamps it before using it -
+        # this runs first if a key press and a text-changing update land
+        # in the same frame, so it can't assume the render pass already
+        # brought it back in range.
+        cursor = max(0, min(field._cursor_index, len(text)))
+
+        if key == Key.LEFT:
+            field._cursor_index = max(0, cursor - 1)
+            return
+
+        if key == Key.RIGHT:
+            field._cursor_index = min(len(text), cursor + 1)
+            return
+
+        if key == Key.HOME:
+            field._cursor_index = 0
+            return
+
+        if key == Key.END:
+            field._cursor_index = len(text)
+            return
 
         if key == Key.BACKSPACE:
-            if text:
-                self._focused.set_style("text", text[:-1])
+            if cursor > 0:
+                field.set_style("text", text[:cursor - 1] + text[cursor:])
+                field._cursor_index = cursor - 1
+            return
+
+        if key == Key.DELETE:
+            if cursor < len(text):
+                field.set_style("text", text[:cursor] + text[cursor + 1:])
+                # Cursor itself doesn't move - forward-delete removes
+                # whatever's ahead of it, same as every other text field.
             return
 
         if key == Key.RETURN:
-            self._focused._emit("submit", text)
+            field._emit("submit", text)
             return
 
         if key == Key.ESCAPE:
             self._set_focus(None)
             return
 
+        window = get_service('window')
+
+        if key == Key.V and (window._get_key_down(Key.L_CTRL) or window._get_key_down(Key.R_CTRL)):
+            self.paste_text(window.get_clipboard_text())
+            return
+
         chars = KEY_CHAR_MAP.get(key)
         if chars is None:
             return
 
-        window = get_service('window')
         shift = bool(window._get_key_down(Key.L_SHIFT)) or bool(window._get_key_down(Key.R_SHIFT))
-        self._focused.set_style("text", text + chars[1 if shift else 0])
+        char = chars[1 if shift else 0]
+        field.set_style("text", text[:cursor] + char + text[cursor:])
+        field._cursor_index = cursor + 1
+
+    def paste_text(self, pasted: str | None):
+        """Inserts `pasted` into the focused field at the cursor, or does
+        nothing if there's no focused field or `pasted` is empty/None.
+        Factored out of _on_key's own Ctrl+V handling so a backend that
+        can't answer Window.get_clipboard_text() synchronously (see
+        WebWindow's own docstring on exactly this - the browser Clipboard
+        API is async, this engine's clipboard contract isn't) can still
+        support pasting by calling this directly once it *does* have the
+        text in hand, from wherever it actually got it (WebWindow does
+        this from the browser's native `paste` DOM event instead, which -
+        unlike navigator.clipboard.readText() - hands over clipboard
+        contents synchronously as part of the event itself)."""
+        if self._focused is None or not pasted:
+            return
+
+        field = self._focused
+        styles = field.get_current_styles()
+        text = styles.get("text", "")
+        cursor = max(0, min(field._cursor_index, len(text)))
+
+        # A single-line field - collapse any embedded newlines instead of
+        # splitting the paste across what would look like multiple
+        # invisible lines crammed into one row.
+        pasted = pasted.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+        field.set_style("text", text[:cursor] + pasted + text[cursor:])
+        field._cursor_index = cursor + len(pasted)
+        field._cursor_index = cursor + 1

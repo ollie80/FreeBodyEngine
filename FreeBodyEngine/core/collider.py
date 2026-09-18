@@ -4,7 +4,7 @@ from FreeBodyEngine import get_main
 from typing import TYPE_CHECKING, Literal, Union
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.scene import Scene
-from FreeBodyEngine.graphics.debug import RectangleColliderDebug, CircleColliderDebug, PolygonColliderDebug
+from FreeBodyEngine.graphics.debug import RectangleColliderDebug, CircleColliderDebug, PolygonColliderDebug, Debug2D
 import numpy as np
 import math
 
@@ -739,26 +739,53 @@ class Ray2D:
                     closest = point
             
             return closest
-        
+       
         else:
             return None
 
 class Raycaster2D(Node2D):
     """A node that casts a ray from its own world position, facing its own world rotation, every update."""
-    def __init__(self):
+    def __init__(self, max_distance: int):
         """Initializes the node; the ray itself isn't created until on_initialize(), once the node has a world transform to read."""
         super().__init__()
+        self.debug_visuals_active = False
+        self.max_distance = max_distance
 
     def on_initialize(self):
         """Creates the ray, facing the node's current world rotation from its current world position."""
         self.ray = Ray2D(self.world_transform.position, Vector.from_angle(self.world_transform.rotation), self.scene)
+    
+    def toggle_debug_visuals(self):
+        if self.debug_visuals_active: 
+            debug = self.find_nodes_with_type('Debug2D')
+            
+            for d in debug:
+                d.kill()
+            self.debug_visuals_active = False
+        else:
+            self.debug_visuals_active = True
+            start = self.ray.origin
+            end = self.ray.origin + self.ray.direction * self.max_distance  
+            self.add(Debug2D(draw_type='line', line_start=start, line_end=end, line_width=2))
 
-    def update(self):
+    def update_debug_visuals(self):
+        if self.debug_visuals_active:
+            debug = self.find_nodes_with_type('Debug2D')
+            start = self.ray.origin
+            end = self.ray.origin + self.ray.direction * self.max_distance  
+             
+            debug[0].line_start = start
+            debug[0].line_end = end
+            print(start, end)
+
+    def on_update(self):       
         """Re-aims the ray at the node's current world transform and casts it."""
         self.ray.direction = Vector.from_angle(self.world_transform.rotation)
         self.ray.origin = self.world_transform.position
-        self.ray.cast()
-        super().update()
+        self.ray.cast(self.max_distance)
+        self.update_debug_visuals()
+        #print(self.ray.origin) 
+        
 
 
 def cast_ray(position: Vector, direction: Vector, max_distance: float, scene: 'Scene' = None):
