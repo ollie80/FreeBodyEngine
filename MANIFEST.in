@@ -1,0 +1,19 @@
+# setup.py's package_data was never declared, so a real (non-editable)
+# install has only ever picked up FreeBodyEngine's *.py files -
+# find_packages() only discovers Python packages, nothing about data
+# files. Every dev/test install of this repo has been `pip install -e .`
+# (see ~/.venvs/dev's own editable install), which just points at the
+# source tree directly and never goes through packaging at all - so this
+# gap was invisible until phonon's Pi deploy pipeline did the first-ever
+# real `pip install` of this package and immediately hit a missing
+# engine_assets/shader/*.fbvert file at runtime.
+#
+# Includes everything under FreeBodyEngine/ (shaders, fonts, other
+# engine_assets, desktop lib/ DLLs) rather than trying to enumerate every
+# asset type by extension - this is a private, all-in-one engine package,
+# not something with an installed footprint worth trimming, and every
+# missing-file bug this could still leave is strictly worse than the
+# install being a bit larger than strictly necessary.
+recursive-include FreeBodyEngine *
+global-exclude *.pyc
+global-exclude __pycache__
