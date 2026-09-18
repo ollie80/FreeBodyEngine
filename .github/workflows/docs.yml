@@ -1,12 +1,14 @@
-name: Check docs build
+name: Docs
 
-# Docs are actually deployed by a systemd timer on the project's own Pi
-# (freebody-docs-deploy.timer, /opt/freebody-docs/deploy.sh) pulling
-# origin/main directly and dropping the built site into Caddy's webroot -
-# see nodes/pi in freebody-infra for the reverse proxy / TLS side of that.
-# This workflow is CI only: it catches a broken build (bad docstring
-# cross-reference, mkdocs.yml typo, ...) at push time instead of letting it
-# silently fail on the Pi's next pull.
+# Builds the docs on every push/PR, and deploys them to Cloudflare Pages on
+# pushes to main. Replaces the Pi's freebody-docs-deploy.timer, which pulled
+# origin/main and built the site on the home network.
+#
+# Two jobs on purpose: `build` runs the doc tooling (mkdocs plugins,
+# scripts/gen_ref_pages.py, everything pinned in requirements-docs.txt) and
+# never sees the Cloudflare token. `deploy` only downloads the finished
+# site/ folder and uploads it - no third-party Python runs in the job that
+# holds the token.
 
 on:
   push:
@@ -28,13 +30,21 @@ on:
       - ".github/workflows/docs.yml"
   workflow_dispatch: {}
 
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push supersedes an older one still running.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
@@ -42,26 +52,39 @@ jobs:
         run: pip install -r requirements-docs.txt
 
       - name: Verify no compromised doc-tooling packages
-        # See the comment block at the top of requirements-docs.txt: several
-        # doc-tooling packages had a supply-chain compromise (impersonating
-        # MkDocs, printing fake "migrate away" warnings) discovered and
-        # pinned around 2026-09-13. requirements-docs.txt's exact pins
-        # should already prevent this, but this is a second, independent
-        # gate that fails the build outright if either compromised package
-        # shows up in the resolved environment *for any reason*.
+        # See requirements-docs.txt: properdocs/griffelib were compromised
+        # around 2026-09-13. Second, independent gate on top of the pins.
         run: |
           if pip list --format=freeze | grep -iE "^(properdocs|griffelib)=="; then
-            echo "::error::A compromised doc-tooling package is present in the resolved environment - see requirements-docs.txt for details. Refusing to build."
+            echo "::error::A compromised doc-tooling package is present - see requirements-docs.txt. Refusing to build."
             exit 1
           fi
 
       - name: Build site
-        # Deliberately does NOT `pip install .` first - mkdocstrings'
-        # python handler (griffe) does pure static AST analysis over
-        # `paths: [.]` in mkdocs.yml, not a runtime import, so the engine's
-        # own runtime dependencies (PyOpenGL, pywayland, ...) - several of
-        # which don't even build on a plain CI runner or the project's
-        # headless Pi without extra system packages - are never needed just
-        # to build the docs. Verified locally: the build succeeds with
-        # FreeBodyEngine *not* installed at all.
+        # No `pip install .` - mkdocstrings reads the engine's source
+        # statically, so the engine's runtime dependencies aren't needed.
         run: mkdocs build --strict
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: site
+          path: site/
+          retention-days: 7
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: site
+          path: site/
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: "4.134.0"
+          command: pages deploy site --project-name=freebody-docs --branch=main
