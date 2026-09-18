@@ -28,6 +28,11 @@ setup(
     name="FreeBodyEngine",
     version='0.08',
     packages=find_packages(),
+    # find_packages() only discovers importable Python packages - every
+    # non-.py file (engine_assets/ shaders, fonts, desktop lib/ DLLs, ...)
+    # needs this plus MANIFEST.in to actually end up in a real install.
+    # See MANIFEST.in's own comment for why this was never caught before.
+    include_package_data=True,
     entry_points={
         'console_scripts': [
             'freebody=FreeBodyEngine.cli.commands:main',
