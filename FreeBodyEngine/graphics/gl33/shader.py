@@ -146,14 +146,23 @@ class GLShader(Shader):
     """The GL 3.3 implementation of Shader: compiles FBUSL source via
     GL33Generator into a real GL program, introspects its uniforms, and
     caches each uniform's last-set value so set_uniform() can skip a
-    redundant glUniform* call when the value hasn't actually changed."""
+    redundant glUniform* call when the value hasn't actually changed.
+
+    `generator_cls` is a class attribute (not hardcoded inline in
+    __init__) specifically so graphics/gles/shader.py's GLESShader can
+    reuse every method here unchanged and only override which generator
+    produces the GLSL text - the real GL program creation/introspection/
+    uniform dispatch below is all plain PyOpenGL calls, valid against a
+    GLES 3.0 context exactly the same as a desktop 3.3 one."""
+    generator_cls = GL33Generator
+
     def __init__(self, vertex_source, fragment_source, injector, geometry_source=None):
         """Compiles `vertex_source`/`fragment_source`(/`geometry_source`)
-        into a linked GL program (via GL33Generator) and introspects its
-        active uniforms into `self.uniforms`, seeding `uniform_cache` with
-        `None` for each so the first set_uniform() call for any uniform
-        always goes through."""
-        super().__init__(vertex_source, fragment_source, GL33Generator, injector, geometry_source)
+        into a linked GL program (via `self.generator_cls`) and
+        introspects its active uniforms into `self.uniforms`, seeding
+        `uniform_cache` with `None` for each so the first set_uniform()
+        call for any uniform always goes through."""
+        super().__init__(vertex_source, fragment_source, self.generator_cls, injector, geometry_source)
         self._shader = create_shader_program(self.fbusl_vertex_source, self.fbusl_fragment_source, self.fbusl_geometry_source)
 
         self.uniforms: dict[str, GLUniform] = {}

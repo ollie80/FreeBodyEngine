@@ -119,6 +119,12 @@ class Builder:
                 self.build_for_dev_web()
             else:
                 self.build_for_web()
+        elif self.platform == "android":
+            self.android_output_path = os.path.abspath(f'{path}/dev/android/')
+            if dev:
+                self.build_for_dev_android()
+            else:
+                self.build_for_android()
         elif dev:
             self.output_path = os.path.abspath(f'{path}/dev/assets/')
 
@@ -149,13 +155,20 @@ class Builder:
     def get_platform_dependencies(self, platform: str):
         """Returns the pip dependency list for `platform`: the global
         requirements plus whichever of windows/darwin/linux's platform-
-        specific requirements apply."""
+        specific requirements apply.
+
+        Android is deliberately NOT built on top of GLOBAL - see
+        requirements.ANDROID's own comment for why the two lists diverge
+        instead of one extending the other."""
+        if platform == "android":
+            return list(fb_requirements.ANDROID)
+
         requirements = []
         requirements += fb_requirements.GLOBAL
 
         if platform == "windows":
             requirements += fb_requirements.WINDOWS
-        
+
         elif platform == "darwin":
             requirements += fb_requirements.DARWIN
 
@@ -167,15 +180,24 @@ class Builder:
 
     def get_build_platform(self, args: list[str]):
         """Determines which platform to build for: "web" if `--web` is in
-        `args`, otherwise the detected host platform ("windows" for
-        `win32`, else `sys.platform` itself if it's one of
-        `SUPPORTED_PLATFORMS`). Prints a message and returns None if the
-        host platform isn't supported."""
+        `args`, "android" if `--android` is, otherwise the detected host
+        platform ("windows" for `win32`, else `sys.platform` itself if
+        it's one of `SUPPORTED_PLATFORMS`). Prints a message and returns
+        None if the host platform isn't supported.
+
+        `--android` is checked here rather than by inspecting the host
+        platform (like the plain-`linux` branches below) because an
+        Android build is always cross-compiled from the dev machine's own
+        OS - unlike web, there's no "running under Android already" case
+        for this method to ever detect on its own."""
         sys_plat = sys.platform
         if "--web" in args:
             return "web"
 
-        elif sys_plat in SUPPORTED_PLATFORMS:                
+        elif "--android" in args:
+            return "android"
+
+        elif sys_plat in SUPPORTED_PLATFORMS:
             return sys_plat
         
         elif sys_plat == "win32":
@@ -1032,6 +1054,260 @@ await run()
 '''
         with open(os.path.join(self.web_output_path, "bootstrap.py"), "w") as f:
             f.write(bootstrap)
+
+    def build_for_dev_android(self):
+        """Prepares a python-for-android/buildozer project directory at
+        `dev/android/` for a debug build: real files on disk at a real
+        path (unlike build_for_dev_web()'s zip archives - buildozer shells
+        out to p4a, which reads `source.dir` straight off the filesystem,
+        not through this process), containing the project's
+        `fbproject.toml`, its asset/code directories copied verbatim, a
+        generated `main.py` shim (see _write_android_main_py() - p4a
+        always runs `main.py` at the source root, regardless of this
+        project's own `main_file` setting), and a generated
+        `buildozer.spec` (see _write_buildozer_spec()).
+
+        Rebuilt fresh on every `fb build --android`/`fb run --android`,
+        same as build_for_dev_web()'s dev/web/ - a first working loop, not
+        an incremental sync (buildozer's own build cache under
+        dev/android/.buildozer is what actually keeps repeat builds fast,
+        not anything on this side).
+
+        Bakes project fonts straight into the project's own asset
+        directory first, same as build_for_dev()/build_for_dev_web() do,
+        so the copy below picks up the baked files like any other asset."""
+        self.progress.stage("Preparing Android development build")
+        _, _, _, fonts = self.locate_assets()
+        self.build_fonts(fonts, self.asset_path)
+
+        # .buildozer/ and bin/ (buildozer's own build cache and output
+        # directory) are deliberately left alone across rebuilds - wiping
+        # them here would throw away p4a's cached NDK/SDK downloads and
+        # compiled recipes, turning every `fb run --android` back into a
+        # from-scratch cross-compile instead of the fast incremental
+        # rebuild buildozer is actually designed for.
+        preserve = {".buildozer", "bin"}
+        if os.path.exists(self.android_output_path):
+            for entry in os.listdir(self.android_output_path):
+                if entry in preserve:
+                    continue
+                full = os.path.join(self.android_output_path, entry)
+                if os.path.isdir(full):
+                    shutil.rmtree(full)
+                else:
+                    os.remove(full)
+        else:
+            os.makedirs(self.android_output_path)
+
+        shutil.copy(
+            os.path.join(self.project_path_root, "fbproject.toml"),
+            os.path.join(self.android_output_path, "fbproject.toml"),
+        )
+
+        asset_rel = os.path.relpath(self.asset_path, self.project_path_root)
+        code_rel = os.path.relpath(self.code_path, self.project_path_root)
+        shutil.copytree(
+            self.asset_path, os.path.join(self.android_output_path, asset_rel),
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+        shutil.copytree(
+            self.code_path, os.path.join(self.android_output_path, code_rel),
+            ignore=shutil.ignore_patterns("__pycache__"),
+        )
+
+        self._copy_engine_source_for_android()
+        self._write_android_main_py()
+        self._write_buildozer_spec()
+
+        self.progress.done("Successfully prepared Android development build.")
+
+    def _write_android_main_py(self):
+        """Writes `main.py` at the Android build root: p4a's bootstrap
+        always runs a file with this exact name out of `source.dir`,
+        regardless of this project's own configurable `main_file` setting
+        (see fbproject.toml) - so the project's real entry point is copied
+        in under a fixed internal name (`_project_main.py`, sidestepping
+        any collision with the case where `main_file` already happens to
+        be named `main.py`) and this generated shim points `sys.path` at
+        the copied code directory - the same thing dev/run.py's desktop
+        subprocess launch does via `PYTHONPATH` - before handing off to
+        it with `runpy.run_module()`.
+
+        `run_module()`, not `run_path()`: p4a's packaging step precompiles
+        every `.py` file bundled in the app's private data down to a bare
+        `.pyc` and does NOT keep the original source alongside it (see
+        assets/private.tar inside the built APK) - a real, on-device
+        FileNotFoundError the first time this ran, since run_path() opens
+        its argument as a literal source file and has no fallback for a
+        compiled-only module. run_module() goes through the normal import
+        system instead (which finds a bare `.pyc` via SourcelessFileLoader
+        exactly the way a real package install would), while still
+        accepting `run_name="__main__"` - needed since project main files
+        (see e.g. WebDemo's default template) guard their actual startup
+        code behind `if __name__ == "__main__":`, which a plain `import`
+        would silently never trigger."""
+        code_rel = os.path.relpath(self.code_path, self.project_path_root).replace(os.sep, "/")
+
+        shutil.copy(self.main_file, os.path.join(self.android_output_path, "_project_main.py"))
+
+        content = f'''"""Generated by FreeBodyEngine's Android dev build
+(build_for_dev_android() in build/builder.py) - do not edit directly,
+it's overwritten on every `fb build --android`/`fb run --android`."""
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "{code_rel}"))
+
+# Every project's own main.py (see engine_assets/default_main_file.py's
+# template) only sets the DEVMODE flag by scanning sys.argv for a literal
+# "--dev" - the same flag dev/run.py's desktop subprocess launch passes
+# explicitly. p4a's bootstrap doesn't put anything resembling that in
+# sys.argv on its own, and this build only ever produces the loose-files
+# "dev" layout (see build_for_dev_android() - there's no .pak-bundling
+# release path for Android at all yet), so without this DEVMODE would
+# stay off and core.files.get_file_system() would try to construct an
+# AssetPackFileSystem expecting bundled .pak files that were never built.
+if "--dev" not in sys.argv:
+    sys.argv.append("--dev")
+
+# Every project's own main.py also expects a "--path=<project root>"
+# argument (see engine_assets/default_main_file.py's template) - the same
+# thing dev/run.py's desktop subprocess launch passes explicitly - to set
+# PROJECT_PATH, which core/dev.py's load_project() uses to find
+# fbproject.toml. Without it, PROJECT_PATH stays at its own default of
+# "/" and load_project() looks for "//fbproject.toml" - not just wrong,
+# but wrong in a way that doesn't even point back at this obvious a
+# cause. The project root is wherever this generated main.py itself
+# actually landed on-device (p4a extracts private data to a path chosen
+# at install time, e.g. under /data/data/<package>/files/app/ - not
+# something buildozer.spec or this build process could hardcode ahead of
+# time), so it's resolved here, at runtime, via this file's own location.
+project_root = os.path.dirname(os.path.abspath(__file__))
+if not any(a.startswith("--path=") for a in sys.argv):
+    sys.argv.append(f"--path={{project_root}}")
+
+# p4a's bootstrap doesn't set HOME at all, and Android has no real
+# per-user home directory anyway - Path.home()/os.path.expanduser("~")
+# fall back to querying the passwd database (pwd.getpwuid), which on a
+# real device reports the bare, unwritable /data as this app's "home".
+# Any project code that builds a cache/config path via Path.home() (a
+# completely reasonable thing to do on desktop) then gets a
+# PermissionError/FileNotFoundError trying to create anything under it -
+# not obviously connected to "HOME is unset" from the error alone. Setting
+# it explicitly to this app's own private, writable storage root fixes
+# that for any such code, not just one project's specific cache path.
+os.environ.setdefault("HOME", project_root)
+
+import runpy
+runpy.run_module("_project_main", run_name="__main__")
+'''
+        with open(os.path.join(self.android_output_path, "main.py"), "w") as f:
+            f.write(content)
+
+    def _copy_engine_source_for_android(self):
+        """Copies this engine's own installed source (`FreeBodyEngine/`)
+        plus FBUSL's (`fbusl/`) directly into the Android build root, so
+        `import FreeBodyEngine`/`import fbusl` resolve there exactly like
+        any other installed package - the same "just copy the source,
+        it's pure Python" technique build_for_dev_web()'s
+        _write_vendor_zip() already uses for the same reason, and for the
+        same underlying cause: neither package has a compiled extension
+        of its own, so there's no cross-compilation step either of them
+        actually needs.
+
+        This - not a pip/p4a install - is deliberate: buildozer.spec's
+        `requirements` line only accepts published PyPI names or local
+        *source directories* (p4a's pythonpackage.py can extract metadata
+        from a folder reference, but not from an already-built `.whl`
+        file - confirmed the hard way, via a NotADirectoryError, before
+        landing on this approach instead), and even a source directory
+        would still run into p4a's actual install step cross-compiling
+        with `--platform`/`--python-version` overrides that forbid
+        building anything from source, wheels only. Sidestepping the
+        whole pip-based path entirely - the same way web already does -
+        avoids both problems at once.
+
+        Excludes the same directories _write_vendor_zip() does and for
+        the same reasons: `lib/` (desktop-only native DLLs, irrelevant
+        and just dead weight in an Android package), `cli`/`build` (this
+        engine's own dev/packaging tooling, never imported by a running
+        game)."""
+        engine_spec = importlib.util.find_spec("FreeBodyEngine")
+        if engine_spec is None or engine_spec.origin is None:
+            raise RuntimeError("Could not locate the 'FreeBodyEngine' package to package for the Android build.")
+        fbusl_spec = importlib.util.find_spec("fbusl")
+        if fbusl_spec is None or fbusl_spec.origin is None:
+            raise RuntimeError("Could not locate the 'fbusl' package to package for the Android build.")
+
+        def _copy_package(src_dir, dest_name, ignore_dirnames=frozenset({"__pycache__"})):
+            shutil.copytree(
+                src_dir, os.path.join(self.android_output_path, dest_name),
+                ignore=shutil.ignore_patterns(*ignore_dirnames),
+            )
+
+        _copy_package(
+            os.path.dirname(engine_spec.origin), "FreeBodyEngine",
+            ignore_dirnames=frozenset({"__pycache__", "lib", "cli", "build"}),
+        )
+        _copy_package(os.path.dirname(fbusl_spec.origin), "fbusl")
+
+    def _write_buildozer_spec(self):
+        """Writes `buildozer.spec` at the Android build root: declares the
+        `sdl2` bootstrap (see core/window/android.py's own module docstring
+        - this is what lets a plain PySDL2 + PyOpenGL app run under p4a
+        with no Kivy dependency at all, confirmed against p4a's own docs)
+        and this project's Android requirements (requirements.ANDROID plus
+        whatever the project itself lists in `dependencies`) - the engine
+        itself isn't in this list at all, since it's copied in directly as
+        source instead (see _copy_engine_source_for_android()).
+
+        Regenerated fresh on every build, same as build_for_dev_web()'s
+        vendor.zip/project.zip - this is a first working loop, not a
+        hand-tunable config file. A manual edit here is lost on the next
+        build; a real per-project override point (e.g. a
+        `[android]` table in fbproject.toml) is a reasonable follow-up
+        once a real build has actually been attempted and its defaults
+        (API level, permissions, orientation) are known to need changing."""
+        project_name = self.get_user_setting('name')
+        package_name = "".join(c if c.isalnum() else "_" for c in project_name.lower())
+
+        # self.dependencies always carries a trailing "pyinstaller" (added
+        # unconditionally in __init__, for the desktop release path's own
+        # PyInstaller packaging step) - meaningless to a buildozer/p4a
+        # build and not even resolvable for the target ABI, so it's
+        # dropped here rather than fixing __init__ to special-case every
+        # non-PyInstaller platform.
+        deps = [d for d in self.dependencies if d and d != "pyinstaller"]
+        requirements = ",".join(["python3"] + deps)
+
+        spec = f"""[app]
+title = {project_name}
+package.name = {package_name}
+package.domain = dev.freebody
+source.dir = .
+source.include_exts = py,png,jpg,jpeg,gif,webp,ttf,otf,json,toml,txt,glb,gltf,fbap,fbmesh,fbvert,fbfrag,fbmat,fbspr,fbfont,fbanim,fbsheet,vert,frag,glsl,ogg,wav,mp3
+version = 0.1
+requirements = {requirements}
+orientation = landscape
+fullscreen = 1
+p4a.bootstrap = sdl2
+android.api = 33
+android.minapi = 24
+android.archs = arm64-v8a
+
+[buildozer]
+log_level = 2
+"""
+        with open(os.path.join(self.android_output_path, "buildozer.spec"), "w") as f:
+            f.write(spec)
+
+    def build_for_android(self):
+        """Placeholder for a *release* Android build target (a signed,
+        optimized APK/AAB) - not implemented yet. Dev-mode Android builds
+        are a separate, already-implemented path - see
+        build_for_dev_android()."""
+        raise NotImplementedError("Android release builds not yet implemented - see build_for_dev_android() for dev-mode Android builds.")
 
     def build_for_release(self):
         """Runs the full release pipeline: scans project and engine assets,

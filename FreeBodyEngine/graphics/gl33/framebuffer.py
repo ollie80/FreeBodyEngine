@@ -1,6 +1,29 @@
 from FreeBodyEngine.graphics.framebuffer import Framebuffer, AttachmentFormat, AttachmentType
+from FreeBodyEngine.utils import get_platform
 from OpenGL.GL import *
 import numpy as np
+
+
+def _set_shadow_map_wrap(target):
+    """Sets `target`'s (a bound GL_TEXTURE_2D) wrap mode for a shadow map's
+    depth texture: real GL_CLAMP_TO_BORDER + a white (far/1.0) border color
+    everywhere except Android, where GLES 3.0's core profile has neither -
+    GL_CLAMP_TO_BORDER is an extension there (EXT_texture_border_clamp,
+    not guaranteed present), and there's no border color call to fall back
+    to at all. GL_CLAMP_TO_EDGE is the closest available substitute: a
+    sample just past the map's edge reads that edge's own depth instead of
+    a guaranteed-lit border, which is very occasionally wrong right at a
+    shadow map's boundary but never crashes - an acceptable first-pass
+    trade for a feature (shadow mapping) that's a secondary concern for an
+    initial Android build compared to getting sprites/UI on screen at
+    all."""
+    if get_platform() == "android":
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+    else:
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
+        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32))
 
 
 GL_CHANNEL_COUNT = {
@@ -118,9 +141,7 @@ class GLFramebuffer(Framebuffer):
 
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
-                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32))
+                _set_shadow_map_wrap(GL_TEXTURE_2D)
 
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex, 0)
 
@@ -293,9 +314,7 @@ class GLFramebuffer(Framebuffer):
 
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
                 glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
-                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
-                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32))
+                _set_shadow_map_wrap(GL_TEXTURE_2D)
 
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, tex, 0)
                 self.textures[name] = tex

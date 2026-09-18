@@ -92,9 +92,21 @@ class GL33Renderer(Renderer):
             self.window = None
             width, height = 1, 1
 
-        glEnable(GL_DEBUG_OUTPUT)
-        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS)
-        glDebugMessageCallback(debug_callback, None)
+        try:
+            # ARB_debug_output (desktop) / the equivalent KHR_debug entry
+            # points aren't guaranteed present on every driver - notably,
+            # GLES 3.0 (Android, via graphics/gles/renderer.py's
+            # GLESRenderer, which reuses this on_initialize() unchanged)
+            # only has KHR_debug as an *optional* extension, and PyOpenGL
+            # raises OpenGL.error.NullFunctionError for any entry point
+            # the driver didn't actually expose. Debug logging is a
+            # nice-to-have, not something worth failing renderer
+            # initialization over on a driver that lacks it.
+            glEnable(GL_DEBUG_OUTPUT)
+            glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS)
+            glDebugMessageCallback(debug_callback, None)
+        except Exception:
+            pass
         # framebuffer_size (physical/device pixels), not size (logical/
         # window-manager pixels) - these differ under HiDPI or fractional
         # display scaling, and glViewport must match the actual
@@ -238,22 +250,27 @@ class GL33Renderer(Renderer):
     def draw_mesh(self, mesh: 'Mesh', material: 'Material'):
         """Binds `material` and draws `mesh`'s indexed triangles. Temporarily
         switches to wireframe polygon mode if `material.data['render_mode']
-        == "wireframe"`."""
+        == "wireframe"` - silently skipped (drawn filled instead) on a
+        driver with no glPolygonMode at all, which includes every GLES
+        driver (Android): unlike GL_DEBUG_OUTPUT above, there's no ES
+        extension that adds this back, since GLES dropped the whole
+        fixed-function polygon-mode concept, not just made it optional."""
         self.texture_manager.begin_draw()
         material.use()
         material.shader.use()
 
         render_mode = material.data.get('render_mode', None)
-        if render_mode != None:
-            if render_mode == "wireframe":
+        if render_mode == "wireframe":
+            try:
                 glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-            
+            except Exception:
+                render_mode = None
+
         glBindVertexArray(mesh.vao)
         glDrawElements(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
 
-        if render_mode != None:
-            if render_mode == "wireframe":
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+        if render_mode == "wireframe":
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
 
         glBindVertexArray(0)
 

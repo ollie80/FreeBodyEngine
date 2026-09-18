@@ -1,9 +1,9 @@
 from FreeBodyEngine import get_main, warning, get_flag, get_service
 from typing import Literal, overload
 
-def get_platform() -> Literal['win32', 'darwin', 'linux', 'web']:
+def get_platform() -> Literal['win32', 'darwin', 'linux', 'web', 'android']:
     """Returns the identifier for the current host platform, or None if it
-    isn't one of the ones recognized here (other platforms - e.g. mobile,
+    isn't one of the ones recognized here (other platforms - e.g. iOS,
     console - aren't handled yet).
 
     `sys.platform` reports `"emscripten"` under Pyodide (a browser tab
@@ -11,13 +11,30 @@ def get_platform() -> Literal['win32', 'darwin', 'linux', 'web']:
     normalized to `"web"` here so the rest of the engine (graphics.
     get_renderer(), core/window/__init__.py's get_window()) has one
     consistent name to branch on instead of every call site needing to
-    know the raw `sys.platform` string Pyodide happens to report."""
+    know the raw `sys.platform` string Pyodide happens to report.
+
+    Android needs its own check *before* the plain `sys.platform` one,
+    and *unconditionally* - not gated behind any particular `sys.platform`
+    value. This used to check `sys.platform == 'linux'` first, on the
+    assumption that python-for-android's CPython build always reports
+    plain `"linux"` there (a real Linux kernel underneath, with no
+    Android-specific value at all) - true for some p4a Python recipe
+    versions, but NOT a safe assumption in general (confirmed the hard
+    way: PyOpenGL's own platform auto-detection still picked the desktop
+    GLX backend over the EGL one on a real device, because this exact
+    gate made get_platform() return None instead of 'android' there,
+    which means `sys.platform` was actually something else). Checking
+    `ANDROID_ARGUMENT` on its own, with no precondition, is both simpler
+    and correct regardless of whatever string `sys.platform` happens to
+    report on a given p4a/CPython combination - it's also exactly what
+    Kivy itself does, the same precedent this check was already following."""
+    if 'ANDROID_ARGUMENT' in os.environ:
+        return 'android'
     sys_plat = sys.platform
     if sys_plat in ['win32', 'darwin', 'linux']:
         return sys_plat
     if sys_plat == 'emscripten':
         return 'web'
-    # handle stuff like android, IOs, console
 
 def abstractmethod(func):
     """Decorator marking a method as abstract: the decorated method always
@@ -59,6 +76,24 @@ def load_dlls():
     # in the first place (see core.window.web/graphics.webgl), so there's
     # nothing this actually needed to find here.
     if system == "emscripten":
+        return None
+
+    if 'ANDROID_ARGUMENT' in os.environ:
+        # Checked before the `system.startswith("linux")` branch below,
+        # for the same reason get_platform()/get_window() check this
+        # first (see get_platform()'s own docstring) - whatever
+        # `sys.platform` actually reports on a given p4a/CPython build,
+        # relying on it here specifically would either misroute Android
+        # into the desktop Linux .so directory (wrong arch/ABI entirely)
+        # or hit the same `else: raise` this function used to fall into.
+        # Same underlying reason as the emscripten case above: Android's
+        # own native libraries are already extracted onto the OS's normal
+        # library search path by the APK installer itself - there's no
+        # LD_LIBRARY_PATH-style directory for this engine to add, and
+        # nothing under lib/windows|macos|linux applies on Android either
+        # way (see requirements.ANDROID's own comment for why this
+        # engine's Android build never even pulls those platforms'
+        # native-dependent packages in).
         return None
 
     if system == "win32":
