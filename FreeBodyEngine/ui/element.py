@@ -80,10 +80,9 @@ auto
     to 0 by DEFAULT_STYLES if you forget to set a height at all) sums
     every non-anchored child's own height plus the gaps between them;
     "width": "auto" with layout "horizontal" does the same across
-    width. There's no cross-axis form ("width": "auto" under a
-    *vertical* layout, sized to the widest child, say) - that's a
-    different, not-yet-implemented computation, and falls back to 0
-    the same way an unparseable size would.
+    width. On the cross axis ("height": "auto" under a *horizontal*
+    layout, or "width": "auto" under a vertical one) it fits to the
+    tallest/widest child instead.
 
     Example:
 
@@ -1200,6 +1199,29 @@ class UIElement(GenericElement):
 
         return total_extent
 
+    def _measure_cross_extent(self, content_layout: Layout, root: 'RootElement', axis: str) -> float:
+        """Largest non-anchored child's own size along `axis` ("vertical"
+        for height, "horizontal" for width) - the cross-axis counterpart
+        to _measure_flow_extent, used for "auto" on the axis a layout
+        *doesn't* stack along. Same "auto" child fallback (last frame's
+        _layout) and same anchored/scrollbar exclusions."""
+        largest = 0.0
+        key = "height" if axis == "vertical" else "width"
+
+        for child in self.children.values():
+            if (child._has_own_style("anchor") or child._has_own_style("parent_anchor")
+                    or getattr(child, "_is_scrollbar_part", False)):
+                continue
+
+            child_size_style = child.get_current_styles().get(key, "0")
+            if child_size_style == "auto":
+                extent = child._layout.height if axis == "vertical" else child._layout.width
+            else:
+                extent = self._parse_size(child_size_style, content_layout, root.layout)
+            largest = max(largest, extent)
+
+        return largest
+
     def calculate_layout(self, root: 'RootElement', parent_layout: Layout = None):
         """
         Calculate this element's size and position, then recursively
@@ -1292,11 +1314,18 @@ class UIElement(GenericElement):
             elif auto_width and layout_dir == "horizontal":
                 self._layout.width = measured_extent + pad_left + pad_right
                 content_w = max(0, self._layout.width - pad_left - pad_right)
-            # "auto" on the cross-axis (e.g. width:auto under a vertical
-            # layout) isn't resolved by this - it stays 0, the same as an
-            # otherwise-unresolvable size would. Fitting to the *widest*
-            # child (rather than the flow-summed extent) is a different,
-            # not-yet-needed computation.
+
+            # "auto" on the cross axis (height:auto under a horizontal
+            # layout, e.g. a row of thumbnail + text column) fits to the
+            # tallest/widest child instead of the flow-summed extent.
+            if auto_height and layout_dir != "vertical":
+                cross = self._measure_cross_extent(Layout(0, 0, content_w, content_h), root, "vertical")
+                self._layout.height = cross + pad_top + pad_bottom
+                content_h = max(0, self._layout.height - pad_top - pad_bottom)
+            if auto_width and layout_dir == "vertical":
+                cross = self._measure_cross_extent(Layout(0, 0, content_w, content_h), root, "horizontal")
+                self._layout.width = cross + pad_left + pad_right
+                content_w = max(0, self._layout.width - pad_left - pad_right)
 
         #
         # Default flow position.

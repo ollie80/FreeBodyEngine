@@ -10,6 +10,7 @@ from FreeBodyEngine.ui.element import ElementStates
 from FreeBodyEngine.graphics.material import BlendMode
 from FreeBodyEngine.graphics.framebuffer import AttachmentType, AttachmentFormat
 import numpy as np
+import math
 
 from typing import TYPE_CHECKING
 
@@ -189,13 +190,6 @@ class UIRenderer(Service):
         renderer = get_service('renderer')
         self._renderer = renderer  # see _draw_background/_draw_text's own comments on why this is cached for the draw
         target_framebuffer = renderer.get_active_framebuffer()
-        if not hasattr(self, '_debug_checked'):
-            self._debug_checked = True
-            from FreeBodyEngine import get_service as _gs, service_exists as _se
-            with open('/tmp/ui_debug.log', 'a') as f:
-                pipeline = _gs('graphics') if _se('graphics') else None
-                app_fb = getattr(pipeline, 'app_framebuffer', None)
-                f.write(f"target_framebuffer(captured)={target_framebuffer} pipeline={pipeline} app_framebuffer.fbo={getattr(app_fb, 'fbo', None)}\n")
         renderer.disable_depth_testing()
         renderer.set_blend_mode(BlendMode.TRANSPARENT)
 
@@ -263,52 +257,58 @@ class UIRenderer(Service):
             self._force_full_repaint = False
 
         if self._dirty_rect is not None:
+            # Snapped outward to whole pixels - glScissor truncates to ints,
+            # so a fractional dirty rect would otherwise clear (and clip the
+            # redraw to) a region up to a pixel short of what changed,
+            # leaving a stale sliver at its right/bottom edge.
+            x, y, w, h = self._dirty_rect
+            x0, y0 = max(0, math.floor(x)), max(0, math.floor(y))
+            x1, y1 = min(int(width), math.ceil(x + w)), min(int(height), math.ceil(y + h))
+            self._dirty_rect = (float(x0), float(y0), float(max(0, x1 - x0)), float(max(0, y1 - y0)))
+
             self._ui_framebuffer.bind()
+            try:
+                # Scissor-clear just the dirty region before redrawing it -
+                # everything outside it must survive untouched, which is the
+                # entire point of only repainting what changed. Goes through
+                # _apply_scissor (not a raw renderer.set_scissor call) so its
+                # _active_scissor cache - and therefore every scissor check
+                # _draw_element makes during the walk right after - stays
+                # accurate.
+                self._apply_scissor(self._dirty_rect)
+                renderer.clear(Color((0.0, 0.0, 0.0, 0.0)))
 
-            # Scissor-clear just the dirty region before redrawing it -
-            # everything outside it must survive untouched, which is the
-            # entire point of only repainting what changed. Goes through
-            # _apply_scissor (not a raw renderer.set_scissor call) so its
-            # _active_scissor cache - and therefore every scissor check
-            # _draw_element makes during the walk right after - stays
-            # accurate.
-            self._apply_scissor(self._dirty_rect)
-            renderer.clear(Color((0.0, 0.0, 0.0, 0.0)))
+                # Seeded with the dirty rect, not root_rect, so every draw in
+                # this pass is scissored to it. An element that only partly
+                # overlaps the dirty rect still gets redrawn in full, and
+                # without this its background would paint over the
+                # uncleared pixels outside the dirty rect - wiping out
+                # children/siblings there that the cull in _draw_element
+                # (correctly) skips redrawing. That's what erased phonon's
+                # top bar: the full-window main panel behind it redrew
+                # whenever anything in the content area changed.
+                for element in self.ui.root.children.values():
+                    self._draw_element(element, self._dirty_rect)
+                self._flush_instances()  # catches whatever the last element(s) queued and never got flushed by a later text draw/scissor change
+                self._flush_text()  # same, for whatever text queue_text() queued and never got flushed by a later background/scissor change
+            except Exception:
+                # _compute_dirty_rect already recorded this frame's
+                # signatures, so a redraw that dies partway through would
+                # otherwise leave the layer permanently wrong for whatever
+                # it didn't get to - nothing would ever look "changed" again.
+                self._force_full_repaint = True
+                raise
+            finally:
+                self._apply_scissor(None)
 
-            for element in self.ui.root.children.values():
-                self._draw_element(element, root_rect)
-            self._flush_instances()  # catches whatever the last element(s) queued and never got flushed by a later text draw/scissor change
-            self._flush_text()  # same, for whatever text queue_text() queued and never got flushed by a later background/scissor change
-            self._apply_scissor(None)
-
-            # NOT self._ui_framebuffer.unbind() - that hardcodes "go back
-            # to the window's own default framebuffer", which is wrong
-            # whenever a pipeline left something else bound for UI to draw
-            # into (see draw()'s own docstring on target_framebuffer).
-            # This puts back the *actual* target this draw() started with.
-            renderer.bind_active_framebuffer(target_framebuffer)
-
-        if getattr(self, '_debug_checked', False) and not getattr(self, '_debug_checked2', False):
-            self._debug_checked2 = True
-            from OpenGL.GL import glGetIntegerv, GL_VIEWPORT
-            with open('/tmp/ui_debug.log', 'a') as f:
-                now_bound = renderer.get_active_framebuffer()
-                viewport = glGetIntegerv(GL_VIEWPORT)
-                f.write(f"before composite: now_bound={now_bound} target_framebuffer={target_framebuffer} dirty_rect_was={self._dirty_rect} viewport={viewport} width_height=({width},{height})\n")
+                # NOT self._ui_framebuffer.unbind() - that hardcodes "go back
+                # to the window's own default framebuffer", which is wrong
+                # whenever a pipeline left something else bound for UI to draw
+                # into (see draw()'s own docstring on target_framebuffer).
+                # This puts back the *actual* target this draw() started with.
+                renderer.bind_active_framebuffer(target_framebuffer)
 
         self._composite_ui_layer(width, height)
-
-        if getattr(self, '_debug_checked2', False) and not getattr(self, '_debug_checked3', False):
-            self._debug_checked3 = True
-            from OpenGL.GL import glReadPixels, GL_RGBA, GL_FLOAT
-            import numpy as _np
-            h = int(height)
-            with open('/tmp/ui_debug.log', 'a') as f:
-                for (ui_x, ui_y, label) in ((20, 20, 'top_bar'), (300, 400, 'content_area')):
-                    gl_y = h - 1 - ui_y
-                    raw = glReadPixels(ui_x, gl_y, 1, 1, GL_RGBA, GL_FLOAT)
-                    px = _np.frombuffer(raw, dtype=_np.float32)
-                    f.write(f"AFTER COMPOSITE readback {label} ui=({ui_x},{ui_y}) = {px.tolist()}\n")
 
         renderer.set_blend_mode(BlendMode.OPAQUE)
         renderer.enable_depth_testing()
@@ -590,8 +590,6 @@ class UIRenderer(Service):
             # scissor-cleared, don't get another chance to) redraw here.
             if self._rect_outside(rect, self._dirty_rect):
                 return
-
-        self._debug_elements_drawn = getattr(self, '_debug_elements_drawn', 0) + 1
 
         self._apply_scissor(scissor)
 

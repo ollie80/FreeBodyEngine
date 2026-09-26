@@ -142,6 +142,9 @@ GLFW_CHARACTER_MAP = {
     Key.NUMPAD_ENTER: glfw.KEY_KP_ENTER,
 }
 
+# GLFW key code -> engine Key, for _key_callback (which receives GLFW codes).
+GLFW_KEY_TO_ENGINE_MAP = {code: key for key, code in GLFW_CHARACTER_MAP.items()}
+
 class GLFWWindow(Window):
     """Window backend built on GLFW, the engine's cross-platform fallback.
 
@@ -194,7 +197,9 @@ class GLFWWindow(Window):
         self._scroll_accum = Vector(0.0, 0.0)
 
     def _key_callback(self, window, key, scancode, action, mods):
-        input_key = GLFW_CHARACTER_MAP[key]
+        input_key = GLFW_KEY_TO_ENGINE_MAP.get(key)
+        if input_key is None:
+            return  # a key the engine has no Key for (Print Screen, media keys, ...)
         key_type = GLFW_KEY_CALLBACK_TYPE_MAP[action]
 
         get_service('input')._key_callback(input_key, key_type)
