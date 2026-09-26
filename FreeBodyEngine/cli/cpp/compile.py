@@ -153,25 +153,65 @@ def _load_metadata(scripts_dir: str) -> dict:
 
 def generate_setup_py(sources: list, include_dirs: list, cxx_standard_flag: str) -> str:
     """Renders a `setup.py` that builds `sources` into the `_fbcpp`
-    extension module via pybind11/setuptools."""
+    extension module via pybind11/setuptools.
+
+    Finding pybind11's own headers checks the `FBCPP_PYBIND11_INCLUDE`
+    env var first, falling back to `import pybind11; pybind11.
+    get_include()` only if it's unset - not the other way around, and not
+    an unconditional `import pybind11` the way this used to read. On
+    desktop that env var is simply never set, so this behaves exactly as
+    before (a normal pip-installed pybind11, importable by whatever
+    Python is running this file). Cross-compiling for Android needs the
+    env var, though - confirmed live via a real build: p4a's own pybind11
+    recipe (install_in_hostpython = True) doesn't make it `import`-able
+    from the hostpython python-for-android's own CppCompiledComponents
+    PythonRecipe.build_compiled_components() actually runs this setup.py
+    with, so `import pybind11` crashed outright with a ModuleNotFoundError
+    before ever reaching the Extension() definition below - no include_dirs
+    value could have mattered at that point, however it was computed. See
+    build/android_recipes/freebodyengine_native/__init__.py's own
+    get_recipe_env() for where the env var actually gets set, reading the
+    same build-dir-relative header path every other p4a recipe needing
+    pybind11 uses (Recipe.get_recipe('pybind11', ctx).get_include_dir()) -
+    the officially-supported way to consume another recipe's own output,
+    as opposed to a live `import` of it."""
     sources_literal = str([s.replace('\\', '/') for s in sources])
     include_dirs_literal = str([d.replace('\\', '/') for d in include_dirs])
     return f"""
+import os
 from setuptools import setup, Extension
-import pybind11
+
+_pybind11_include = os.environ.get("FBCPP_PYBIND11_INCLUDE")
+if _pybind11_include is None:
+    import pybind11
+    _pybind11_include = pybind11.get_include()
 
 ext_modules = [
     Extension(
         "{EXTENSION_NAME}",
         {sources_literal},
-        include_dirs={include_dirs_literal} + [pybind11.get_include()],
+        include_dirs={include_dirs_literal} + [_pybind11_include],
         language="c++",
         extra_compile_args=["{cxx_standard_flag}"],
     ),
 ]
 
 setup(
-    name="{EXTENSION_NAME}",
+    # The *distribution* name (pip/wheel metadata - PEP 508 requires it
+    # start with a letter or digit) is deliberately not "{EXTENSION_NAME}"
+    # itself - that's the *importable module* name instead (set via
+    # Extension()'s own first argument above, completely independent of
+    # this one; nothing else needs the two to match). Confirmed live via
+    # a real Android build: desktop's own build invokes setup.py directly
+    # (`build_ext --inplace`, bypassing pip/wheel metadata validation
+    # entirely - see compile_cpp_scripts()'s own subprocess command), but
+    # python-for-android's CppCompiledComponentsPythonRecipe installs via
+    # a real `pip install .`, whose PEP 517 build-backend frontend
+    # rejects "{EXTENSION_NAME}" outright ("Invalid distribution name or
+    # version syntax") - a leading underscore was never actually valid
+    # there, just never exercised by a build strict enough to check.
+    name="fbcpp",
+    version="0.0.0",
     ext_modules=ext_modules,
     zip_safe=False,
 )
@@ -207,7 +247,7 @@ def _extra_setup_args(platform_name: str) -> list:
     return []
 
 
-def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: str | None = None, force: bool = False, quiet: bool = False) -> str:
+def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: str | None = None, force: bool = False, quiet: bool = False, generate_only: bool = False) -> str:
     """(re)builds every bound `.cpp`/`.hpp`/`.h` file under `code_path` into
     one shared extension module (`cpp_scripts/_fbcpp.<...>`), plus one
     `import`-able Python shim per bound file (`cpp_scripts/<stem>.py`).
@@ -215,8 +255,21 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
     last call (tracked by content hash in `cpp_scripts/data.json`) - pass
     `force=True` to ignore that and rebuild from scratch.
 
+    `generate_only=True` writes the generated `_bind.cpp`/`_module.cpp`/
+    `setup.py`/shim files (steps 1-3 below) but never invokes a compiler at
+    all - for a target this host can't build for directly (cross-
+    compiling for Android: see build/android_recipes/
+    freebodyengine_native/__init__.py, which feeds these pre-generated
+    sources to python-for-android's own NDK toolchain instead). Since
+    source generation is pure text and genuinely platform-independent (the
+    same generated setup.py/*.cpp work as input to any C++ compiler), the
+    *codegen* here doesn't need to change per target - only who actually
+    invokes the compiler on the result does. Returns "generated" on
+    success in this mode (never "unchanged" - always regenerates, there's
+    no host build artifact to compare metadata against for staleness).
+
     Returns "unchanged" (nothing to do), "no-sources" (no .cpp/.hpp/.h files
-    at all), "ok", or "failed".
+    at all), "generated" (generate_only=True, see above), "ok", or "failed".
     """
     if platform_name is None:
         platform_name = {'win32': 'windows', 'darwin': 'darwin', 'linux': 'linux'}.get(sys.platform, sys.platform)
@@ -248,7 +301,7 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
     #    class-bound .cpp's, a forward declaration for plain functions),
     #    then defines that file's registration function.
     for f in bound_files:
-        lines = ['#include <pybind11/pybind11.h>', '#include <pybind11/stl.h>', 'namespace py = pybind11;', '']
+        lines = ['#include <pybind11/pybind11.h>', '#include <pybind11/stl.h>', '#include <memory>', 'namespace py = pybind11;', '']
         if f.include_only:
             lines.append(f'#include "{f.abs_path.replace(chr(92), "/")}"')
         else:
@@ -297,6 +350,9 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
     open(setup_path, 'w', encoding='utf-8').write(
         generate_setup_py(normal_sources + gen_sources, [code_path], cxx_flag)
     )
+
+    if generate_only:
+        return 'generated'
 
     env = _build_env(platform_name)
     cmd = [python_executable, setup_path, 'build_ext', '--inplace', *_extra_setup_args(platform_name)]

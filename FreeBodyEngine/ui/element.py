@@ -768,6 +768,11 @@ class UIElement(GenericElement):
         self._cursor_index = 0
         self._text_view_offset = 0.0
 
+        # get_current_styles() memoization - see that method's docstring
+        # for why. Invalidated by the only two things that can change its
+        # result: _set_style() (styles) and set_state() (state).
+        self._styles_cache: dict[str, any] | None = None
+
         # Populated on demand by _update_scrollbar() the first time this
         # element's overflow actually needs a scrollbar - see that method
         # and the SCROLLBAR STYLES docs above. Left None otherwise so a
@@ -811,6 +816,14 @@ class UIElement(GenericElement):
         for callback in list(self._event_callbacks.get(event, ())):
             callback(*args)
 
+    def has_event(self, event: str) -> bool:
+        """True if at least one callback is registered for `event` via
+        on() - added alongside the native Node backend (ui/native_element.
+        py), which can't safely expose _event_callbacks itself as a plain
+        readable dict the way this pure-Python class does, so
+        ui/manager.py's cursor-shape check uses this on both backends."""
+        return bool(self._event_callbacks.get(event))
+
     def scroll_by(self, delta_px: float) -> None:
         """Adjusts this element's scroll offset by `delta_px` (only has any
         visible effect if this element's "scroll" style is on). Clamped to
@@ -839,6 +852,7 @@ class UIElement(GenericElement):
             return
 
         self.state = state
+        self._styles_cache = None
 
     def _has_own_style(self, key: str) -> bool:
         """
@@ -902,7 +916,22 @@ class UIElement(GenericElement):
             }
 
         When hovered, width becomes 120.
+
+        Memoized: this merge (a fresh dict allocation plus 2-3 dict scans)
+        used to run on every single call, and every element gets called
+        several times per frame - once each from calculate_layout(),
+        _measure_flow_extent() (once per auto-sized parent's pass over its
+        children), and _draw_element(), at minimum. On a view with a few
+        hundred elements (a long playlist/search-results list, each row
+        itself several elements) that's thousands of redundant dict
+        allocations a frame for output that only ever changes when
+        _set_style() or set_state() actually runs - the real, measured
+        cause of this UI feeling sluggish on any list-heavy view. Cached
+        here instead; both mutation points below clear the cache.
         """
+
+        if self._styles_cache is not None:
+            return self._styles_cache
 
         current_styles = dict(self.DEFAULT_STYLES)
         current_styles.update(self.styles)
@@ -913,6 +942,7 @@ class UIElement(GenericElement):
             for k, v in self.styles[state_name].items():
                 current_styles[k] = v
 
+        self._styles_cache = current_styles
         return current_styles
 
     def _parse_size(self, size, parent_layout: Layout, root_layout: Layout) -> int:
@@ -956,10 +986,17 @@ class UIElement(GenericElement):
             return 0
 
         #
-        # Plain numeric value.
+        # Plain numeric value - scaled by the window's content_scale (see
+        # its own docstring) so a fixed pixel count stays the same
+        # physical size across devices, rather than rendering tiny on a
+        # high-density phone screen. 1.0 on every desktop display this
+        # currently runs on, so this is a no-op there - only changes
+        # anything on a backend/display where content_scale != 1.
         #
         try:
-            return int(float(s))
+            window = get_service("window")
+            scale = window.content_scale if window is not None else 1.0
+            return int(float(s) * scale)
 
         except ValueError:
             pass
@@ -1004,6 +1041,7 @@ class UIElement(GenericElement):
 
     def _set_style(self, name: str, val: any):
         self.styles[name] = val
+        self._styles_cache = None
 
     def set_style(self, name: str, val: any, duration=0, curve=Linear):
         """
@@ -1278,17 +1316,25 @@ class UIElement(GenericElement):
             self._has_own_style("parent_anchor")
         )
 
+        # Raw pixel offsets - bypass _parse_size (where content_scale
+        # normally applies), so scaled here directly for the same reason
+        # every other raw-pixel style read in this file now is.
+        window = get_service("window")
+        offset_scale = window.content_scale if window is not None else 1.0
+        x_offset = styles.get("x", 0) * offset_scale
+        y_offset = styles.get("y", 0) * offset_scale
+
         if anchored:
             self._apply_anchor(
                 styles.get("parent_anchor", "center"),
                 styles.get("anchor", "center"),
                 parent_layout,
-                styles.get("x", 0),
-                styles.get("y", 0)
+                x_offset,
+                y_offset
             )
         else:
-            self._layout.x += styles.get("x", 0)
-            self._layout.y += styles.get("y", 0)
+            self._layout.x += x_offset
+            self._layout.y += y_offset
 
         #
         # Calculate this element's content rectangle - only now, using
@@ -1462,9 +1508,15 @@ class UIElement(GenericElement):
         track.styles = {**self._DEFAULT_SCROLLBAR_TRACK_STYLE, **styles.get("scrollbar_track", {})}
         thumb.styles = {**self._DEFAULT_SCROLLBAR_THUMB_STYLE, **styles.get("scrollbar_thumb", {})}
 
-        width = styles.get("scrollbar_width", 8)
-        margin = styles.get("scrollbar_margin", 2)
-        min_thumb = styles.get("scrollbar_min_thumb", 24)
+        # Raw pixel styles read directly here bypass _parse_size (where
+        # content_scale normally applies - see Window.content_scale) so
+        # each needs its own scaling, same reasoning as
+        # UIRenderer._content_scale's callers.
+        window = get_service("window")
+        scale = window.content_scale if window is not None else 1.0
+        width = styles.get("scrollbar_width", 8) * scale
+        margin = styles.get("scrollbar_margin", 2) * scale
+        min_thumb = styles.get("scrollbar_min_thumb", 24) * scale
 
         viewport = self._scroll_viewport_extent
         content_extent = self._scroll_content_extent

@@ -140,6 +140,25 @@ def create_wayland_opengl_context(window: 'WaylandWindow', debug):
     if not EGL.eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context):
         raise RuntimeError("Failed to activate OpenGL context.")
 
+    # 0, not the EGL default of 1 - the actual fix for the "app doesn't
+    # update at all while off the active workspace/occluded" bug the two
+    # reverted attempts below swap_wayland_opengl_buffers() were chasing.
+    # Root cause, confirmed: with vsync on, eglSwapBuffers blocks until the
+    # compositor delivers presentation feedback for this surface - which it
+    # doesn't while the surface isn't actually being presented (switched
+    # away from, minimized, fully occluded on some compositors) - and
+    # because the engine's whole update loop is one synchronous thread (see
+    # Main.run()), a blocked swap doesn't just stall rendering, it stalls
+    # every service's update() too, ProfilerServer's included (exactly what
+    # broke `fb profile` needing the same workspace as the app it profiles).
+    # Disabling vsync at the EGL level makes eglSwapBuffers present-and-
+    # return immediately regardless of compositor feedback, sidestepping
+    # the block entirely rather than trying to skip/gate the call itself
+    # (both prior attempts, see below, fought the driver's own pacing
+    # instead and made things worse) - now uncapped/torn without a frame
+    # limiter, presumably acceptable to trade for "runs at all".
+    EGL.eglSwapInterval(egl_display, 0)
+
     # stash everything the window will need later (swapping, resizing,
     # tearing down) since there's no single handle like `hdc` to carry it on
     window.egl_display = egl_display
@@ -174,10 +193,12 @@ def resize_wayland_opengl_surface(window: 'WaylandWindow', width: int, height: i
 def swap_wayland_opengl_buffers(window: 'WaylandWindow'):
     """Equivalent of Win32's SwapBuffers(hdc); call this from window.draw().
 
-    Plain and unconditional - see the gl33 context module's identical copy
-    of this function for the history of two reverted attempts at skipping
-    it while the surface isn't visible, and why both were removed rather
-    than kept."""
+    Plain and unconditional, and correctly so now - the actual fix for
+    this call blocking (and, transitively, freezing the whole engine)
+    while off-workspace/occluded is create_wayland_opengl_context()'s own
+    eglSwapInterval(egl_display, 0) call, not anything here. See its
+    comment for the two earlier, reverted attempts that tried gating this
+    function itself instead."""
     EGL.eglSwapBuffers(window.egl_display, window.egl_surface)
 
     pending = getattr(window, "_pending_egl_resize", None)

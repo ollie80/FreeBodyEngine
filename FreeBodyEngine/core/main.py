@@ -1,4 +1,5 @@
 import sys
+import time
 from FreeBodyEngine.core.update import UpdateCoordinator
 from FreeBodyEngine.core.service import ServiceLocator
 from FreeBodyEngine.core.flags import GlobalFlags
@@ -66,11 +67,40 @@ class Main:
 
                 profiler.start()
 
-            self.updater.update()
+            did_draw = self.updater.update()
 
             if get_flag(PROFILER, False):
 
                 profiler.stop()
+
+            # Without this, an iteration that didn't actually reach the
+            # UPDATE/DRAW timestep (self.updater.update()'s own gate - see
+            # its docstring) still runs every LATE callback unconditionally,
+            # window.draw() (a real buffer swap, on every window backend)
+            # included - so with vsync disabled (eglSwapInterval(0), see
+            # graphics/gl33|gl44/context/*.py - needed to stop the whole
+            # app freezing while off the active workspace/occluded, since
+            # a *blocking* swap used to stall this entire loop) and nothing
+            # else pacing this loop at all, it free-spins as fast as the
+            # CPU allows between real frames, calling swap_buffers an
+            # enormous, unbounded number of times a second re-presenting
+            # unchanged content. Confirmed live as the real cause of a
+            # separate, serious bug that looked entirely unrelated: random
+            # visual flicker with the whole app's input intermittently
+            # unresponsive, and *nothing* in the log to explain it (not
+            # even the >70ms delta-time-spike warning - each spin iteration
+            # is individually near-instant, so nothing about it looks slow
+            # from this loop's own perspective, even though the compositor
+            # on the other end is being flooded with redundant surface
+            # commits sharing the same channel input events arrive on).
+            # A plain time.sleep() here can't reintroduce the freeze this
+            # is built on top of - unlike blocking on eglSwapBuffers/
+            # compositor feedback, it always returns after a bounded,
+            # predictable time regardless of window visibility.
+            if not did_draw:
+                remaining = self.updater.update_timestep - self.updater.update_accumulator
+                if remaining > 0:
+                    time.sleep(remaining)
 
         if get_flag(PROFILER, False):
             profiler.close()

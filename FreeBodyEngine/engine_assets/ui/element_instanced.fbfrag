@@ -1,0 +1,55 @@
+@input
+uv: vec2
+size: vec2
+border_radius: vec4
+border_width: vec4
+border_color: vec4
+base_color: vec4
+
+@output
+color: vec4
+
+# Identical math to element.fbfrag - see its own docstring for the SDF
+# reasoning - just reading every per-element value as a varying (passed
+# through from element_instanced.fbvert's per-instance attributes)
+# instead of a uniform, and with no texture sampling path (see
+# element_instanced.fbvert's own docstring for why).
+def rounded_box_sdf(p: vec2, half_size: vec2, radius: float) -> float:
+    q: vec2 = vec2(abs(p.x), abs(p.y)) - half_size + vec2(radius, radius)
+    return length(max(q, vec2(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - radius
+
+
+def corner_radius(p: vec2, radius: vec4) -> float:
+    # border_radius order: (top_left, top_right, bottom_right, bottom_left)
+    if p.x < 0.0:
+        if p.y < 0.0:
+            return radius.x
+        else:
+            return radius.w
+    else:
+        if p.y < 0.0:
+            return radius.y
+        else:
+            return radius.z
+
+
+def main() -> void:
+    pixel_pos: vec2 = (uv - vec2(0.5, 0.5)) * size
+    half_size: vec2 = size * 0.5
+
+    radius: float = corner_radius(pixel_pos, border_radius)
+
+    border_thickness: float = border_width.x
+
+    outer_dist: float = rounded_box_sdf(pixel_pos, half_size, radius)
+    inner_dist: float = rounded_box_sdf(pixel_pos, half_size - vec2(border_thickness, border_thickness), max(radius - border_thickness, 0.0))
+
+    outer_alpha: float = 1.0 - smoothstep(0.0, 1.0, outer_dist)
+
+    border_mask: float = 0.0
+    if border_thickness > 0.0:
+        border_mask = clamp(smoothstep(-1.0, 0.0, inner_dist), 0.0, 1.0)
+
+    filled: vec4 = mix(base_color, border_color, border_mask)
+
+    color = vec4(filled.xyz, filled.w * outer_alpha)

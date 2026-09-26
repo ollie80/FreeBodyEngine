@@ -1,0 +1,19 @@
+@uniform
+ui_layer: texture
+
+@input
+uv: vec2
+
+@output
+color: vec4
+
+def main() -> void:
+    # generate_quad()'s own baked uv (see UIRenderer._composite_quad) is
+    # horizontally mirrored by construction - x=-1 (screen left) and
+    # x=+1 (screen right) both carry whichever u corresponds to "left" in
+    # its vertex list, independent of which corner is which - but
+    # vertically correct as-is (v=1 already lands on the same NDC-top row
+    # this offscreen layer was rendered to, since both this composite and
+    # the layer's own content use the same plain NDC convention with no
+    # upload-time flip in between). Only u needs correcting.
+    color = sample(ui_layer, vec2(1.0 - uv.x, uv.y))

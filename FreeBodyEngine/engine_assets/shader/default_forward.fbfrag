@@ -105,6 +105,7 @@ Light7_SpotCos: float
 
 Ambient: vec3
 ViewPos: vec3
+Unlit: bool
 
 ShadowEnabled: bool
 ShadowMap: texture
@@ -265,5 +266,8 @@ def main() -> void:
     albedo: vec3 = vec3(albedo4.x, albedo4.y, albedo4.z)
     emissive: vec3 = vec3(emissive4.x, emissive4.y, emissive4.z)
 
-    lit: vec3 = accumulate_lighting(world_pos, n, ViewPos, albedo, roughness, metallic, emissive, Ambient)
-    result = vec4(lit.x, lit.y, lit.z, albedo4.w)
+    if Unlit == True:
+        result = vec4(albedo.x + emissive.x, albedo.y + emissive.y, albedo.z + emissive.z, albedo4.w)
+    else:
+        lit: vec3 = accumulate_lighting(world_pos, n, ViewPos, albedo, roughness, metallic, emissive, Ambient)
+        result = vec4(lit.x, lit.y, lit.z, albedo4.w)

@@ -3,6 +3,7 @@ view: mat4
 proj: mat4
 tex: texture
 model: mat4
+zOffset: float
 
 @input
 vertex: vec3
@@ -23,4 +24,7 @@ def main():
     world_normal: vec4 = model * vec4(normal.x, normal.y, normal.z, 0.0)
     worldNormal = vec4(world_normal.x, world_normal.y, world_normal.z, 1.0)
 
-    VERTEX_POSITION = proj * view * world
+    # See default_shader.fbvert's zOffset comment - same reasoning applies
+    # here (this is the shader every transparent-blend sprite uses).
+    clip: vec4 = proj * view * world
+    VERTEX_POSITION = vec4(clip.x, clip.y, clip.z + (zOffset * clip.w), clip.w)

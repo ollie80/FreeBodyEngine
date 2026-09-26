@@ -23,12 +23,40 @@ class Mouse(Service):
         self._warned_no_cursor_support = False
     
     def on_initialize(self):
-        """Registers update() to run every frame's EARLY phase."""
-        register_service_update(UpdatePhase.EARLY, self.update)
+        """Registers update() to run every real UPDATE cycle, ahead of
+        everything else at that phase (priority=1000, the same "run
+        first" convention UIManager's own DRAW registration uses) - NOT
+        EARLY, despite EARLY running unconditionally every raw loop
+        iteration while UPDATE only fires once real work has accumulated
+        (see UpdateCoordinator.update()'s own docstring).
+
+        That distinction used to be invisible: before this session's
+        performance work, a single loop iteration always took at least
+        one full update_timestep's worth of real time anyway, so EARLY
+        and UPDATE always ran together, 1:1, every iteration. Faster
+        rendering exposed a real, previously-dormant race: every backend's
+        update() (see e.g. WaylandMouse.update()) *destructively* latches
+        pointer-callback events into this frame's pressed/released state,
+        clearing the raw event buffer as it goes - so with EARLY no longer
+        synchronized 1:1 with UPDATE, any extra EARLY-only iteration
+        between two real UPDATE cycles would silently wipe a real click's
+        latched press/release before UIManager.update() (also UPDATE
+        phase, gated the same way) ever got a chance to read it. Confirmed
+        live as exactly what "most clicks just don't register" was.
+
+        Registering here instead ties this class's own per-cycle latch to
+        the same real cadence its only consumer (UI hit-testing) runs at,
+        eliminating the race entirely - at the cost of position/scroll/
+        press tracking only refreshing at UPDATE's rate now, not EARLY's;
+        acceptable since nothing genuinely needs fresher mouse state than
+        that (PHYSICS, which runs before UPDATE each iteration, would see
+        one cycle's latency on mouse-driven physics interactions, but this
+        engine has no such use today)."""
+        register_service_update(UpdatePhase.UPDATE, self.update, priority=1000)
 
     def on_destroy(self):
-        """Unregisters update() from the EARLY update phase."""
-        unregister_service_update(UpdatePhase.EARLY, self.update)
+        """Unregisters update() from the UPDATE phase - see on_initialize()."""
+        unregister_service_update(UpdatePhase.UPDATE, self.update)
 
     @abstractmethod
     def lock_position(self):

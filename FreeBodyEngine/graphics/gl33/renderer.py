@@ -7,7 +7,7 @@ from FreeBodyEngine.graphics.gl33.texture import GLTextureManager
 from fbusl.injector import Injector
 from FreeBodyEngine.graphics.texture import Texture
 from FreeBodyEngine.graphics.material import Material, BlendMode
-from FreeBodyEngine import DEVMODE, get_flag
+from FreeBodyEngine import DEVMODE, get_flag, warning
 from FreeBodyEngine.graphics.gl33.buffer import UBOBuffer
 
 from typing import TYPE_CHECKING
@@ -56,6 +56,22 @@ class GL33Renderer(Renderer):
         # to even call on_initialize() in that case.
 
         self.mesh_class = GLMesh
+
+        self.total_draw_calls = 0
+        # GPU timer query pool - see begin_gpu_query()/end_gpu_query()'s own
+        # docstrings (identical to GL44Renderer's copy of this, ported here
+        # after confirming live that ProfilerServer's GPU timing silently
+        # never worked at all on a GL33 renderer, since none of this
+        # existed on this class until now - hasattr() guards in
+        # ProfilerServer meant that failed completely silently, with no
+        # warning anywhere, rather than raising).
+        self._gpu_query_ids = []
+        self._gpu_query_pending = []
+        self._gpu_query_index = 0
+        self._gpu_query_active = False
+        self._gpu_timing_supported = False
+        self._gpu_query_stall_frames = 0
+        self.last_gpu_ms = None
 
     def on_initialize(self):
         """Creates (or attaches to) the OpenGL context for the current window
@@ -120,10 +136,25 @@ class GL33Renderer(Renderer):
         glViewport(0, 0, width, height)
 
         self.texture_manager = GLTextureManager()
-        self.line_shader = self.load_shader(get_file("engine://shader/line.fbvert"), get_file("engine://shader/line.fbfrag")) 
+        self.line_shader = self.load_shader(get_file("engine://shader/line.fbvert"), get_file("engine://shader/line.fbfrag"))
+
+        # See GL44Renderer.on_initialize()'s identical copy of this for the
+        # full reasoning - query support (or GL_TIME_ELAPSED specifically)
+        # isn't guaranteed on every driver this renderer might run against
+        # (GLESRenderer reuses this unchanged, and GLES timer queries need
+        # a different, EXT-suffixed API entirely - this will simply fail
+        # and degrade cleanly there), so GPU timing degrades to unavailable
+        # rather than crashing startup over a profiling feature nothing
+        # may even be using.
+        try:
+            self._gpu_query_ids = list(glGenQueries(4))
+            self._gpu_query_pending = [False] * len(self._gpu_query_ids)
+            self._gpu_timing_supported = True
+        except Exception as e:
+            warning(f"GL33Renderer: GPU timer queries unavailable ({e}) - GPU timing will read as unavailable.")
+            self._gpu_timing_supported = False
 
 
-        
     def create_buffer(self, data):
         """Wraps `data` in a UBOBuffer, GL33's Buffer implementation."""
         return UBOBuffer(data)
@@ -255,6 +286,7 @@ class GL33Renderer(Renderer):
         driver (Android): unlike GL_DEBUG_OUTPUT above, there's no ES
         extension that adds this back, since GLES dropped the whole
         fixed-function polygon-mode concept, not just made it optional."""
+        self.total_draw_calls += 1
         self.texture_manager.begin_draw()
         material.use()
         material.shader.use()
@@ -274,6 +306,112 @@ class GL33Renderer(Renderer):
 
         glBindVertexArray(0)
 
+    def begin_gpu_query(self):
+        """Starts timing GPU-side execution time for whatever draw calls
+        happen between this and the next end_gpu_query() - read by
+        FreeBodyEngine.core.profiler_server.ProfilerServer. See
+        GL44Renderer.begin_gpu_query()'s docstring for the full reasoning
+        (identical here) - round-robin query pool, defensive against a
+        query never becoming available and against the GL calls
+        themselves failing, both confirmed real failure modes on real
+        drivers with no GL error and nothing raised."""
+        if not self._gpu_timing_supported:
+            return
+
+        idx = self._gpu_query_index
+        if self._gpu_query_pending[idx]:
+            if glGetQueryObjectiv(self._gpu_query_ids[idx], GL_QUERY_RESULT_AVAILABLE):
+                try:
+                    nanoseconds = glGetQueryObjectuiv(self._gpu_query_ids[idx], GL_QUERY_RESULT)
+                    self.last_gpu_ms = nanoseconds / 1_000_000.0
+                except Exception as e:
+                    warning(f"GL33Renderer: reading a GPU timer query failed ({e}) - disabling GPU timing for this session.")
+                    self._gpu_timing_supported = False
+                    self.last_gpu_ms = None
+                    return
+                self._gpu_query_pending[idx] = False
+                self._gpu_query_stall_frames = 0
+            else:
+                self._gpu_query_stall_frames += 1
+                if self._gpu_query_stall_frames > 300:
+                    warning(
+                        "GL33Renderer: a GPU timer query has not become available after "
+                        f"{self._gpu_query_stall_frames} frames (glGetQueryObjectiv(..., "
+                        "GL_QUERY_RESULT_AVAILABLE) keeps returning false, with no GL error) "
+                        "- this driver/context likely doesn't actually complete GL_TIME_ELAPSED "
+                        "queries despite accepting them. Disabling GPU timing for this session."
+                    )
+                    self._gpu_timing_supported = False
+                    self.last_gpu_ms = None
+                    return
+
+        if self._gpu_query_pending[idx]:
+            self._gpu_query_active = False
+            return
+
+        try:
+            glBeginQuery(GL_TIME_ELAPSED, self._gpu_query_ids[idx])
+        except Exception as e:
+            warning(f"GL33Renderer: glBeginQuery(GL_TIME_ELAPSED) failed ({e}) - disabling GPU timing for this session.")
+            self._gpu_timing_supported = False
+            self.last_gpu_ms = None
+            return
+        self._gpu_query_active = True
+
+    def end_gpu_query(self):
+        """Ends the query begin_gpu_query() started, if it actually
+        started one this frame."""
+        if not self._gpu_timing_supported or not self._gpu_query_active:
+            return
+
+        try:
+            glEndQuery(GL_TIME_ELAPSED)
+        except Exception as e:
+            warning(f"GL33Renderer: glEndQuery(GL_TIME_ELAPSED) failed ({e}) - disabling GPU timing for this session.")
+            self._gpu_timing_supported = False
+            self.last_gpu_ms = None
+            self._gpu_query_active = False
+            return
+        self._gpu_query_pending[self._gpu_query_index] = True
+        self._gpu_query_index = (self._gpu_query_index + 1) % len(self._gpu_query_ids)
+        self._gpu_query_active = False
+
+    def draw_ui_background_instances(self, mesh, material, instance_data):
+        """See GL44Renderer.draw_ui_background_instances's docstring - same
+        per-instance-attribute mechanism draw_mesh_instanced already uses,
+        and (after a real, reproduced flicker + input-freeze bug from a
+        persistent VBO reused across this many same-frame calls - see
+        that docstring) the same fresh-gen/delete-per-call pattern too."""
+        self.total_draw_calls += 1
+        material.use()
+        material.shader.use()
+
+        glBindVertexArray(mesh.vao)
+
+        base_location = len(mesh.attributes)
+        data = np.ascontiguousarray(instance_data, dtype=np.float32)
+
+        instance_vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+        glBufferData(GL_ARRAY_BUFFER, data.nbytes, data, GL_STREAM_DRAW)
+
+        stride = 20 * 4  # 5 vec4s, 4 bytes/float
+        for i in range(5):
+            location = base_location + i
+            glEnableVertexAttribArray(location)
+            glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(i * 16))
+            glVertexAttribDivisor(location, 1)
+
+        glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), len(data))
+
+        for i in range(5):
+            location = base_location + i
+            glVertexAttribDivisor(location, 0)
+            glDisableVertexAttribArray(location)
+
+        glBindVertexArray(0)
+        glDeleteBuffers(1, [instance_vbo])
+
     def set_scissor(self, x: int, y: int, width: int, height: int):
         """See Renderer.set_scissor(). `x`/`y` come in top-left-origin,
         Y-down (UIRenderer's convention) - glScissor wants bottom-left
@@ -285,6 +423,15 @@ class GL33Renderer(Renderer):
     def clear_scissor(self):
         """See Renderer.clear_scissor()."""
         glDisable(GL_SCISSOR_TEST)
+
+    def get_active_framebuffer(self):
+        """See Renderer.get_active_framebuffer()."""
+        return glGetIntegerv(GL_FRAMEBUFFER_BINDING)
+
+    def bind_active_framebuffer(self, handle):
+        """See Renderer.bind_active_framebuffer()."""
+        if handle is not None:
+            glBindFramebuffer(GL_FRAMEBUFFER, handle)
 
     def draw_line(self, start: tuple[int, int], end: tuple[int, int], width, color: 'Color'):
         """Draws a line segment from `start` to `end` using a dedicated line

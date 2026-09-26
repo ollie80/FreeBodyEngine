@@ -1,7 +1,7 @@
 from datetime import datetime
 from functools import wraps
 from FreeBodyEngine.core.service import Service
-from FreeBodyEngine import get_main, SUPRESS_LOGS, SUPRESS_ERRORS, SUPRESS_WARNINGS, get_service, get_flag
+from FreeBodyEngine import get_main, SUPRESS_LOGS, SUPRESS_ERRORS, SUPRESS_WARNINGS, TERMINAL_WINDOW, get_service, get_flag
 from FreeBodyEngine.core.files import FileResource 
 import os
 import inspect
@@ -84,7 +84,7 @@ class Logger(Service):
         if not self.supress["DEBUG"]:
             full_msg = " ".join(str(m) for m in msg)
             log_id = self._store_log("DEBUG", full_msg)
-            print_colored(*msg, color=color)
+            self._print(*msg, color=color)
             return log_id
 
     def error(self, msg):
@@ -93,7 +93,7 @@ class Logger(Service):
         log id."""
         if not self.supress["ERROR"]:
             log_id = self._store_log("ERROR", msg)
-            print_colored(f"ERROR [{log_id}]: {msg}", color="red")
+            self._print(f"ERROR [{log_id}]: {msg}", color="red")
             return log_id
 
     def warning(self, msg):
@@ -102,8 +102,20 @@ class Logger(Service):
         entry's log id."""
         if not self.supress["WARNING"]:
             log_id = self._store_log("WARNING", msg)
-            print_colored(f"WARNING [{log_id}]: {msg}", color="yellow")
+            self._print(f"WARNING [{log_id}]: {msg}", color="yellow")
             return log_id
+
+    def _print(self, *msg, color: str):
+        """Prints to the console like `print_colored()`, except under
+        fb.TERMINAL_WINDOW - there, stdout IS the rendered display (see
+        core/window/terminal.py's TerminalWindow.draw()), so an ordinary
+        print would land in the middle of its cursor-positioned ANSI
+        output and corrupt the frame. Every message is still recorded via
+        _store_log() regardless (in-memory history + user://log.jsonl),
+        just not echoed to the console live."""
+        if get_flag(TERMINAL_WINDOW, False):
+            return
+        print_colored(*msg, color=color)
 
     def get_traceback(self, log_id: int):
         """Returns the recorded stack trace for the ERROR/WARNING entry with

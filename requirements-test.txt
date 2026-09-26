@@ -1,0 +1,4 @@
+# Test-suite dependencies (see tests/, pytest.ini, .github/workflows/tests.yml)
+# - separate from the engine's own runtime requirements
+# (FreeBodyEngine/requirements.py), which this doesn't need.
+pytest==9.1.1

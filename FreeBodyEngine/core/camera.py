@@ -128,7 +128,17 @@ class Camera2D(Node2D, Camera):
         return np.dot(translation_matrix, rotation_matrix)
 
     def _update_view_matrix(self):
-        tx, ty = -self.world_transform.position.x, self.world_transform.position.y
+        # Both axes must be negated here - the view matrix has to move the
+        # world opposite to the camera's own position (a camera that moves
+        # +y should make the world appear to shift -y on screen). `tx` did
+        # this correctly but `ty` didn't, which put every 2D scene's
+        # vertical placement off by roughly 2x the camera's own y position
+        # (e.g. a camera at y=1.6 looking at a point at y=0.3 rendered it
+        # as if it were at y=1.6-(-1.3) instead of y=0.3-1.6) - increasingly
+        # wrong the further the camera sits from y=0. _get_view_mat() above
+        # (unused elsewhere, but presumably the intended reference) already
+        # negates both axes.
+        tx, ty = -self.world_transform.position.x, -self.world_transform.position.y
         translation_matrix = np.array(
             [
                 [1.0, 0.0, 0.0, 0.0],

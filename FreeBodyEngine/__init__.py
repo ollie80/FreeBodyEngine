@@ -2,6 +2,18 @@
 FreeBodyEngine created by ollie80
 """
 
+import os
+
+# NOTE: this used to set os.environ.setdefault("PYOPENGL_ERROR_CHECKING",
+# "0") here, to skip PyOpenGL's per-call glGetError() sync stall. Reverted
+# - on a real EGL backend it crashes at the very first GL call:
+# `AttributeError: module 'OpenGL.raw.EGL._errors' has no attribute
+# '_error_checker'` (PyOpenGL's error-checking-disabled code path calling
+# a private attribute that doesn't exist under EGL on that PyOpenGL
+# version - not something worth chasing for the ~2.6% this measured as in
+# testing anyway). Set PYOPENGL_ERROR_CHECKING=0 yourself before running,
+# outside this codebase, if a GLX/desktop target wants it back.
+
 import sys
 import signal
 from typing import TYPE_CHECKING, Callable, overload
@@ -20,6 +32,8 @@ DEFAULT_NAME = "FREEBODY_PROJECT"
 HEADLESS = "HEADLESS"
 DEVMODE = "DEVMODE"
 TEST_WINDOW = "TEST_WINDOW"  # fb.set_flag(fb.TEST_WINDOW, True) before init() - see core.window.testwindow.TestWindow
+TERMINAL_WINDOW = "TERMINAL_WINDOW"  # fb.set_flag(fb.TERMINAL_WINDOW, True) before init() - see core.window.terminal.TerminalWindow and ui.get_ui_renderer()
+NATIVE_UI = "NATIVE_UI"  # fb.set_flag(fb.NATIVE_UI, False) before any UIElement/RootElement is constructed to force the pure-Python ui.element implementation instead of the compiled C++ one - see ui/__init__.py's own resolution logic. Defaults to True everywhere except get_platform() == "web" (no compiled-extension support there at all), and silently falls back to pure-Python if the native module hasn't been built (scripts/build_native.py) even where True.
 PROJECT_PATH = "PROJECT_PATH"
 PROFILER = "PROFILER"
 NAME = "NAME"
@@ -138,8 +152,6 @@ def register_event_callback(event_name: str, callable: Callable):
     """Registers `callable` to be invoked whenever `event_name` is emitted.
 
     A no-op if the "event" service isn't registered yet."""
-    print(get_service_locator().services.keys())
-
     if service_exists("event"):
         get_service('event').register_callback(event_name, callable)
 
@@ -241,6 +253,8 @@ from FreeBodyEngine.utils import get_platform
 from FreeBodyEngine.core.scene import add_scene, set_scene, remove_scene
 from FreeBodyEngine.core.window import create_cursor, set_cursor
 
+
+
 def init():
     """Initialise FreeBodyEngine"""
     signal.signal(signal.SIGINT, _handle_signal)
@@ -250,8 +264,6 @@ def init():
     global DLL_DIRECTORY
 
     DLL_DIRECTORY = load_dlls()
-
-    
 
     if get_flag(DEVMODE, False):
         from FreeBodyEngine.core.dev import find_project

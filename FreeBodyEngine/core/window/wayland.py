@@ -438,11 +438,19 @@ class WaylandWindow(Window):
         # callback instead (removed - reproduced a *worse*, near-immediate
         # freeze even while fully visible, most likely from fighting
         # Mesa's own internal EGL presentation-feedback pacing on the same
-        # surface, which this never touched). The underlying freeze is
-        # still real and still unfixed - left as plain, unconditional
-        # eglSwapBuffers (see swap_wayland_opengl_buffers) - a known,
-        # narrower problem rather than the broader regression either fix
-        # attempt introduced.
+        # surface, which this never touched).
+        #
+        # The actual, working fix ended up being unrelated to any of that:
+        # graphics/gl44|gl33/context/wayland.py's create_*_opengl_context()
+        # now calls eglSwapInterval(egl_display, 0) right after
+        # eglMakeCurrent - vsync off means eglSwapBuffers presents and
+        # returns immediately instead of blocking on presentation feedback
+        # the compositor never sends for an unpresented surface, so it
+        # never blocks in the first place, on this surface's suspended
+        # state or otherwise. Left `_suspended` tracked-but-unused here
+        # anyway, in case a future frame-limiter (now needed, running
+        # uncapped/torn without vsync) wants a real visibility signal to
+        # throttle against instead of a blind FPS cap.
         state_values = struct.unpack(f"{len(states) // 4}I", states)
         self._suspended = XdgToplevel.state.suspended.value in state_values
 

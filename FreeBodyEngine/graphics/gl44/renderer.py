@@ -65,6 +65,26 @@ class GL44Renderer(Renderer):
 
         self.mesh_class = GL44Mesh
 
+        # Read by FreeBodyEngine.core.profiler_server.ProfilerServer (see
+        # its own module docstring) - cumulative, never reset here, so a
+        # consumer computes its own per-frame delta rather than this
+        # renderer needing to know when a "frame" starts/ends on anyone
+        # else's behalf.
+        self.total_draw_calls = 0
+
+        # GPU timer query pool - see begin_gpu_query()/end_gpu_query()'s
+        # own docstrings. Left empty until on_initialize() actually has a
+        # live GL context to allocate queries against; both methods are
+        # no-ops until then (or permanently, if query allocation itself
+        # fails - see on_initialize()).
+        self._gpu_query_ids = []
+        self._gpu_query_pending = []
+        self._gpu_query_index = 0
+        self._gpu_query_active = False
+        self._gpu_timing_supported = False
+        self._gpu_query_stall_frames = 0
+        self.last_gpu_ms: float = None
+
     def on_initialize(self):
         """Creates (or attaches to) the OpenGL context for the current window
         backend (glfw/wayland/win32/x11), or - if no 'window' service is
@@ -117,8 +137,27 @@ class GL44Renderer(Renderer):
         glViewport(0, 0, width, height)
 
         self.texture_manager = GL44TextureManager()
-        
-        self.line_shader = self.load_shader(get_file("engine://shader/line.fbvert").read(), get_file("engine://shader/line.fbfrag").read()) 
+
+        self.line_shader = self.load_shader(get_file("engine://shader/line.fbvert").read(), get_file("engine://shader/line.fbfrag").read())
+
+        # GPU timer query pool for begin_gpu_query()/end_gpu_query() - see
+        # their own docstrings. A pool (not a single query) since a
+        # query's result isn't available until the GPU actually catches
+        # up, often a frame or more later - round-robining through
+        # several means a query is (almost) never still pending when its
+        # slot comes back around, without ever blocking to wait for one.
+        # Wrapped in try/except since query support (or this specific
+        # target, GL_TIME_ELAPSED) isn't guaranteed on every driver this
+        # renderer might end up running against - GPU timing degrades to
+        # unavailable (last_gpu_ms stays None) rather than crashing
+        # startup over a profiling feature nothing may even be using.
+        try:
+            self._gpu_query_ids = list(glGenQueries(4))
+            self._gpu_query_pending = [False] * len(self._gpu_query_ids)
+            self._gpu_timing_supported = True
+        except Exception as e:
+            warning(f"GL44Renderer: GPU timer queries unavailable ({e}) - GPU timing will read as unavailable.")
+            self._gpu_timing_supported = False
 
     def create_buffer(self, data):
         """Wraps `data` in a UBOBuffer, GL44's Buffer implementation."""
@@ -231,6 +270,64 @@ class GL44Renderer(Renderer):
         glBindVertexArray(0)
         glDeleteBuffers(1, [instance_vbo])
 
+    def draw_ui_background_instances(self, mesh, material, instance_data):
+        """Draws `instance_data` (an (N, 20) float32 array - 5 vec4s per
+        instance: rect, border_radius, border_width, border_color,
+        base_color, in that order - see UIRenderer._flush_instances for
+        the exact packing) as N instances of `mesh` in a single
+        glDrawElementsInstanced call. The batched counterpart to
+        draw_mesh() for UI element backgrounds: UIRenderer queues every
+        eligible (untextured) element's background instead of drawing it
+        immediately, cutting what used to be N draw_mesh() calls (each
+        paying 8 real set_uniform()s - confirmed the single largest
+        remaining cost in UIRenderer.draw() by cProfile, after every
+        earlier fix) down to one instance-buffer upload and one draw call
+        per batch. Same divisor=1 per-instance-attribute mechanism as
+        draw_mesh_instanced above, and - after a real, reproduced bug -
+        the exact same gen/delete-a-fresh-VBO-every-call pattern too, not
+        a persistent one reused across flushes: this runs up to ~20-40
+        times a *single* frame (once per batch boundary - see
+        UIRenderer._flush_instances), and reusing one VBO across that many
+        same-frame glBufferData/glDrawElementsInstanced pairs produced an
+        intermittent flicker plus, on the same episodes, the whole app
+        appearing to stop responding to input - consistent with a GPU
+        driver stall on the reused buffer blocking the single synchronous
+        update loop (input polling included), the same underlying failure
+        class as the off-workspace eglSwapBuffers freeze fixed earlier
+        this session, just self-inflicted here instead of compositor-
+        triggered. A fresh buffer per call costs a real glGenBuffers/
+        glDeleteBuffers pair, but that's cheap next to what batching
+        already saves, and correctness beats it regardless."""
+        self.total_draw_calls += 1
+        material.use()
+        material.shader.use()
+
+        glBindVertexArray(mesh.vao)
+
+        base_location = len(mesh.attributes)
+        data = np.ascontiguousarray(instance_data, dtype=np.float32)
+
+        instance_vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, instance_vbo)
+        glBufferData(GL_ARRAY_BUFFER, data.nbytes, data, GL_STREAM_DRAW)
+
+        stride = 20 * 4  # 5 vec4s, 4 bytes/float
+        for i in range(5):
+            location = base_location + i
+            glEnableVertexAttribArray(location)
+            glVertexAttribPointer(location, 4, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(i * 16))
+            glVertexAttribDivisor(location, 1)
+
+        glDrawElementsInstanced(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0), len(data))
+
+        for i in range(5):
+            location = base_location + i
+            glVertexAttribDivisor(location, 0)
+            glDisableVertexAttribArray(location)
+
+        glBindVertexArray(0)
+        glDeleteBuffers(1, [instance_vbo])
+
     def enable_depth_testing(self):
         """Enables GL_DEPTH_TEST."""
         glEnable(GL_DEPTH_TEST)
@@ -243,6 +340,7 @@ class GL44Renderer(Renderer):
         """Binds `material` and draws `mesh`'s indexed triangles. Temporarily
         switches to wireframe polygon mode if `material.data['render_mode']
         == "wireframe"`."""
+        self.total_draw_calls += 1
         self.texture_manager.begin_draw()
         material.use()
         material.shader.use()
@@ -261,6 +359,114 @@ class GL44Renderer(Renderer):
 
         glBindVertexArray(0)
 
+    def begin_gpu_query(self):
+        """Starts timing GPU-side execution time for whatever draw calls
+        happen between this and the next end_gpu_query() - read by
+        FreeBodyEngine.core.profiler_server.ProfilerServer, which brackets
+        this around a whole frame's DRAW phase (see its own module
+        docstring for exactly where/why).
+
+        A no-op if query allocation failed at startup, or ever failed at
+        runtime before (self._gpu_timing_supported is False - see
+        on_initialize() and the try/except below), or if the query this
+        call would reuse hasn't finished yet (skips this frame's timing
+        rather than either blocking for it or starting a second,
+        overlapping GL_TIME_ELAPSED query, which is invalid GL usage -
+        only one may be active at a time).
+
+        Reads the result via glGetQueryObjectuiv (32-bit), not the more
+        "correct" glGetQueryObjectui64v - confirmed live on real hardware
+        that the 64-bit read raises `KeyError` inside PyOpenGL's own
+        array-type conversion (a PyOpenGL/driver mismatch over the 64-bit
+        result enum, nothing about the query itself being invalid). A
+        single frame's GL_TIME_ELAPSED, in nanoseconds, fits comfortably
+        in 32 bits regardless (max ~4.3 seconds; real frames are under
+        100ms), so this isn't a precision compromise for what this is
+        actually used for - it just avoids the buggy code path entirely.
+        Still wrapped in its own try/except (separate from
+        on_initialize()'s) in case some *other* driver fails a different
+        way: without it, a failure here would raise fresh out of this
+        same call every single frame forever (caught, each time, by
+        UpdateCoordinator._run()'s own safety net - so it never crashes
+        the app, but it would spam a full traceback into the log every
+        frame indefinitely) instead of being recognized once and
+        disabling GPU timing cleanly, the same way a genuinely
+        unsupported driver already does."""
+        if not self._gpu_timing_supported:
+            return
+
+        idx = self._gpu_query_index
+        if self._gpu_query_pending[idx]:
+            if glGetQueryObjectiv(self._gpu_query_ids[idx], GL_QUERY_RESULT_AVAILABLE):
+                try:
+                    nanoseconds = glGetQueryObjectuiv(self._gpu_query_ids[idx], GL_QUERY_RESULT)
+                    self.last_gpu_ms = nanoseconds / 1_000_000.0
+                except Exception as e:
+                    warning(f"GL44Renderer: reading a GPU timer query failed ({e}) - disabling GPU timing for this session.")
+                    self._gpu_timing_supported = False
+                    self.last_gpu_ms = None
+                    return
+                self._gpu_query_pending[idx] = False
+                self._gpu_query_stall_frames = 0
+            else:
+                # Not available yet - normal for the first frame or two
+                # (the GPU hasn't caught up), not normal indefinitely. A
+                # query that never, ever becomes available (no error, no
+                # exception, just permanently GL_FALSE) is a real failure
+                # mode on some driver/context combinations - confirmed
+                # live: neither this method's own try/except above nor
+                # on_initialize()'s ever fires, so without this counter
+                # GPU timing would silently read as unavailable forever
+                # with nothing in the log to explain why.
+                self._gpu_query_stall_frames += 1
+                if self._gpu_query_stall_frames > 300:
+                    warning(
+                        "GL44Renderer: a GPU timer query has not become available after "
+                        f"{self._gpu_query_stall_frames} frames (glGetQueryObjectiv(..., "
+                        "GL_QUERY_RESULT_AVAILABLE) keeps returning false, with no GL error) "
+                        "- this driver/context likely doesn't actually complete GL_TIME_ELAPSED "
+                        "queries despite accepting them. Disabling GPU timing for this session."
+                    )
+                    self._gpu_timing_supported = False
+                    self.last_gpu_ms = None
+                    return
+
+        if self._gpu_query_pending[idx]:
+            # Still not ready even after a full trip around the pool -
+            # every slot is backed up waiting on the GPU. Skip starting a
+            # new query this frame rather than reusing a slot whose old
+            # result hasn't been read yet.
+            self._gpu_query_active = False
+            return
+
+        try:
+            glBeginQuery(GL_TIME_ELAPSED, self._gpu_query_ids[idx])
+        except Exception as e:
+            warning(f"GL44Renderer: glBeginQuery(GL_TIME_ELAPSED) failed ({e}) - disabling GPU timing for this session.")
+            self._gpu_timing_supported = False
+            self.last_gpu_ms = None
+            return
+        self._gpu_query_active = True
+
+    def end_gpu_query(self):
+        """Ends the query begin_gpu_query() started, if it actually
+        started one this frame (see its own docstring for when it
+        wouldn't have)."""
+        if not self._gpu_timing_supported or not self._gpu_query_active:
+            return
+
+        try:
+            glEndQuery(GL_TIME_ELAPSED)
+        except Exception as e:
+            warning(f"GL44Renderer: glEndQuery(GL_TIME_ELAPSED) failed ({e}) - disabling GPU timing for this session.")
+            self._gpu_timing_supported = False
+            self.last_gpu_ms = None
+            self._gpu_query_active = False
+            return
+        self._gpu_query_pending[self._gpu_query_index] = True
+        self._gpu_query_index = (self._gpu_query_index + 1) % len(self._gpu_query_ids)
+        self._gpu_query_active = False
+
     def set_scissor(self, x: int, y: int, width: int, height: int):
         """See Renderer.set_scissor(). `x`/`y` come in top-left-origin,
         Y-down (UIRenderer's convention) - glScissor wants bottom-left
@@ -272,6 +478,15 @@ class GL44Renderer(Renderer):
     def clear_scissor(self):
         """See Renderer.clear_scissor()."""
         glDisable(GL_SCISSOR_TEST)
+
+    def get_active_framebuffer(self):
+        """See Renderer.get_active_framebuffer()."""
+        return glGetIntegerv(GL_FRAMEBUFFER_BINDING)
+
+    def bind_active_framebuffer(self, handle):
+        """See Renderer.bind_active_framebuffer()."""
+        if handle is not None:
+            glBindFramebuffer(GL_FRAMEBUFFER, handle)
 
     def draw_line(self, start: tuple[int, int], end: tuple[int, int], width, color: 'Color'):
         """Draws a line segment from `start` to `end` using a dedicated line

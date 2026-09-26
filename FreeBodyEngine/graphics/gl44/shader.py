@@ -203,6 +203,22 @@ class GL44Shader(Shader):
 
             self.uniforms[name] = GL44Uniform(location, size, gl_type)
 
+        # Precomputed once here (setup_uniforms() is the one place both
+        # __init__ and rebuild() populate self.uniforms from) rather than
+        # rescanning the *entire* uniform dict - including every plain
+        # non-sampler uniform (rect, color, matrices, ...) - on every
+        # single use()/_bind_textures() call, which real profiling (a
+        # text-heavy UI, one draw call per glyph - see graphics/text/
+        # text.py's own docstring on why - so use() runs constantly) showed
+        # costing more real time than the GL calls it exists to make: a
+        # shader with, say, 8 uniforms and 1 actual sampler was still
+        # doing 8 isinstance-equivalent type checks per glyph to find that
+        # one sampler, every glyph, of every text draw, every frame.
+        self._sampler_uniforms = [
+            name for name, uniform in self.uniforms.items()
+            if uniform.type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY)
+        ]
+
     def check_val_type(self, val: any, gl_type: int, name: str) -> bool:
         """Validates that `val` is an acceptable Python value for a uniform
         of GL type `gl_type` - logging an engine error and returning False
@@ -283,17 +299,37 @@ class GL44Shader(Shader):
 
     def set_uniform(self, name: str, val: any):
         """Sets uniform `name` to `val`, after `check_val_type()` validates
-        it. Skips the actual glUniform* call (and the cache update) if `val`
+        it. Skips the actual glUniform* call *and* type validation if `val`
         equals the value already cached for this uniform, avoiding redundant
-        driver calls when the same value is set every frame - as material
-        properties typically are."""
+        driver calls (and redundant re-validation of a value already known
+        good) when the same value is set every frame - as material
+        properties typically are, and - more heavily - as most of a text
+        draw's uniforms are across every glyph of a string (see graphics/
+        text/text.py's draw_text(): window_size/atlas/text_color/px_range
+        are set once, outside its per-glyph loop, but every glyph still
+        re-sets `rect`/`uv_rect`, and used to pay this same validation cost
+        for those even though *they* do change every glyph - the cache
+        check moving first only ever removes work, never adds any).
+
+        The equality check itself runs before validation, not after - a
+        value that's already cached must have passed validation the first
+        time it was set, so skipping validation on a repeat of that exact
+        value can't let anything invalid slip through uncaught.
+
+        Texture/TextureStack uniforms are the one exception, deliberately
+        excluded from this short-circuit even when `val` is the identical
+        object already cached: they're live GPU resources whose *contents*
+        can change without their Python identity changing (a render
+        target, say), so "the same Texture object" doesn't mean "still
+        safe to skip" the way it does for a plain value - see
+        _bind_textures(), which always re-binds every sampler uniform
+        every call for exactly this reason (its own cost is bounded by the
+        texture manager's *own* per-frame slot cache, not this one)."""
         if name not in self.uniforms:
             fb_error(f"Uniform '{name}' not found in shader")
             return
 
-        if not self.check_val_type(val, self.uniforms[name].type, name):
-            return
-
+        uniform = self.uniforms[name]
         cached_val = self.uniform_cache[name]
 
         if not isinstance(val, (Texture, TextureStack)):
@@ -304,9 +340,10 @@ class GL44Shader(Shader):
                 if np.array_equal(val, cached_val):
                     return
 
-        self.uniform_cache[name] = val
+        if not self.check_val_type(val, uniform.type, name):
+            return
 
-        uniform = self.get_uniform(name)
+        self.uniform_cache[name] = val
 
         glUseProgram(self._shader)
         set_gl_uniform(uniform.location, uniform.type, val)
@@ -334,7 +371,15 @@ class GL44Shader(Shader):
         return self.uniforms[name]
     def _bind_textures(self):
         texture_manager = get_service('renderer').texture_manager
-        for name, uniform in self.uniforms.items():
+        # Iterates self._sampler_uniforms (precomputed once in
+        # setup_uniforms()), not self.uniforms.items() - see that list's
+        # own comment for why: this runs on every single use() call
+        # (constantly, for text - one draw call per glyph), and a shader
+        # with mostly non-sampler uniforms was paying a type check on
+        # every one of them just to find the (often single) sampler each
+        # time.
+        for name in self._sampler_uniforms:
+            uniform = self.uniforms[name]
             if uniform.type == GL_SAMPLER_2D:
                 if uniform.size == 1:
                     texture = self.uniform_cache[name]

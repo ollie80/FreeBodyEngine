@@ -1,0 +1,20 @@
+@input
+vertex: vec3
+uvs: vec2
+normal: vec3
+
+@output
+uv: vec2
+
+# Deliberately not element.fbvert's per-element pipeline (screen_rect math,
+# image_uv's legacy 180-degree flip for textures loaded through the normal
+# image path) - this always draws one fixed NDC-spanning quad
+# (generate_quad(2.0, 2.0), see UIRenderer._composite_quad), so there's no
+# per-element rect/window_size to convert from, and the texture it samples
+# (the offscreen UI layer, ui/renderer.py's _ui_framebuffer) was rendered
+# straight into via the same NDC convention as everything else in this
+# engine, never through the image-loading path element.fbvert's `image_uv`
+# is tuned for - see UIRenderer._composite_ui_layer's own docstring.
+def main() -> void:
+    VERTEX_POSITION = vec4(vertex.x, vertex.y, 0.0, 1.0)
+    uv = uvs

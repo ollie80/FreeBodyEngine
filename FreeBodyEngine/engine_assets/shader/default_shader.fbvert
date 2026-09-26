@@ -3,6 +3,7 @@ view: mat4
 proj: mat4
 tex: texture
 model: mat4
+zOffset: float
 
 @input
 vertex: vec3
@@ -23,5 +24,16 @@ def main():
     world_normal: vec4 = model * vec4(normal.x, normal.y, normal.z, 0.0)
     worldNormal = vec4(world_normal.x, world_normal.y, world_normal.z, 1.0)
 
-    VERTEX_POSITION = proj * view * world
+    # zOffset nudges depth *after* projection (scaled by clip.w, so it
+    # still lands at the right spot post-divide) rather than by giving
+    # `world` a real Z and letting it flow through proj - proj's Z row
+    # feeds into the W row too (needed for perspective proj elsewhere in
+    # this engine), so even a tiny world-space Z perturbs clip.w and
+    # therefore every other post-divide coordinate (x, y included) - see
+    # Renderer._draw_call()'s z-offset handling, which is the only
+    # producer of a nonzero world.z for a 2D sprite (Transform2D itself
+    # has no Z - see math.py) and depends on this staying purely a
+    # depth-buffer nudge with zero effect on screen position/size.
+    clip: vec4 = proj * view * world
+    VERTEX_POSITION = vec4(clip.x, clip.y, clip.z + (zOffset * clip.w), clip.w)
     #VERTEX_POSITION = vec4(uvs.x, uvs.y, 0.5, 1.0)

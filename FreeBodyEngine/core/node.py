@@ -28,7 +28,7 @@ class GenericNode:
         """Removes the children with the given ids."""
         for id in ids:
             if id in self.children.keys():
-                del self.children[ids]
+                del self.children[id]
 
     def add(self, *nodes: 'Node'):
         """

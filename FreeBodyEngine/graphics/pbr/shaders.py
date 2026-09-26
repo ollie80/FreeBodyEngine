@@ -189,6 +189,7 @@ _LIGHT_UNIFORM_BLOCK = f"""
 
 Ambient: vec3
 ViewPos: vec3
+Unlit: bool
 
 ShadowEnabled: bool
 ShadowMap: texture
@@ -244,6 +245,9 @@ def main() -> void:
         roughness: float = clamp(sample(gRoughness, uv).x, 0.04, 1.0)
         metallic: float = sample(gMetallic, uv).x
 
-        lit: vec3 = accumulate_lighting(world_pos, normal, ViewPos, albedo, roughness, metallic, emissive, Ambient)
-        result = vec4(lit.x, lit.y, lit.z, albedo4.w)
+        if Unlit == True:
+            result = vec4(albedo.x + emissive.x, albedo.y + emissive.y, albedo.z + emissive.z, albedo4.w)
+        else:
+            lit: vec3 = accumulate_lighting(world_pos, normal, ViewPos, albedo, roughness, metallic, emissive, Ambient)
+            result = vec4(lit.x, lit.y, lit.z, albedo4.w)
 """

@@ -7,6 +7,7 @@ import glob
 import tomllib
 
 from FreeBodyEngine.build.builder import build
+from FreeBodyEngine.build.progress import ProgressBar
 
 def main(path='./'):
     """CLI entry point for `fb run`: builds the project fresh (`build(path, True)`), then launches its main file in a subprocess with `--dev`/`--path=`/`--name=` plus every original CLI argument forwarded, so the launched process sees the same flags this one was invoked with. Swallows Ctrl+C so interrupting the dev run doesn't surface as a traceback.
@@ -124,6 +125,24 @@ def _android_package_id(build_config):
     package_name = "".join(c if c.isalnum() else "_" for c in build_config["name"].lower())
     return f"dev.freebody.{package_name}"
 
+def _run_quiet(progress: ProgressBar, cmd: list[str], cwd: str | None = None):
+    """Runs a subprocess with its output captured rather than streamed to
+    the terminal, so the progress bar's single line stays clean instead of
+    being interleaved with buildozer's/adb's own verbose logging - same
+    contract as Builder._run_quiet (that one isn't reusable here as-is,
+    being a method tied to a Builder instance's own self.progress, not a
+    free function). On failure the captured output is printed in full -
+    errors are never silently swallowed, only the noisy success-path
+    output is."""
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        progress.fail(f"command exited with code {result.returncode}: {' '.join(cmd)}")
+        if result.stdout:
+            print(result.stdout)
+        if result.stderr:
+            print(result.stderr)
+    return result
+
 def _run_android(path):
     """`fb run --android`'s entry point: builds the Android dev project
     (see Builder.build_for_dev_android()), runs `buildozer android debug`
@@ -132,9 +151,19 @@ def _run_android(path):
     developer options/USB debugging enabled, or a paired wireless
     connection - either way, this is just `adb`'s own device selection,
     nothing android-specific to this engine), launches it via its
-    bootstrap Activity, and streams `adb logcat` to this terminal until
-    Ctrl+C - no interaction with the phone itself needed beyond the
-    one-time developer-options/USB-debugging setup.
+    bootstrap Activity, and streams the *app's own* logcat output (not the
+    whole device's) to this terminal until Ctrl+C - no interaction with
+    the phone itself needed beyond the one-time developer-options/USB-
+    debugging setup.
+
+    Every step through "launch" uses the same build-pipeline ProgressBar
+    (see build/progress.py) the rest of `fb build`/`fb run` already uses,
+    with buildozer's/adb's own noisy stdout captured rather than streamed
+    (see _run_quiet) - so this reads as one consistent build/run
+    experience instead of switching to a wall of raw subprocess output
+    partway through. Only the *app's* logs (once it's actually running on
+    the device) are meant to be seen in full - see the logcat step below
+    for why that's a `python`-tag filter, not "no logs at all".
 
     Requires `buildozer` (installed via this project's own
     `pip install buildozer cython`) and `adb` (a system package - e.g.
@@ -144,6 +173,7 @@ def _run_android(path):
     build(path, True)
 
     android_dir = os.path.abspath(os.path.join(path, "dev", "android"))
+    progress = ProgressBar()
 
     buildozer = _find_tool("buildozer")
     if buildozer is None:
@@ -155,11 +185,16 @@ def _run_android(path):
         print("Could not find 'adb'. Install it with your system package manager, e.g. 'pacman -S android-tools' on Arch.")
         return
 
-    print("Building Android debug APK (this can take a long time on the first run while buildozer downloads the SDK/NDK)...")
-    result = subprocess.run([buildozer, "-v", "android", "debug"], cwd=android_dir)
+    # Indeterminate (total=None) - like PyInstaller packaging elsewhere in
+    # this pipeline, buildozer's own internal stages (SDK/NDK download,
+    # p4a recipe builds, gradle) aren't reliably parseable into a real
+    # completion fraction, so a spinner is the honest signal here, not a
+    # fake percentage.
+    progress.stage("Building Android debug APK (buildozer) - this can take a long time on the first run while it downloads the SDK/NDK")
+    result = _run_quiet(progress, [buildozer, "-v", "android", "debug"], cwd=android_dir)
     if result.returncode != 0:
-        print("buildozer build failed - see its output above.")
         return
+    progress.done("Built Android debug APK")
 
     apks = glob.glob(os.path.join(android_dir, "bin", "*.apk"))
     if not apks:
@@ -178,15 +213,29 @@ def _run_android(path):
     package_id = _android_package_id(build_config)
     activity = f"{package_id}/org.kivy.android.PythonActivity"
 
-    print(f"Installing {os.path.basename(apk_path)}...")
-    subprocess.run([adb, "install", "-r", apk_path])
+    progress.stage(f"Installing {os.path.basename(apk_path)}")
+    result = _run_quiet(progress, [adb, "install", "-r", apk_path])
+    if result.returncode != 0:
+        return
+    progress.done(f"Installed {os.path.basename(apk_path)}")
 
-    print(f"Launching {activity}...")
-    subprocess.run([adb, "shell", "am", "start", "-n", activity])
+    progress.stage(f"Launching {activity}")
+    result = _run_quiet(progress, [adb, "shell", "am", "start", "-n", activity])
+    if result.returncode != 0:
+        return
+    progress.done(f"Launched {activity}")
 
+    # p4a's sdl2 bootstrap redirects the running app's stdout/stderr (i.e.
+    # every fb.log()/warning()/error() call - see core/logger.py) into
+    # logcat under the fixed tag "python", same as every p4a app - not
+    # specific to this engine. `-s python:*` (silence every other tag,
+    # then show all priorities for that one) is what actually gets "just
+    # this app's logs" instead of the whole device's - every other
+    # process/system service/kernel line that unfiltered `adb logcat`
+    # would otherwise interleave this with.
     subprocess.run([adb, "logcat", "-c"])
-    print("Streaming logcat - press Ctrl+C to stop (the app keeps running on the device).")
-    logcat = subprocess.Popen([adb, "logcat"])
+    print("Streaming app logs - press Ctrl+C to stop (the app keeps running on the device).")
+    logcat = subprocess.Popen([adb, "logcat", "-s", "python:*"])
     try:
         logcat.wait()
     except KeyboardInterrupt:

@@ -37,6 +37,18 @@ class Call:
     transform: 'Transform'
     material: 'Material'
     camera: 'Camera'
+    # A post-projection depth nudge sent to the shader as its own
+    # `zOffset` uniform (see _draw_call() and default_shader.fbvert/
+    # default_forward.fbvert) rather than folded into `transform.model` as
+    # a world-space Z translation - proj's Z row also feeds clip.w (needed
+    # for perspective elsewhere in this engine), so a world-space Z would
+    # perturb w and, after the perspective divide, every coordinate
+    # (position/scale, not just depth) instead of just the depth-buffer
+    # comparison. Not a field on Transform itself (2D Transforms are
+    # deliberately Z-less, see math.py) - comes from Sprite.z (see
+    # graphics/sprite.py) via Renderer.submit()'s `z` param, a per-sprite
+    # rendering concern, not a general node property.
+    z: float = 0.0
 
     @property
     def blend_mode(self) -> BlendMode:
@@ -50,7 +62,7 @@ class Call:
         cam_pos = self.camera.world_transform.position
         dx = pos.x - cam_pos.x
         dy = pos.y - cam_pos.y
-        dz = getattr(pos, 'z', 0.0) - getattr(cam_pos, 'z', 0.0)
+        dz = (getattr(pos, 'z', 0.0) + self.z) - getattr(cam_pos, 'z', 0.0)
         return dx * dx + dy * dy + dz * dz
 
 class Renderer(Service):
@@ -65,7 +77,29 @@ class Renderer(Service):
         super().__init__('renderer')
         self.texture_manager = TextureManager()
         self.calls: list[Call] = []
-        self._current_blend_mode: BlendMode = BlendMode.OPAQUE
+        # Deliberately not BlendMode.OPAQUE: a Framebuffer created with
+        # transparent=True (see GLFramebuffer.__init__) calls glEnable(
+        # GL_BLEND) directly, bypassing set_blend_mode() entirely - so the
+        # real GL state right after that is "blend enabled" while this
+        # cache would otherwise claim "OPAQUE" (blend disabled) from the
+        # very start. Since set_blend_mode() skips its actual glEnable/
+        # glDisable call whenever the requested mode already matches this
+        # cache, that mismatch meant the first-ever set_blend_mode(OPAQUE)
+        # call (flush_opaque() sends one unconditionally, every frame)
+        # silently never disabled blending for real, for the entire
+        # lifetime of a project with zero BlendMode.TRANSPARENT draws -
+        # GL_BLEND just stayed on by accident. That's how DungeonCrawler's
+        # UI/text (see ui/renderer.py, graphics/text/text.py - neither
+        # manages blend state itself, both rely on inheriting it) rendered
+        # correctly despite nothing ever *intentionally* enabling blend:
+        # introducing the first real transparent draw made set_blend_mode
+        # actually start issuing its GL calls (mode no longer trivially
+        # matched the cache), and the resulting real glDisable(GL_BLEND)
+        # broke that accidental blending UI/text depended on. None here
+        # guarantees the very first set_blend_mode() call - whatever mode
+        # it requests - is never skipped, so the cache starts truthful
+        # instead of just assumed.
+        self._current_blend_mode: BlendMode | None = None
 
 
     def on_initialize(self):
@@ -137,10 +171,12 @@ class Renderer(Service):
         """Updates the backend's viewport/surface to match the new framebuffer `size` (pixels). Called automatically on FRAMEBUFFER_RESIZE - see on_initialize()."""
         pass
 
-    def submit(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera'):
+    def submit(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera', z: float = 0.0):
         """Queues a draw instead of issuing it immediately - see
-        flush_opaque()/flush_transparent()."""
-        self.calls.append(Call(mesh, transform, material, camera))
+        flush_opaque()/flush_transparent(). `z` is a post-projection depth
+        nudge (see Call.z / _draw_call()'s `zOffset` uniform) -
+        PBRPipeline.draw() passes each sprite's own Sprite.z here."""
+        self.calls.append(Call(mesh, transform, material, camera, z))
 
     def flush_opaque(self):
         """Draws and dequeues every OPAQUE/ADDITIVE Call currently queued
@@ -194,12 +230,22 @@ class Renderer(Service):
             self.set_blend_mode(BlendMode.OPAQUE)
 
     def _draw_call(self, call: Call):
-        """Sets `call.material`'s model/view/proj uniforms from
-        `call.transform`/`call.camera` and draws `call.mesh` - the actual
-        per-call work flush() drives once calls are grouped/sorted."""
+        """Sets `call.material`'s model/view/proj/zOffset uniforms from
+        `call.transform`/`call.camera`/`call.z` and draws `call.mesh` - the
+        actual per-call work flush() drives once calls are grouped/sorted.
+
+        `call.z` is sent as its own post-projection `zOffset` uniform (see
+        default_shader.fbvert/default_forward.fbvert) rather than folded
+        into `model` as a world-space Z translation - proj's Z row also
+        feeds clip.w (needed for perspective elsewhere in this engine), so
+        even a tiny world-space Z would perturb w and, after the
+        perspective divide, every coordinate (position and scale included,
+        not just depth). Applying it after projection instead touches only
+        the depth-buffer comparison, which is all a 2D sprite's z is for."""
         call.material.shader['model'] = call.transform.model
         call.material.shader['view'] = call.camera.view_matrix
         call.material.shader['proj'] = call.camera.proj_matrix
+        call.material.shader['zOffset'] = call.z
         self.draw_mesh(call.mesh, call.material)
 
     @abstractmethod
@@ -268,6 +314,33 @@ class Renderer(Service):
         """Disables GL_DEPTH_TEST (GL33Renderer/GL44Renderer). UIRenderer
         calls this before drawing every frame - see its own comment for
         why a 2D UI overlay can't share the 3D pipeline's depth-test state."""
+        pass
+
+    def get_active_framebuffer(self):
+        """Returns an opaque handle for whatever framebuffer is currently
+        bound as the draw target, or None if this backend has no such
+        concept - pass it back to bind_active_framebuffer() later to
+        restore it exactly.
+
+        UIRenderer needs this: a project's active graphics pipeline
+        (PBRPipeline's own main_framebuffer, or a fully custom one - see
+        phonon's VisualizerPipeline/FramePresenter, which deliberately
+        leaves its own ping-pong framebuffer bound specifically so
+        UIRenderer/TextRenderer draw into *it*, not the window directly)
+        may leave something other than the window's own framebuffer bound
+        when UIRenderer's own draw() runs. UIRenderer briefly binds its
+        own offscreen layer mid-frame (see its damage-tracking scheme) and
+        has to put back whatever was actually there before - not assume
+        it was the window's default framebuffer - or every UI draw call
+        ends up targeting the wrong surface for any project using a
+        pipeline like that. Concrete no-op default (returns None) so
+        calling this is always safe regardless of backend."""
+        return None
+
+    def bind_active_framebuffer(self, handle):
+        """Rebinds the framebuffer handle previously returned by
+        get_active_framebuffer() - a no-op if `handle` is None, matching
+        that method's own no-op-backend default."""
         pass
 
     def draw_model(self, model: 'Model', transform: 'Transform', camera: 'Camera2D'):

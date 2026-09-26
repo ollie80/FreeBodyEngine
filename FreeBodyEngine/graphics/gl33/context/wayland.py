@@ -138,6 +138,15 @@ def create_wayland_opengl_context(window: 'WaylandWindow', debug):
     if not EGL.eglMakeCurrent(egl_display, egl_surface, egl_surface, egl_context):
         raise RuntimeError("Failed to activate OpenGL context.")
 
+    # 0, not the EGL default of 1 - see the matching comment in
+    # graphics/gl44/context/wayland.py's copy of this same call: without
+    # this, eglSwapBuffers blocks on presentation feedback the compositor
+    # never delivers for a surface that isn't actually being presented
+    # (off-workspace, minimized, occluded), which - since the whole engine
+    # runs as one synchronous update loop - freezes not just rendering but
+    # every service's update() for as long as the surface stays unpresented.
+    EGL.eglSwapInterval(egl_display, 0)
+
     # stash everything the window will need later (swapping, resizing,
     # tearing down) since there's no single handle like `hdc` to carry it on
     window.egl_display = egl_display

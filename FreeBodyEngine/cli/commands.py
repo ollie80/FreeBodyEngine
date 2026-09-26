@@ -2,6 +2,7 @@ from FreeBodyEngine.cli.project import ProjectRegistry
 from FreeBodyEngine.cli.fulcrum import fulcrum_handler
 from FreeBodyEngine.dev.run import main as run_project
 from FreeBodyEngine.cli.cpp import compile_handler
+from FreeBodyEngine.cli.profiler import profile_handler
 from FreeBodyEngine.build.builder import build
 from FreeBodyEngine.font.atlasgen import generate_atlas
 from FreeBodyEngine.cli.cowsay import cowsay
@@ -988,6 +989,7 @@ root_commands = [
     Command(["rm"], rm_handler, help_text="Remove a file or directory."),
     Command(["fulcrum"], fulcrum_handler, help_text='A small text editor.'),
     Command(["compile_scripts", 'cs'], compile_handler, help_text='Compiles CPP scripts.'),
+    Command(["profile", "prof"], profile_handler, help_text="Opens the external performance profiler, attaching to a currently running FreeBodyEngine app's ProfilerServer (GPU/CPU/memory graphs, logs)."),
     Command(["cloc"], cloc_handler, help_text="Counts the lines of code in the current directory or specified project."),
     Command(["cwoc"], cwoc_handler, help_text="Counts the words of code in the current directory or specified project."),
     Command(['traceback', 'tb'], log_traceback_handler, help_text="Print the traceback for a log entry by ID."),

@@ -1,0 +1,65 @@
+name: Tests
+
+# Runs the unit test suite on every push/PR, across every platform the
+# engine ships a window/graphics backend for (see FreeBodyEngine/requirements.py's
+# GLOBAL/WINDOWS/DARWIN/LINUX split, and core/window/__init__.py's platform
+# dispatch) - a bug that only shows up on one OS's backend won't be caught
+# by a single-OS run.
+#
+# `pip install -e .` alone is enough for `import FreeBodyEngine` to work:
+# the engine's package __init__ eagerly imports core/audio/graphics/ui/net,
+# but the platform-specific pieces inside those (window backends, GL
+# context creation, PortAudio) are all selected and imported lazily behind
+# a `sys.platform` dispatch (core/window/__init__.py's get_window_class(),
+# audio/__init__.py) - so a plain import, and anything that doesn't
+# explicitly open a real window/audio stream, needs no display server,
+# GPU, or audio device on the runner.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "FreeBodyEngine/**"
+      - "tests/**"
+      - "setup.py"
+      - "pytest.ini"
+      - "requirements-test.txt"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    paths:
+      - "FreeBodyEngine/**"
+      - "tests/**"
+      - "setup.py"
+      - "pytest.ini"
+      - "requirements-test.txt"
+      - ".github/workflows/tests.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install engine + test dependencies
+        run: |
+          pip install -e .
+          pip install -r requirements-test.txt
+
+      - name: Run tests
+        run: pytest -v

@@ -154,6 +154,13 @@ def create_x11_opengl_context(window: 'X11Window', debug):
         EGL.eglDestroySurface(egl_display, egl_surface)
         raise _egl_error("Failed to activate OpenGL context.")
 
+    # 0, not the EGL default of 1 - see the matching comment on the Wayland
+    # context backend's eglSwapInterval call for why (an app not updating at
+    # all while off the active workspace/occluded, traced to eglSwapBuffers
+    # itself blocking on vsync/presentation feedback the compositor doesn't
+    # deliver for a surface it isn't presenting).
+    EGL.eglSwapInterval(egl_display, 0)
+
     # Keep the same state layout as the Wayland context backend so the generic
     # renderer can treat both contexts uniformly.
     window.egl_display = egl_display

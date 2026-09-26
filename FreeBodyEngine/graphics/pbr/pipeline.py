@@ -54,12 +54,13 @@ from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
 from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
 from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
 from FreeBodyEngine.graphics.debug import Debug2D
+from FreeBodyEngine.graphics.mesh2d import MeshNode2D
 from FreeBodyEngine.graphics.model.model import Model3D
 
 from FreeBodyEngine.math import Transform, Vector3, Vector
 from FreeBodyEngine.core.camera import Camera
 from FreeBodyEngine.graphics.mesh import Mesh, generate_quad
-from FreeBodyEngine.graphics.material import Material
+from FreeBodyEngine.graphics.material import Material, BlendMode
 from fbusl.injector import Injector
 
 import numpy as np
@@ -115,6 +116,16 @@ class PBRPipeline(GraphicsPipeline):
         self.output_channel = 'lit'
 
         self.ambient = Vector3(0.03, 0.03, 0.03)
+        # When True, the composite/forward-transparent shaders skip PBR
+        # lighting entirely and output albedo (+emissive) untouched - for
+        # scenes with no real lights (2D/flat-colored games) that still
+        # want 'lit' (rather than a raw G-buffer channel) as their
+        # `output_channel`, since 'lit' is the only attachment transparent
+        # geometry ever reaches (see module docstring, step 4) - a raw
+        # G-buffer channel like 'albedo' never shows transparent-blended
+        # objects at all, since those are forward-shaded directly onto
+        # 'lit' and never touch the G-buffer.
+        self.unlit = False
 
         files = get_service('files')
         self._composite_shader = self.renderer.load_shader(LIGHTING_COMPOSITE_VERT, LIGHTING_COMPOSITE_FRAG, Injector(), None)
@@ -143,16 +154,18 @@ class PBRPipeline(GraphicsPipeline):
         """Resizes `main_framebuffer` to match the new framebuffer `size`."""
         self.main_framebuffer.resize(size)
 
-    def _collect(self, node, tilemaps, sprites, debugs, models, lights):
+    def _collect(self, node, tilemaps, sprites, debugs, models, lights, meshes):
         """Recursively walks `node`'s subtree once, bucketing every node
-        into whichever of the five lists it belongs to - replaces four
-        separate find_nodes_with_type() tree walks (one per drawable type)
-        the previous implementation did every frame with a single walk that
+        into whichever of the six lists it belongs to - replaces separate
+        find_nodes_with_type() tree walks (one per drawable type) the
+        previous implementation did every frame with a single walk that
         also picks up lights along the way."""
         if node.inherits_from('TilemapRenderer'):
             tilemaps.append(node)
         elif node.inherits_from('Sprite2D'):
             sprites.append(node)
+        elif node.inherits_from('MeshNode2D'):
+            meshes.append(node)
         elif node.inherits_from('Debug2D'):
             debugs.append(node)
         elif node.inherits_from('Model3D'):
@@ -161,7 +174,7 @@ class PBRPipeline(GraphicsPipeline):
             lights.append(node)
 
         for child_id in node.children:
-            self._collect(node.children[child_id], tilemaps, sprites, debugs, models, lights)
+            self._collect(node.children[child_id], tilemaps, sprites, debugs, models, lights, meshes)
 
     def _pick_shadow_light(self, lights: list):
         """Returns the first shadow-casting DirectionalLight3D in `lights`,
@@ -227,14 +240,14 @@ class PBRPipeline(GraphicsPipeline):
 
         return view, proj
 
-    def _render_shadow_map(self, light, view, proj, sprites, debugs, models):
+    def _render_shadow_map(self, light, view, proj, sprites, debugs, models, meshes):
         """Depth-only pass: draws every opaque mesh's shadow-caster
-        geometry (sprites/debug draws/3D model submeshes - tilemaps aren't
-        included, since TilemapRenderer draws itself directly rather than
-        exposing individual meshes) from `light`'s view/projection into
-        `self._shadow_framebuffer`, using the raw mesh.draw() rather than
-        going through a Material (this pass only cares about depth, no
-        material properties are read)."""
+        geometry (sprites/mesh nodes/debug draws/3D model submeshes -
+        tilemaps aren't included, since TilemapRenderer draws itself
+        directly rather than exposing individual meshes) from `light`'s
+        view/projection into `self._shadow_framebuffer`, using the raw
+        mesh.draw() rather than going through a Material (this pass only
+        cares about depth, no material properties are read)."""
         self._shadow_framebuffer.bind()
         self.renderer.clear(Color("#000000FF"))
         self.renderer.enable_depth_testing()
@@ -245,6 +258,10 @@ class PBRPipeline(GraphicsPipeline):
         for sprite in sprites:
             self._shadow_shader['model'] = sprite.world_transform.model
             sprite._sprite.quad.draw()
+
+        for mesh_node in meshes:
+            self._shadow_shader['model'] = mesh_node.world_transform.model
+            mesh_node.mesh.draw()
 
         for debug in debugs:
             self._shadow_shader['model'] = debug.world_transform.model
@@ -305,6 +322,7 @@ class PBRPipeline(GraphicsPipeline):
 
         shader['Ambient'] = self.ambient
         shader['ViewPos'] = view_pos
+        shader['Unlit'] = self.unlit
 
         if shadow_light is not None:
             shader['ShadowEnabled'] = True
@@ -388,14 +406,14 @@ class PBRPipeline(GraphicsPipeline):
         self.renderer.enable_depth_testing()
         self.main_framebuffer.set_draw_buffers(self._gbuffer_attachments)
 
-        tilemaps, sprites, debugs, models, lights = [], [], [], [], []
-        self._collect(camera.scene.root, tilemaps, sprites, debugs, models, lights)
+        tilemaps, sprites, debugs, models, lights, meshes = [], [], [], [], [], []
+        self._collect(camera.scene.root, tilemaps, sprites, debugs, models, lights, meshes)
 
         shadow_light = self._pick_shadow_light(lights)
         shadow_view = shadow_proj = None
         if shadow_light is not None:
             shadow_view, shadow_proj = self._shadow_matrices(shadow_light, camera)
-            self._render_shadow_map(shadow_light, shadow_view, shadow_proj, sprites, debugs, models)
+            self._render_shadow_map(shadow_light, shadow_view, shadow_proj, sprites, debugs, models, meshes)
             self.main_framebuffer.bind()
             self.main_framebuffer.set_draw_buffers(self._gbuffer_attachments)
 
@@ -403,7 +421,10 @@ class PBRPipeline(GraphicsPipeline):
             tilemap.draw(camera)
 
         for sprite in sprites:
-            self.renderer.submit(sprite._sprite.quad, sprite._sprite.material, sprite.world_transform, camera)
+            self.renderer.submit(sprite._sprite.quad, sprite._sprite.material, sprite.world_transform, camera, z=sprite._sprite.z)
+
+        for mesh_node in meshes:
+            self.renderer.submit(mesh_node.mesh, mesh_node.material, mesh_node.world_transform, camera)
 
         for model in models:
             for mesh_name in model._model.meshes:
@@ -451,6 +472,17 @@ class PBRPipeline(GraphicsPipeline):
 
         self.renderer.enable_depth_testing()
         self.renderer.flush_transparent()
+        # flush_transparent() leaves the renderer's blend state at
+        # BlendMode.TRANSPARENT (GL_BLEND on, glDepthMask(GL_FALSE) - see
+        # GL33Renderer.set_blend_mode()) whenever anything transparent was
+        # actually drawn this frame, and nothing else resets it before
+        # the present blit below or before whatever draws after this
+        # pipeline runs (e.g. UI/text - see graphics/text/text.py,
+        # ui/renderer.py - neither of which sets blend state itself, so
+        # both silently inherited whatever this pipeline left behind).
+        # Resetting to OPAQUE here is a no-op when nothing transparent was
+        # drawn (set_blend_mode() already skips redundant GL calls).
+        self.renderer.set_blend_mode(BlendMode.OPAQUE)
         self.renderer.disable_depth_testing()
 
         self.main_framebuffer.unbind()

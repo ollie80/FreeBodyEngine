@@ -18,5 +18,8 @@ from FreeBodyEngine.core.collider import Collider2D, CollisionShape, CircleColli
 from FreeBodyEngine.core import physics
 from FreeBodyEngine.core import dev
 from FreeBodyEngine.core import event
+from FreeBodyEngine.core import profiler
+from FreeBodyEngine.core import perf_profiler
+from FreeBodyEngine.core import profiler_server
 
-__all__ = ["files", "state", "main", "event", "dev", "camera", 'window', "tilemap", "time", "collider", "Collider2D", "CircleCollisionShape", "RectangleCollisionShape", "CollisionShape", "scene", "input", "timer", "node", "physics", "logger"]
+__all__ = ["files", "state", "main", "event", "dev", "camera", 'window', "tilemap", "time", "collider", "Collider2D", "CircleCollisionShape", "RectangleCollisionShape", "CollisionShape", "scene", "input", "timer", "node", "physics", "logger", "profiler", "perf_profiler", "profiler_server"]

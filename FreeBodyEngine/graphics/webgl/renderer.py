@@ -175,6 +175,15 @@ class WebGL2Renderer(Renderer):
     def clear_scissor(self):
         self.gl.disable(self.gl.SCISSOR_TEST)
 
+    def get_active_framebuffer(self):
+        """See Renderer.get_active_framebuffer()."""
+        return self.gl.getParameter(self.gl.FRAMEBUFFER_BINDING)
+
+    def bind_active_framebuffer(self, handle):
+        """See Renderer.bind_active_framebuffer()."""
+        if handle is not None:
+            self.gl.bindFramebuffer(self.gl.FRAMEBUFFER, handle)
+
     def draw_line(self, start: tuple[float, float], end: tuple[float, float], width, color: 'Color'):
         """Not yet implemented - GLES/WebGL2 also don't support
         `gl.lineWidth()` beyond 1px on most implementations (unlike

@@ -15,10 +15,21 @@ class Sprite:
     """A drawable unit combining a texture, material, and generated quad
     mesh, independent of the node tree - Sprite2D/Sprite3D each wrap one to
     give it a scene position via a Transform."""
-    def __init__(self, texture: 'Texture', material: 'Material', renderer: 'Renderer', visisble: bool = True, z=0):
+    def __init__(self, texture: 'Texture', material: 'Material', renderer: 'Renderer', visisble: bool = True, z: float = 0):
         """Stores `texture`/`material`/`renderer`, assigns `texture` onto
         the material's `albedo` property, and generates the flat quad mesh
-        this sprite is drawn with."""
+        this sprite is drawn with. `z` is a world-space depth nudge applied
+        on top of this sprite's own (Z-less - see math.py's Transform)
+        position/rotation/scale - see Renderer._z_offset_matrix() - so two
+        sprites positioned identically in 2D can still resolve the depth
+        test predictably (e.g. one drawn on top of the other) instead of
+        tying at an identical depth. Matters most for a transparent-blend
+        sprite: it's forward-shaded in a pass that runs after every opaque
+        draw's depth is already committed (see PBRPipeline's module
+        docstring), so without a `z` nudge it always ties - and loses,
+        GL_LESS never passes on equal depth - against any opaque geometry
+        already sitting at the same depth underneath it (e.g. a floor
+        tile), rendering as invisible no matter what order it was drawn in."""
         self.renderer = renderer
         self.z = z
 

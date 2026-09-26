@@ -16,7 +16,7 @@ def register_default_services():
     fb.register_service(fb.graphics.pbr.pipeline.PBRPipeline())
 
     if fb.core.files.path_exists('actions.toml'):
-        action_source = fb.core.files.load_toml('actions.toml')
+        action_source = fb.core.files.load_file('actions.toml')
     else:
         action_source = {}
 
@@ -31,6 +31,9 @@ if __name__ == "__main__":
         if arg == ("--headless") or arg == "-H":
             fb.set_flag(fb.HEADLESS, True)
             fb.core.logger.print_colored("Headless mode set to true.", color="green")
+
+        if arg == '--terminal':
+            fb.set_flag(fb.TERMINAL_WINDOW, True)
 
         if arg == ("--dev"):
             fb.set_flag(fb.DEVMODE, True)
@@ -48,7 +51,6 @@ if __name__ == "__main__":
     main = fb.init()
 
     register_default_services()    
-    
 
     scene = fb.core.scene.Scene('game')
     fb.add_scene(scene)

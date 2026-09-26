@@ -1,10 +1,23 @@
 from FreeBodyEngine.core.service import Service
-from FreeBodyEngine.ui.element import RootElement, UIElement, GenericElement, ElementStates
+# Used for type annotations throughout this file only - always the pure-
+# Python classes, regardless of which backend is actually active. See
+# __init__'s own lazy `from FreeBodyEngine.ui import RootElement,
+# UIElement` (stored as self._RootElement/self._UIElement) for the real,
+# flag-resolved classes this module actually constructs/isinstance-checks
+# at runtime: a plain top-level import of those here would resolve too
+# early, since this module loads as a side effect of `import
+# FreeBodyEngine` itself (via ui/__init__.py's own eager `from
+# FreeBodyEngine.ui.manager import UIManager`), before any project gets a
+# chance to call fb.set_flag(fb.NATIVE_UI, ...). ElementStates has no such
+# problem - it's a plain enum, identical and shared across both backends,
+# not something the flag chooses between.
+from FreeBodyEngine.ui.element import RootElement, UIElement, ElementStates
 from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine import register_event_callback, unregister_event_callback, register_service_update, unregister_service_update, get_service
 from FreeBodyEngine.core.window import FRAMEBUFFER_RESIZE
 from FreeBodyEngine.core.input import Key, KEY_PRESS, KEY_REPEAT
 from FreeBodyEngine.math import Vector
+from FreeBodyEngine.utils import get_platform
 
 LEFT_MOUSE_BUTTON = 0
 
@@ -51,8 +64,18 @@ class UIManager(Service):
         """
         super().__init__('ui')
 
+        # The real, flag-resolved classes (see this file's top-level
+        # import comment for why they can't just be module-level names
+        # here) - resolved once, now, rather than at manager.py's own
+        # import time, since UIManager is always constructed well after a
+        # project has had its chance to call fb.set_flag(fb.NATIVE_UI,
+        # ...). Cached on self for _find_scroll_target's isinstance check.
+        from FreeBodyEngine.ui import RootElement as _RootElement, UIElement as _UIElement
+        self._RootElement = _RootElement
+        self._UIElement = _UIElement
+
         win_size = get_service('window').framebuffer_size
-        self.root = RootElement(win_size[0], win_size[1], styles)
+        self.root = self._RootElement(win_size[0], win_size[1], styles)
 
         self._hovered: UIElement = None
         self._pressed: UIElement = None
@@ -67,6 +90,37 @@ class UIManager(Service):
         self._dragging_thumb: UIElement = None
         self._drag_start_pos: float = 0.0
         self._drag_start_offset: float = 0.0
+
+        # Touch-drag-to-scroll state, Android only (see _handle_mouse()'s
+        # own comment on why: touches arrive as synthesized mouse events -
+        # see AndroidWindow.update()'s own docstring - so a finger dragging
+        # across a scrollable list looks, from here, exactly like a mouse
+        # button held down and moved, with no separate touch code path
+        # needed. Desktop/web deliberately don't get this: a mouse-drag
+        # across ordinary content there means text selection (or nothing),
+        # never "scroll the list", the way a touchscreen drag always does.
+        # Set at press time, on whatever element was actually under the
+        # finger - target *resolution* (which scrollable ancestor, if any,
+        # this gesture ends up scrolling) is deliberately deferred until
+        # the drag direction is actually known (see _handle_mouse()'s own
+        # comment on why: unlike a wheel event, a touch press carries no
+        # delta at all - "which way is this swipe going" isn't answerable
+        # until the finger has actually moved).
+        self._touch_scroll_hit: UIElement = None
+        self._touch_scroll_press_point: Vector = None
+        self._touch_scroll_target: UIElement = None
+        self._touch_scroll_axis_start: float = 0.0
+        self._touch_scroll_start_offset: float = 0.0
+        # Set the moment Mouse.get_dragging() first reports true for the
+        # current press (i.e. real movement past the backend's own drag
+        # threshold, not just a finger-down) - distinguishes an actual
+        # scroll flick from a plain tap so release/click below can
+        # suppress the tap's own click when this gesture turned out to be
+        # a scroll instead (matching a real touchscreen: a swipe never
+        # also activates whatever was under the finger where it landed).
+        # Also the same moment _touch_scroll_target actually gets resolved
+        # - see the comment above.
+        self._touch_scroll_engaged: bool = False
 
         # Last shape passed to Mouse.set_cursor() - tracked so _handle_mouse
         # only calls it on an actual change, not every single frame.
@@ -89,9 +143,19 @@ class UIManager(Service):
         unregister_event_callback(KEY_REPEAT, self._on_key)
 
     def resize(self, size: tuple[int, int]):
-        """Resizes the root layout area to match the new framebuffer size."""
-        self.root.layout.width = size[0]
-        self.root.layout.height = size[1]
+        """Resizes the root layout area to match the new framebuffer size.
+
+        Writes through self.root.width/height (a real property with a
+        setter on both backends - see RootElement.width/height in
+        ui/element.py, and the plain attributes on the native one) rather
+        than through self.root.layout.width/height: the native
+        RootElement's `.layout` is a read-only property reconstructed
+        fresh on each read (see ui/native_element.py), kept only for
+        UIRenderer's own `element._layout.x/.../.height` reads - a write
+        through it would silently mutate a throwaway object and have no
+        effect."""
+        self.root.width = size[0]
+        self.root.height = size[1]
 
 
     def add(self, element: UIElement):
@@ -138,14 +202,38 @@ class UIManager(Service):
 
         return None
 
-    def _find_scroll_target(self, element: UIElement) -> UIElement:
+    def _find_scroll_target(self, element: UIElement, delta: Vector = None) -> UIElement:
         """Walks up from `element` (inclusive) to the nearest ancestor whose
-        overflow is "scroll" or "auto", or None if there isn't one."""
+        overflow is "scroll" or "auto", or None if there isn't one.
+
+        When `delta` is given (the mouse-wheel case), a candidate ancestor
+        is only returned if it can actually consume that delta - its own
+        scroll axis (its "layout" direction) has a nonzero component in
+        `delta`, and it has real overflow to scroll (_scroll_max > 0).
+        Otherwise the walk keeps going past it. Without this, a
+        horizontally-scrolling row (e.g. a card carousel) nested inside a
+        vertically-scrolling page would be picked as the target for a
+        plain vertical wheel scroll just for being the nearest overflow
+        ancestor, silently swallowing the scroll (amount ends up 0) instead
+        of letting it reach the page's own vertical scroll further up."""
         node = element
-        while isinstance(node, UIElement):
+        while isinstance(node, self._UIElement):
             if node.get_overflow() in ("scroll", "auto"):
-                return node
-            node = node.parent if isinstance(node.parent, GenericElement) else None
+                if delta is None:
+                    return node
+                layout_dir = node.get_current_styles().get("layout", "vertical")
+                wants = delta.y if layout_dir == "vertical" else delta.x
+                if wants != 0 and node._scroll_max > 0:
+                    return node
+            # `.parent` is None at the root on both backends (a plain
+            # attribute set only by _initialize() in the pure-Python
+            # implementation - never touched for the RootElement itself -
+            # and a get_parent() property backed by a real, always-safe
+            # accessor in the native one) - once `node` becomes the root,
+            # the `isinstance(node, self._UIElement)` check above already
+            # stops the loop before this line would ever need to read
+            # RootElement.parent, on either backend.
+            node = node.parent
         return None
 
     def _set_focus(self, element: UIElement):
@@ -203,7 +291,7 @@ class UIManager(Service):
             shape = "default"
         elif hit.get_current_styles().get("editable", False):
             shape = "text"
-        elif hit._event_callbacks.get("click"):
+        elif hit.has_event("click"):
             shape = "pointer"
         else:
             shape = "default"
@@ -234,6 +322,19 @@ class UIManager(Service):
                     self._dragging_thumb = hit
                     self._drag_start_pos = point.y if owner._scroll_dir == "vertical" else point.x
                     self._drag_start_offset = owner._scroll_offset
+                elif get_platform() == "android":
+                    # Deliberately doesn't resolve _touch_scroll_target
+                    # here - see __init__'s own comment on why (the drag
+                    # direction, needed for the same axis-matching
+                    # _find_scroll_target() does for wheel-scroll, isn't
+                    # knowable yet from a bare press). Just remembers
+                    # where the finger landed; the touch-drag block below
+                    # resolves the real target once real movement (and so
+                    # a real direction) actually exists.
+                    self._touch_scroll_hit = hit
+                    self._touch_scroll_press_point = point
+                    self._touch_scroll_target = None
+                    self._touch_scroll_engaged = False
             else:
                 self._set_focus(None)
 
@@ -265,13 +366,75 @@ class UIManager(Service):
                 self._dragging_thumb = None
 
         #
+        # Touch-drag scroll (Android only - see __init__'s own comment on
+        # this state for why). Content follows the finger 1:1, same sign
+        # convention as every real touchscreen: dragging up (a smaller y)
+        # reveals content further down, i.e. *increases* scroll_offset -
+        # the opposite sign from the scrollbar-thumb drag above, which
+        # moves the thumb (and so the content) the same direction the
+        # mouse moves.
+        #
+        if self._touch_scroll_hit is not None:
+            if mouse.get_down(LEFT_MOUSE_BUTTON):
+                if not self._touch_scroll_engaged and mouse.get_dragging(LEFT_MOUSE_BUTTON):
+                    self._touch_scroll_engaged = True
+
+                    # Only now - the first frame with real movement - is a
+                    # drag direction actually known, so only now can the
+                    # real target be resolved: the same axis-aware walk
+                    # _find_scroll_target() already does for wheel-scroll
+                    # (see its own docstring), just fed this gesture's
+                    # overall direction since the press instead of one
+                    # wheel event's delta. The dominant axis is used, with
+                    # the other explicitly zeroed - unlike a mouse wheel's
+                    # delta (essentially always purely one axis), a
+                    # finger's raw path almost never is (ordinary hand
+                    # wobble), so passing the raw, un-zeroed total delta
+                    # through would let a mostly-vertical swipe's few
+                    # stray horizontal pixels satisfy a horizontal
+                    # scroller's own "wants != 0" check too - precisely
+                    # the bug this whole rework fixes: touching a
+                    # horizontal card row and swiping vertically used to
+                    # lock the gesture onto that row (the nearest
+                    # scrollable ancestor, picked at press time before any
+                    # direction existed to check against at all) instead
+                    # of ever reaching the page's own vertical scroll.
+                    total_dx = point.x - self._touch_scroll_press_point.x
+                    total_dy = point.y - self._touch_scroll_press_point.y
+                    gesture_delta = Vector(total_dx, 0) if abs(total_dx) > abs(total_dy) else Vector(0, total_dy)
+
+                    target = self._find_scroll_target(self._touch_scroll_hit, gesture_delta)
+                    if target is not None:
+                        vertical = target.get_current_styles().get("layout", "vertical") == "vertical"
+                        self._touch_scroll_target = target
+                        self._touch_scroll_axis_start = point.y if vertical else point.x
+                        self._touch_scroll_start_offset = target._scroll_offset
+
+                if self._touch_scroll_target is not None:
+                    target = self._touch_scroll_target
+                    vertical = target.get_current_styles().get("layout", "vertical") == "vertical"
+                    current_pos = point.y if vertical else point.x
+                    axis_delta = current_pos - self._touch_scroll_axis_start
+                    target._scroll_offset = max(
+                        0.0, min(self._touch_scroll_start_offset - axis_delta, target._scroll_max)
+                    )
+            else:
+                self._touch_scroll_hit = None
+                self._touch_scroll_target = None
+
+        #
         # Release / click.
         #
         if mouse.get_released(LEFT_MOUSE_BUTTON):
             if self._pressed is not None:
                 self._pressed._emit("release")
 
-                if self._pressed is hit:
+                # A touch-scroll that actually engaged (real movement past
+                # the drag threshold, not just a finger landing then
+                # lifting) never also activates whatever was under the
+                # finger - matching every real touchscreen, where a swipe
+                # across a button doesn't also "press" it.
+                if self._pressed is hit and not self._touch_scroll_engaged:
                     self._pressed._emit("click")
 
                 if self._pressed is self._focused:
@@ -282,13 +445,14 @@ class UIManager(Service):
                     self._pressed.set_state(ElementStates.NORMAL)
 
                 self._pressed = None
+                self._touch_scroll_engaged = False
 
         #
         # Scroll.
         #
         scroll_delta = mouse.get_scroll_delta()
         if hit is not None and (scroll_delta.x != 0 or scroll_delta.y != 0):
-            target = self._find_scroll_target(hit)
+            target = self._find_scroll_target(hit, scroll_delta)
             if target is not None:
                 layout_dir = target.get_current_styles().get("layout", "vertical")
                 amount = scroll_delta.y if layout_dir == "vertical" else scroll_delta.x

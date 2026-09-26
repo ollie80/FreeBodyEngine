@@ -1,28 +1,24 @@
 @input
 vertex: vec3
-normal: vec3
 uvs: vec2
-
-@uniform
-rect: vec4
-window_size: vec2
-uv_rect: vec4
+normal: vec3
+vertex_color: vec4
+vertex_px_range: float
 
 @output
 uv: vec2
+frag_color: vec4
+frag_px_range: float
 
+# vertex_color/vertex_px_range are per-vertex now (baked in by
+# TextRenderer.queue_text(), 4 identical copies per glyph quad) instead of
+# the old text_color/px_range uniforms - see TextRenderer's own module
+# docstring: this is what lets many different strings, in different
+# colors/sizes, batch into one shared draw call instead of one per string,
+# as long as they share the same font atlas texture (the one thing that
+# genuinely can't vary within a single draw call).
 def main() -> void:
-    screen_rect: vec4 = vec4(rect.x / window_size.x * 2.0 - 1.0, 1.0 - rect.y / window_size.y * 2.0, rect.z / window_size.x * 2.0, rect.w / window_size.y * 2.0)
-
-    if VERTEX_INDEX == 0:
-        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y, 0.0, 1.0)
-        uv = vec2(uv_rect.x, uv_rect.y)
-    elif VERTEX_INDEX == 1:
-        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y, 0.0, 1.0)
-        uv = vec2(uv_rect.x + uv_rect.z, uv_rect.y)
-    elif VERTEX_INDEX == 2:
-        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y - screen_rect.w, 0.0, 1.0)
-        uv = vec2(uv_rect.x, uv_rect.y + uv_rect.w)
-    else:
-        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y - screen_rect.w, 0.0, 1.0)
-        uv = vec2(uv_rect.x + uv_rect.z, uv_rect.y + uv_rect.w)
+    VERTEX_POSITION = vec4(vertex.x, vertex.y, 0.0, 1.0)
+    uv = uvs
+    frag_color = vertex_color
+    frag_px_range = vertex_px_range

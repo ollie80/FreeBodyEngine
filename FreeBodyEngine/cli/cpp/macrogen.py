@@ -269,7 +269,17 @@ class CppBindingGenerator:
         lines = [f'void {function_name}(pybind11::module_& m) {{']
 
         for cls in self.classes:
-            lines.append(f'    py::class_<{cls.name}>(m, "{cls.name}")')
+            # Every bound class gets a std::shared_ptr<T> holder, not
+            # pybind11's default std::unique_ptr<T> - so a bound method
+            # can accept/return std::shared_ptr<T> (e.g. a tree node
+            # storing its children as shared_ptr<Node>, the way Node in
+            # ui/native/node.hpp does) and have pybind11 hand it the same
+            # underlying object Python already holds, instead of a second,
+            # independently-owned copy. Transparent to classes that never
+            # touch shared_ptr<T> themselves - it only changes what type
+            # of smart pointer owns the C++ instance a bound Python object
+            # wraps, not any binding declared below.
+            lines.append(f'    py::class_<{cls.name}, std::shared_ptr<{cls.name}>>(m, "{cls.name}")')
 
             if cls.constructors:
                 for ctor in cls.constructors:

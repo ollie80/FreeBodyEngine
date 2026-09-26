@@ -1,10 +1,10 @@
 @uniform
 atlas: texture
-text_color: vec4
-px_range: float
 
 @input
 uv: vec2
+frag_color: vec4
+frag_px_range: float
 
 @output
 color: vec4
@@ -15,6 +15,6 @@ def median(r: float, g: float, b: float) -> float:
 def main() -> void:
     sdf: vec4 = sample(atlas, uv)
     sig_dist: float = median(sdf.x, sdf.y, sdf.z)
-    screen_px_dist: float = px_range * (sig_dist - 0.5)
+    screen_px_dist: float = frag_px_range * (sig_dist - 0.5)
     alpha: float = clamp(screen_px_dist + 0.5, 0.0, 1.0)
-    color = vec4(text_color.x, text_color.y, text_color.z, text_color.w * alpha)
+    color = vec4(frag_color.x, frag_color.y, frag_color.z, frag_color.w * alpha)

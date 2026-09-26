@@ -879,7 +879,14 @@ class Builder:
             # bloating every dev build with irrelevant megabytes.
             self._add_dir_to_zip(
                 zf, os.path.dirname(engine_spec.origin), "FreeBodyEngine",
-                ignore_dirnames=frozenset({"__pycache__", "lib", "cli", "build"}),
+                # "cpp_scripts" (wherever it appears, e.g. under
+                # ui/native/) is this dev machine's own *compiled* output
+                # for whatever platform it was last built on (see
+                # cli/cpp/compile.py) - dead weight bundled unnecessarily
+                # into a web build, which resolves NATIVE_UI to the pure-
+                # Python UIElement unconditionally anyway (see
+                # ui/__init__.py) and never touches it.
+                ignore_dirnames=frozenset({"__pycache__", "lib", "cli", "build", "cpp_scripts"}),
             )
             self._add_dir_to_zip(zf, os.path.dirname(fbusl_spec.origin), "fbusl")
 
@@ -1116,10 +1123,65 @@ await run()
         )
 
         self._copy_engine_source_for_android()
+        self._generate_native_sources_for_android()
         self._write_android_main_py()
         self._write_buildozer_spec()
+        self._write_local_p4a_recipes()
 
         self.progress.done("Successfully prepared Android development build.")
+
+    def _generate_native_sources_for_android(self):
+        """Pre-generates FreeBodyEngine/ui/native/'s C++ sources (the
+        `//@bind`-driven `.cpp`/`setup.py` compile_cpp_scripts() would
+        normally both generate *and* compile for a host build - see
+        cli/cpp/compile.py) into the Android build root's own copy of
+        that directory (already placed there by
+        _copy_engine_source_for_android(), called right before this),
+        without compiling anything here (`generate_only=True`) - this
+        engine's actual native/C++ UI module is *cross*-compiled later,
+        inside python-for-android's own build, by the
+        freebodyengine_native recipe (build/android_recipes/
+        freebodyengine_native/__init__.py) picking these generated
+        sources up through the `P4A_FREEBODYENGINE_NATIVE_DIR` env var
+        (set by dev/run.py's `_run_android()`, pointed at this exact
+        directory).
+
+        Source generation is pure text, no compiler involved (see
+        compile_cpp_scripts()'s own docstring on `generate_only`) and
+        genuinely platform-independent - the same generated `setup.py`/
+        `*.cpp` this desktop build already produces from the identical
+        source is exactly what p4a's own NDK toolchain compiles later, so
+        doing it once, here, on the host, ahead of the real (cross-)
+        compile is correct regardless of target platform."""
+        native_dir = os.path.join(self.android_output_path, "FreeBodyEngine", "ui", "native")
+        if not os.path.isdir(native_dir):
+            # No native/ directory at all in this engine checkout (an
+            # older/different install) - nothing to generate, and
+            # "freebodyengine_native" simply won't appear in
+            # buildozer.spec's requirements in that case either.
+            return
+
+        status = compile_cpp_scripts(native_dir, sys.executable, platform_name="android", force=True, generate_only=True)
+        if status not in ("generated", "no-sources"):
+            raise RuntimeError(f"Failed to generate native UI sources for the Android build (compile_cpp_scripts returned {status!r}).")
+
+    def _write_local_p4a_recipes(self):
+        """Copies this engine's own local p4a recipe overrides (currently
+        just `ffmpeg` - see `build/android_recipes/ffmpeg/__init__.py`'s
+        own docstring for what it fixes and why) into `p4a-recipes/` at the
+        Android build root, p4a's own default `--local-recipes` directory
+        (searched before its built-in recipes of the same name - see
+        pythonforandroid/recipe.py's `recipe_dirs()`) - so no buildozer.spec
+        key is needed to opt in.
+
+        Regenerated fresh on every build, same as everything else this
+        method writes - these recipes are static, bundled engine source,
+        not project-specific state worth preserving across rebuilds."""
+        recipes_src = os.path.join(os.path.dirname(__file__), "android_recipes")
+        recipes_dest = os.path.join(self.android_output_path, "p4a-recipes")
+        if os.path.exists(recipes_dest):
+            shutil.rmtree(recipes_dest)
+        shutil.copytree(recipes_src, recipes_dest, ignore=shutil.ignore_patterns("__pycache__"))
 
     def _write_android_main_py(self):
         """Writes `main.py` at the Android build root: p4a's bootstrap
@@ -1248,7 +1310,16 @@ runpy.run_module("_project_main", run_name="__main__")
 
         _copy_package(
             os.path.dirname(engine_spec.origin), "FreeBodyEngine",
-            ignore_dirnames=frozenset({"__pycache__", "lib", "cli", "build"}),
+            # "cpp_scripts" (wherever it appears, e.g. under ui/native/)
+            # is this dev machine's own *compiled* output (see cli/cpp/
+            # compile.py) for whatever platform it was last built on -
+            # always the wrong architecture for Android, and dead weight
+            # even before that: _generate_native_sources_for_android(),
+            # called right after this copy, regenerates it from scratch
+            # anyway (source only - the actual cross-compile happens
+            # later, inside p4a's own build, via the freebodyengine_native
+            # recipe).
+            ignore_dirnames=frozenset({"__pycache__", "lib", "cli", "build", "cpp_scripts"}),
         )
         _copy_package(os.path.dirname(fbusl_spec.origin), "fbusl")
 
@@ -1289,12 +1360,30 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,gif,webp,ttf,otf,json,toml,txt,glb,gltf,fbap,fbmesh,fbvert,fbfrag,fbmat,fbspr,fbfont,fbanim,fbsheet,vert,frag,glsl,ogg,wav,mp3
 version = 0.1
 requirements = {requirements}
-orientation = landscape
+orientation = portrait
 fullscreen = 1
 p4a.bootstrap = sdl2
+# Without this, p4a's own default local-recipes directory (also named
+# `p4a-recipes`, but resolved relative to *p4a's own* checkout dir, not
+# this project's - see pythonforandroid/toolchain.py's `--local-recipes`
+# argparse default) never matches the one _write_local_p4a_recipes()
+# actually populates here, so overrides placed there (e.g. the patched
+# `ffmpeg` recipe) silently never take effect - buildozer only ever passes
+# `--local-recipes` through to p4a at all when this key is set (see
+# buildozer/targets/android.py's get_local_recipes_dir()).
+p4a.local_recipes = {os.path.join(self.android_output_path, "p4a-recipes")}
 android.api = 33
 android.minapi = 24
 android.archs = arm64-v8a
+# Without this, the app has no socket access at all - every network
+# request fails at connection time (requests/urllib3 reports this as
+# "HTTPSConnectionPool(...): Max retries exceeded", which looks like a
+# DNS/server problem but is actually just a missing Android permission).
+# This key defaults to unset (no permissions granted) when absent, not
+# "sane defaults" - every android app built by this engine needs network
+# access for anything server-backed, so it's on by default here rather
+# than something every single project has to remember to add itself.
+android.permissions = INTERNET
 
 [buildozer]
 log_level = 2

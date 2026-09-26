@@ -1,5 +1,5 @@
 from FreeBodyEngine.core.window.generic import Window, Cursor, WINDOW_RESIZE, FRAMEBUFFER_RESIZE
-from FreeBodyEngine import get_main, warning, get_flag, HEADLESS, TEST_WINDOW
+from FreeBodyEngine import get_main, warning, get_flag, HEADLESS, TEST_WINDOW, TERMINAL_WINDOW
 import sys
 import os
 
@@ -46,6 +46,16 @@ def get_window() -> type[Window]:
         # actual rendered UI needs.
         from FreeBodyEngine.core.window.testwindow import TestWindow
         return TestWindow
+
+    elif get_flag(TERMINAL_WINDOW, False):
+        # Also a real, GL-rendering (but never natively shown) GLFW window
+        # under the hood - same trick TestWindow uses - except the actual
+        # *presentation* is a from-scratch terminal renderer (framebuffer
+        # readback -> ASCII art) and input comes from the real terminal
+        # (raw mode + ANSI mouse reporting) instead of injected test
+        # values. See core.window.terminal's own module docstring.
+        from FreeBodyEngine.core.window.terminal import TerminalWindow
+        return TerminalWindow
 
     elif get_flag(HEADLESS, False):
         from FreeBodyEngine.core.window.headless import HeadlessWindow

@@ -1,0 +1,61 @@
+@input
+vertex: vec3
+normal: vec3
+uvs: vec2
+i_rect: vec4
+i_border_radius: vec4
+i_border_width: vec4
+i_border_color: vec4
+i_base_color: vec4
+
+@uniform
+window_size: vec2
+
+@output
+uv: vec2
+size: vec2
+border_radius: vec4
+border_width: vec4
+border_color: vec4
+base_color: vec4
+
+# Batched sibling of element.fbvert - draws N elements (one GPU instance
+# each) in a single glDrawElementsInstanced call instead of N separate
+# draw_mesh() calls, each with its own 8 set_uniform()s. Same quad mesh,
+# same screen-space math as element.fbvert (see its own docstring for
+# why VERTEX_INDEX drives position instead of the `vertex` attribute,
+# and why `uv`'s corners are assigned the way they are) - the only real
+# difference is every per-element value (`rect`, `border_radius`, ...)
+# comes from a per-instance vertex attribute (i_-prefixed, bound with a
+# divisor of 1 - see GL44Renderer.draw_ui_background_instances) instead
+# of a uniform, and gets passed straight through to the fragment shader
+# as an ordinary varying instead of being read there via `@uniform`.
+#
+# No `image_uv`/texture support here, deliberately - a background image
+# can't be packed into this per-instance layout without also passing a
+# bound texture unit per instance, which this doesn't need: any element
+# with an `image` style is excluded from this batch entirely and still
+# drawn through element.fbvert/element.fbfrag's own single-element path
+# (see UIRenderer._draw_background) - images are a small minority of
+# backgrounds, not worth the extra complexity here.
+def main() -> void:
+    screen_rect: vec4 = vec4(i_rect.x / window_size.x * 2.0 - 1.0, 1.0 - i_rect.y / window_size.y * 2.0, i_rect.z / window_size.x * 2.0, i_rect.w / window_size.y * 2.0)
+
+    size = i_rect.zw
+    border_radius = i_border_radius
+    border_width = i_border_width
+    border_color = i_border_color
+    base_color = i_base_color
+
+    if VERTEX_INDEX == 0:
+        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y, 0.0, 1.0)
+        uv = vec2(0.0, 0.0)
+    elif VERTEX_INDEX == 1:
+        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y, 0.0, 1.0)
+        uv = vec2(1.0, 0.0)
+    elif VERTEX_INDEX == 2:
+        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y - screen_rect.w, 0.0, 1.0)
+        uv = vec2(0.0, 1.0)
+    else:
+        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y - screen_rect.w, 0.0, 1.0)
+        uv = vec2(1.0, 1.0)

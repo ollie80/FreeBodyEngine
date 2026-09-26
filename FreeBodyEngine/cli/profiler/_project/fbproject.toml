@@ -1,0 +1,4 @@
+name = "freebody-profiler"
+main_file = "./main.py"
+assets = "./assets"
+code = "./code"

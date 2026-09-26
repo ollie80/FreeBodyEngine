@@ -88,6 +88,55 @@ class Window(Service):
         """
         pass
 
+    @property
+    def content_scale(self) -> float:
+        """How many physical pixels make up one UI unit on this window -
+        1.0 on an ordinary desktop display, 2.0 on a 2x-scaled HiDPI one,
+        and (per SDL2's own docs - this is their recommended technique,
+        confirmed to hold on Android too, not just desktop) whatever a
+        given phone's real display density works out to once
+        SDL_WINDOW_ALLOW_HIGHDPI is set, since `size` then reports
+        logical/density-independent coordinates while `framebuffer_size`
+        reports real physical pixels - the ratio between them *is* the
+        device's scale factor, with no separate per-platform DPI query
+        needed. Every backend gets this for free: both properties it's
+        built from are already part of the abstract contract above, so no
+        subclass needs to override this.
+
+        The UI layer applies this to every plain-pixel style value
+        (ui/element.py's _parse_size, ui/renderer.py's font_size read) so
+        a "48px-tall row" or "14px font" stays the same *physical* size
+        across devices instead of rendering tiny on a high-density phone
+        screen - percentage-based sizes ("50w", "50ww", ...) don't need
+        this, they already scale with the screen by construction.
+
+        Guarded against size being (0, 0) - possible for one frame during
+        window setup on some backends, before a real size is ever
+        reported - which would otherwise make every fixed-pixel style
+        resolve to a ZeroDivisionError-raising layout pass."""
+        width, _ = self.size
+        if width <= 0:
+            return 1.0
+        return self.framebuffer_size[0] / width
+
+    @property
+    def safe_area_insets(self) -> tuple[float, float, float, float]:
+        """(top, right, bottom, left), in the same UI pixel units as every
+        style value (already divided by content_scale - callers never need
+        to convert) - how much of the window's edges on each side are
+        actually covered by a system overlay (a status bar/notch/camera
+        cutout, an on-screen gesture/nav bar, a rounded-corner mask) and so
+        aren't safe to place real content or controls under.
+
+        (0.0, 0.0, 0.0, 0.0) here - correct for every backend with no such
+        overlay (every desktop window, a browser tab). AndroidWindow is the
+        only override: a fullscreen Android window (see buildozer.spec's
+        own `fullscreen = 1`) draws genuinely edge-to-edge, under the
+        status bar and gesture nav area both - confirmed live, with no
+        inset applied anywhere, real UI (a top bar, bottom nav) render
+        partly hidden behind them instead of just stopping short of them."""
+        return (0.0, 0.0, 0.0, 0.0)
+
     @abstractmethod
     def create_mouse(self) -> Mouse:
         """Creates and returns this backend's Mouse implementation, wired up to this window's input events."""
