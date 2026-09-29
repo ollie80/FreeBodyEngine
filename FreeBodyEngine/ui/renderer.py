@@ -243,12 +243,26 @@ class UIRenderer(Service):
         # set/order of children change" check actually needs. Also why
         # this can't just be `.keys()` - the native view has no keys at
         # all, only positional children.
+        #
+        # Cleared *before* that check, not after it. `_mark_dirty` writes
+        # into `_dirty_rect`, so resetting the rect afterwards - as this
+        # did - silently discarded the one mark the whole check exists to
+        # produce, and the top-level change it detected went unpainted.
+        # Adding a top-level child still worked by accident (the new
+        # element is unknown to _compute_dirty_rect below, which marks it
+        # itself), which is what made this look intermittent rather than
+        # broken: *removing* one had nothing left to notice it, so the
+        # element vanished from the tree while its pixels stayed on
+        # screen. Confirmed as the cause of a closed modal remaining
+        # visible and swallowing clicks, and of a swapped-out view
+        # leaving the previous screen painted underneath.
+        self._dirty_rect = None
+
         root_children = tuple(id(c) for c in self.ui.root.children.values())
         if root_children != self._prev_root_children:
             self._mark_dirty(root_rect)
         self._prev_root_children = root_children
 
-        self._dirty_rect = None
         for element in self.ui.root.children.values():
             self._compute_dirty_rect(element, root_rect)
 

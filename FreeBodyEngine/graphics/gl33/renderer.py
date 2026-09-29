@@ -146,6 +146,29 @@ class GL33Renderer(Renderer):
         # and degrade cleanly there), so GPU timing degrades to unavailable
         # rather than crashing startup over a profiling feature nothing
         # may even be using.
+        #
+        # Every entry point the query path uses has to be checked, not
+        # just glGenQueries: on GLES (see GLESRenderer, which reuses this
+        # unchanged) glGenQueries resolves and succeeds, while
+        # glGetQueryObjectiv doesn't exist at all - GLES spells that one
+        # glGetQueryObjectivEXT. Testing only the first left
+        # _gpu_timing_supported True on a context missing the rest, and
+        # PyOpenGL raises NullFunctionError from the *unguarded*
+        # glGetQueryObjectiv call in begin_gpu_query() below. Confirmed on
+        # a real device: 10,862 of them in one session, one per frame,
+        # each one a caught-and-logged traceback through the update loop.
+        # bool(func) is PyOpenGL's own documented availability test (it's
+        # what NullFunctionError's message tells you to use).
+        required = (glGenQueries, glGetQueryObjectiv, glGetQueryObjectuiv, glBeginQuery, glEndQuery)
+        if not all(bool(fn) for fn in required):
+            missing = [getattr(fn, "__name__", str(fn)) for fn in required if not bool(fn)]
+            warning(
+                f"GL33Renderer: GPU timer queries unavailable (missing {', '.join(missing)}) "
+                "- GPU timing will read as unavailable."
+            )
+            self._gpu_timing_supported = False
+            return
+
         try:
             self._gpu_query_ids = list(glGenQueries(4))
             self._gpu_query_pending = [False] * len(self._gpu_query_ids)

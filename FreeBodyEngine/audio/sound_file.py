@@ -5,6 +5,7 @@ import threading
 import scipy.signal
 
 from FreeBodyEngine.audio.sound import AudioManager, Sound
+from FreeBodyEngine.audio.streaming import StreamingSound, is_url
 
 
 class SoundFileAudioManager(AudioManager):
@@ -90,6 +91,17 @@ class SoundFileAudioManager(AudioManager):
                 pass
 
     def create_sound(self, data):
+        """A URL streams; anything else is read whole.
+
+        soundfile opens local files, so a network source has to go
+        through the shared ffmpeg-backed StreamingSound instead - which
+        is also what lets playback start before the track has finished
+        transferring. Local files keep the array-based Sound below: it's
+        the proven path, it's faster once the bytes are already on disk,
+        and it's the one that leaves `.data` populated for the
+        visualizer's local analysis."""
+        if isinstance(data, str) and is_url(data):
+            return StreamingSound(data, self)
         return Sound(data, self)
 
     def shutdown(self):

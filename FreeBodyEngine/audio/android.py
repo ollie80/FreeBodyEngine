@@ -27,7 +27,7 @@ single persistent output device with one mixing callback that pulls
   instance alive on the C side's behalf).
 - Each Sound decodes incrementally instead of upfront: a background daemon
   thread keeps a short (`_STREAM_LOOKAHEAD_SECONDS`) rolling buffer of
-  already-decoded PCM topped up via `pyogg.VorbisFileStream.get_buffer()`
+  already-decoded PCM topped up from whichever decoder the file needs
   (a few KB at a time, straight from libvorbisfile - already bundled for
   this build's ffmpeg Vorbis encoder, see the local ffmpeg p4a recipe
   override), and `get_frames()` (called from the realtime audio callback,
@@ -56,6 +56,7 @@ is invoked at a steady rate.
 """
 import ctypes
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -65,6 +66,7 @@ import sdl2
 import pyogg
 
 from FreeBodyEngine.audio.sound import AudioManager, Sound as BaseSound
+from FreeBodyEngine.audio.streaming import FfmpegDecoder, is_url
 
 SAMPLE_RATE = 48000
 CHANNELS = 2
@@ -149,6 +151,58 @@ class AndroidAudioManager(AudioManager):
         sdl2.SDL_CloseAudioDevice(self.device)
 
 
+# -- decoders ----------------------------------------------------------------
+#
+# Playback needs three things from whatever is reading the file: its rate
+# and channel count, successive chunks of interleaved int16, and a seek.
+# Two implementations provide that.
+#
+# Vorbis keeps its original libvorbisfile path, untouched - it is the
+# format this backend was built around and is known to work on a real
+# device. Everything else goes through the shared ffmpeg decoder (see
+# audio/streaming.py), whose binary this build already ships (the local
+# `ffmpeg` p4a recipe) and which decodes far more than libvorbisfile
+# ever could. That is what lets a phone play
+# Opus: YouTube's `bestaudio` is already Opus, so a host serving it
+# directly skips a libvorbis encode that was measured at ~6.5s of an
+# ~11s cold start, and skips a second lossy generation with it.
+
+
+class _VorbisDecoder:
+    """libvorbisfile, via pyogg - the original path, unchanged."""
+
+    def __init__(self, path: str):
+        self._stream = pyogg.VorbisFileStream(path)
+        self.sample_rate = self._stream.frequency
+        self.channels = self._stream.channels
+        self.duration = max(0.0, pyogg.vorbis.ov_time_total(self._stream.vf, -1))
+
+    def read(self):
+        result = self._stream.get_buffer()
+        if result is None:
+            return None
+        raw_bytes, length = result
+        return raw_bytes[:length]
+
+    def seek(self, seconds: float):
+        pyogg.vorbis.ov_time_seek(self._stream.vf, seconds)
+
+    def close(self):
+        pass
+
+
+def _open_decoder(source: str, channels: int):
+    """Vorbis files keep libvorbisfile; everything else - including any
+    URL - goes through ffmpeg.
+
+    A URL is never handed to libvorbisfile even when it names a .ogg:
+    that decoder opens a local file, whereas ffmpeg reads the network
+    itself, which is the whole point of passing one."""
+    if not is_url(source) and os.path.splitext(source)[1].lower() == ".ogg":
+        return _VorbisDecoder(source)
+    return FfmpegDecoder(source, channels, SAMPLE_RATE)
+
+
 class Sound(BaseSound):
     """Streaming, `pyogg`-decoded Sound - see this module's own docstring
     for the overall approach and why it replaced a simpler in-memory-array
@@ -160,7 +214,8 @@ class Sound(BaseSound):
         # `data` is whatever a caller's create_sound(data) was handed -
         # playback_service.py always passes a real path to a file already
         # on disk (its own download cache), never an in-memory buffer, but
-        # pyogg.VorbisFileStream needs a real path either way, so a
+        # both decoders below need a real path either way (libvorbisfile
+        # opens one; ffmpeg is handed one on its command line), so a
         # file-like/bytes caller gets spooled to a temp file first rather
         # than dropping that flexibility entirely.
         self._owns_temp_file = False
@@ -173,16 +228,16 @@ class Sound(BaseSound):
                 f.write(raw_bytes)
             self._owns_temp_file = True
 
-        self._stream = pyogg.VorbisFileStream(self._path)
-        self.sample_rate = self._stream.frequency
-        self._src_channels = self._stream.channels
         self._out_channels = manager.channels
-
-        self._duration = max(0.0, pyogg.vorbis.ov_time_total(self._stream.vf, -1))
+        self._decoder = _open_decoder(self._path, self._out_channels)
+        self.sample_rate = self._decoder.sample_rate
+        self._src_channels = self._decoder.channels
+        self._duration = self._decoder.duration
 
         # Guards both `self._buffer`/`self._eof` AND every call into
-        # `self._stream` (pyogg.VorbisFileStream isn't safe to touch from
-        # two threads at once) - held by the feeder thread while decoding,
+        # `self._decoder` (neither decoder is safe to touch from two
+        # threads at once - libvorbisfile isn't reentrant, and the
+        # ffmpeg one respawns a subprocess on seek) - held by the feeder thread while decoding,
         # by get_frames() (the realtime audio callback) while popping, and
         # by _seek_to() while reseeking, so none of those three can ever
         # interleave with each other mid-operation.
@@ -215,13 +270,12 @@ class Sound(BaseSound):
     def _decode_one_chunk_locked(self):
         """Reads and appends one chunk from the underlying stream to
         `self._buffer`. Caller must already hold `self._state_lock`."""
-        result = self._stream.get_buffer()
-        if result is None:
+        raw_bytes = self._decoder.read()
+        if not raw_bytes:
             self._eof = True
             return
 
-        raw_bytes, length = result
-        pcm = np.frombuffer(raw_bytes[:length], dtype=np.int16).astype(np.float32) / 32768.0
+        pcm = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         usable_samples = (len(pcm) // self._src_channels) * self._src_channels
         pcm = pcm[:usable_samples].reshape(-1, self._src_channels)
         pcm = self._remix_channels(pcm)
@@ -289,7 +343,7 @@ class Sound(BaseSound):
     def _seek_to(self, position_s):
         position_s = max(0.0, position_s)
         with self._state_lock:
-            pyogg.vorbis.ov_time_seek(self._stream.vf, position_s)
+            self._decoder.seek(position_s)
             self._buffer = np.empty((0, self._out_channels), dtype=np.float32)
             self._eof = False
         self._consumed_frames = int(position_s * self.sample_rate)
@@ -330,7 +384,7 @@ class Sound(BaseSound):
     def __del__(self):
         self._closed = True
         try:
-            self._stream.clean_up()
+            self._decoder.close()
         except Exception:
             pass
         if self._owns_temp_file:

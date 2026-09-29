@@ -151,6 +151,22 @@ class GL44Renderer(Renderer):
         # renderer might end up running against - GPU timing degrades to
         # unavailable (last_gpu_ms stays None) rather than crashing
         # startup over a profiling feature nothing may even be using.
+        #
+        # Checked per-entry-point rather than by calling glGenQueries and
+        # hoping - see GL33Renderer.on_initialize()'s copy of this for the
+        # real case that motivated it (a context where glGenQueries
+        # resolves but glGetQueryObjectiv doesn't exist, leaving the
+        # unguarded call in begin_gpu_query() raising once per frame).
+        required = (glGenQueries, glGetQueryObjectiv, glGetQueryObjectuiv, glBeginQuery, glEndQuery)
+        if not all(bool(fn) for fn in required):
+            missing = [getattr(fn, "__name__", str(fn)) for fn in required if not bool(fn)]
+            warning(
+                f"GL44Renderer: GPU timer queries unavailable (missing {', '.join(missing)}) "
+                "- GPU timing will read as unavailable."
+            )
+            self._gpu_timing_supported = False
+            return
+
         try:
             self._gpu_query_ids = list(glGenQueries(4))
             self._gpu_query_pending = [False] * len(self._gpu_query_ids)

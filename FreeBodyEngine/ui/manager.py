@@ -236,13 +236,25 @@ class UIManager(Service):
             node = node.parent
         return None
 
+    def _hover_state(self) -> ElementStates:
+        """HOVER on a pointer device, NORMAL on a touch one.
+
+        A touchscreen has no hover: the pointer is simply wherever the
+        last finger touched, and it stays there once the finger lifts. So
+        every element tapped entered the hover state and then kept it
+        indefinitely - nothing ever moved the pointer off it - leaving a
+        trail of permanently highlighted buttons behind every tap, which
+        on a list of rows reads as the app having lost track of what's
+        selected."""
+        return ElementStates.NORMAL if get_platform() == "android" else ElementStates.HOVER
+
     def _set_focus(self, element: UIElement):
         if element is self._focused:
             return
 
         if self._focused is not None:
             self._focused.set_state(
-                ElementStates.HOVER if self._focused is self._hovered else ElementStates.NORMAL
+                self._hover_state() if self._focused is self._hovered else ElementStates.NORMAL
             )
 
         self._focused = element
@@ -275,7 +287,7 @@ class UIManager(Service):
             if hit is not None:
                 hit._emit("hover_enter")
                 if hit not in (self._pressed, self._focused):
-                    hit.set_state(ElementStates.HOVER)
+                    hit.set_state(self._hover_state())
 
             self._hovered = hit
 
@@ -440,7 +452,7 @@ class UIManager(Service):
                 if self._pressed is self._focused:
                     self._pressed.set_state(ElementStates.FOCUSED)
                 elif self._pressed is hit:
-                    self._pressed.set_state(ElementStates.HOVER)
+                    self._pressed.set_state(self._hover_state())
                 else:
                     self._pressed.set_state(ElementStates.NORMAL)
 

@@ -496,9 +496,35 @@ class AndroidMouse(Mouse):
         self._drag_start = [Vector(0, 0)] * 3
         self._double_clicked = [False, False, False]
         self.last_click_time = [-500.0, -500.0, -500.0]
-        self.drag_threshold = 4.0
         self.double_click_threshold = 0.4
         self.scroll_delta = Vector(0.0, 0.0)
+
+    # Android's own ViewConfiguration touch slop - how far a finger may
+    # travel before the gesture counts as a scroll rather than a tap.
+    TOUCH_SLOP_DP = 8.0
+
+    @property
+    def drag_threshold(self) -> float:
+        """Touch slop in *raw pixels*, derived from the display's density
+        rather than fixed.
+
+        This was a flat 4.0, compared against positions that are raw
+        device pixels - about 1.4dp on this project's test device
+        (content_scale ~2.8), against a platform slop of 8dp. A finger
+        resting on a button drifts further than that almost immediately,
+        which set `dragging`, which latched UIManager's
+        `_touch_scroll_engaged`, which suppresses the click on release
+        (deliberately - a swipe across a button shouldn't press it). The
+        result was that only a tap fast enough to lift before the drift
+        registered ever activated anything, and holding still - the
+        natural response to a control that seems unresponsive - was
+        exactly the wrong thing to do. Reported as "only really quick
+        taps work".
+
+        A property, not a value cached in __init__, because
+        content_scale reads the real display metrics over JNI and isn't
+        necessarily resolved at the moment this mouse is constructed."""
+        return self.TOUCH_SLOP_DP * (self.window.content_scale or 1.0)
 
     def get_scroll_delta(self) -> Vector:
         return self.scroll_delta
