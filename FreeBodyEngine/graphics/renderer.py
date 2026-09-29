@@ -171,6 +171,23 @@ class Renderer(Service):
         """Updates the backend's viewport/surface to match the new framebuffer `size` (pixels). Called automatically on FRAMEBUFFER_RESIZE - see on_initialize()."""
         pass
 
+    def bind_window_framebuffer(self, size: tuple[int, int]):
+        """Binds the window's own framebuffer and sets the viewport to
+        `size`, so whatever draws next lands on screen at full
+        resolution.
+
+        Distinct from resize(): this changes only what is bound and the
+        viewport, nothing about the surface itself, and is meant to be
+        called per frame. A pipeline that renders into an offscreen
+        framebuffer of its own needs this to hand the rest of the frame
+        back to the window - otherwise both the binding *and* that
+        framebuffer's smaller viewport stay active, and everything drawn
+        afterwards is laid out against the wrong size.
+
+        The default does nothing, for backends with no real framebuffer
+        of their own to return to."""
+        pass
+
     def submit(self, mesh: 'Mesh', material: 'Material', transform: 'Transform', camera: 'Camera', z: float = 0.0):
         """Queues a draw instead of issuing it immediately - see
         flush_opaque()/flush_transparent(). `z` is a post-projection depth

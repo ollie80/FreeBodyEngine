@@ -81,6 +81,11 @@ class WebGL2Renderer(Renderer):
     def get_max_buffer_size(self) -> int:
         raise NotImplementedError("Uniform buffer objects aren't supported by the web backend yet.")
 
+    def bind_window_framebuffer(self, size: tuple[int, int]):
+        """See Renderer.bind_window_framebuffer()."""
+        self.gl.bindFramebuffer(self.gl.FRAMEBUFFER, None)
+        self.gl.viewport(0, 0, size[0], size[1])
+
     def resize(self, size: tuple[int, int]):
         """Updates the WebGL2 viewport to `size` - the canvas's own
         drawing-buffer resolution is already updated by WebWindow.update()

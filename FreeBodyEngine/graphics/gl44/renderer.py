@@ -183,6 +183,11 @@ class GL44Renderer(Renderer):
         """Returns the max size of a UBOBuffer, in bytes."""
         return UBOBuffer.get_max_size()
 
+    def bind_window_framebuffer(self, size: tuple[int, int]):
+        """See Renderer.bind_window_framebuffer()."""
+        glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        glViewport(0, 0, size[0], size[1])
+
     def resize(self, size: tuple[int, int]):
         """Updates the GL viewport to `size`, and resizes the platform-specific window surface (wayland/x11) to match."""
         glViewport(0, 0, size[0], size[1])
