@@ -335,6 +335,7 @@ class StreamingSound(BaseSound):
 
         self._consumed_frames += take
         self.position = self._consumed_frames
+        self._note_frames_consumed(num_frames)
 
         if take < num_frames:
             pad = np.zeros((num_frames - take, self._out_channels), dtype=np.float32)
@@ -370,7 +371,7 @@ class StreamingSound(BaseSound):
 
     @property
     def position_s(self):
-        return self._consumed_frames / self.sample_rate
+        return self._interpolated_position_s(self._consumed_frames, self.sample_rate)
 
     def __del__(self):
         self._closed = True

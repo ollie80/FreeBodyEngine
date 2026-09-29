@@ -199,6 +199,7 @@ class Sound(Sound):
         ]
 
         self.position = end
+        self._note_frames_consumed(num_frames)
 
         if len(chunk) < num_frames:
             self.stopped = True
@@ -265,7 +266,7 @@ class Sound(Sound):
 
     @property
     def position_s(self):
-        return self.position / self.sample_rate
+        return self._interpolated_position_s(self.position, self.sample_rate)
 
 
 def resample_audio(
