@@ -296,17 +296,30 @@ class Sound(BaseSound):
         """Waits (briefly, bounded) for enough of the stream to decode
         rather than reading the whole track upfront the way the old
         in-memory-array version of this did."""
+        # A stream is not probed at all. The feeder never holds more than
+        # _STREAM_LOOKAHEAD_SECONDS, so waiting for more than that could
+        # never be satisfied and simply burned the whole deadline - a
+        # measured 5.0s stall before *every* streamed track started. It
+        # would also be wasted work: play() re-seeks to start_frame,
+        # which respawns ffmpeg and throws this buffer away. Leading
+        # silence is a property of padded local files, which is what
+        # this was written for.
+        if getattr(self._decoder, "is_url", False):
+            return 0
+
+        # Never wait for more than the feeder will ever buffer.
+        want_seconds = min(_LEADING_SILENCE_LOOKAHEAD_SECONDS, _STREAM_LOOKAHEAD_SECONDS)
         deadline = time.monotonic() + 5.0
         while time.monotonic() < deadline:
             with self._state_lock:
                 have_seconds = len(self._buffer) / self.sample_rate
                 at_eof = self._eof
-            if at_eof or have_seconds >= _LEADING_SILENCE_LOOKAHEAD_SECONDS:
+            if at_eof or have_seconds >= want_seconds:
                 break
             time.sleep(0.02)
 
         with self._state_lock:
-            probe = self._buffer[:int(_LEADING_SILENCE_LOOKAHEAD_SECONDS * self.sample_rate)]
+            probe = self._buffer[:int(want_seconds * self.sample_rate)]
 
         if len(probe) == 0:
             return 0
@@ -366,12 +379,22 @@ class Sound(BaseSound):
         self.manager.remove_sound(self)
 
     def seek(self, position_s):
+        # A streamed URL has no duration (FfmpegDecoder deliberately
+        # doesn't probe one - see its docstring), so `self._duration` is
+        # 0.0 and neither the clamp nor the end-of-track test below can
+        # be applied to it. Doing so anyway was a real bug: every seek
+        # clamped to 0.0, and `0.0 >= 0.0` then set `stopped`, which
+        # PlaybackService._check_natural_end() reads as "this track
+        # finished on its own" and answers by skipping to the next one.
+        known_duration = self._duration > 0
         if position_s <= 0:
             target_s = self.start_frame / self.sample_rate
-        else:
+        elif known_duration:
             target_s = max(0.0, min(position_s, self._duration))
+        else:
+            target_s = max(0.0, position_s)
         self._seek_to(target_s)
-        self.stopped = target_s >= self._duration
+        self.stopped = known_duration and target_s >= self._duration
 
     @property
     def duration(self):
