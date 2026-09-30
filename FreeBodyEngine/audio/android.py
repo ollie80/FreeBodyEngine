@@ -375,7 +375,21 @@ class Sound(BaseSound):
         #
         # Replaying a track that ran to the end still seeks, because
         # there _consumed_frames really has moved.
-        if self.stopped and self._consumed_frames != self.start_frame:
+        #
+        # And so does one that is *exhausted* rather than ready. A
+        # preloaded sound whose decoder died while it waited - which a
+        # slow connection makes likely, since it was created a whole
+        # track earlier and had to survive that long - also sits at
+        # start_frame, but with nothing buffered and _eof already set.
+        # Skipping the respawn for that one leaves a sound that can
+        # never produce a sample: it reports finished the moment it is
+        # played, every track arrives dead, and the queue runs to the
+        # end without a note. The respawn is what gives it a fresh
+        # decoder, so "already there" is not enough on its own - it has
+        # to still have somewhere to read from.
+        with self._state_lock:
+            primed = len(self._buffer) > 0 or not self._eof
+        if self.stopped and (self._consumed_frames != self.start_frame or not primed):
             self._seek_to(self.start_frame / self.sample_rate)
         self.stopped = False
         self.paused = False
