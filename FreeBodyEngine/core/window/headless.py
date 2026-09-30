@@ -78,6 +78,7 @@ SDL_KEY_MAP = {
     Key.BACKSPACE: sdl2.SDLK_BACKSPACE,
     Key.TAB: sdl2.SDLK_TAB,
     Key.ESCAPE: sdl2.SDLK_ESCAPE,
+    Key.AC_BACK: sdl2.SDLK_AC_BACK,
     Key.CAPS_LOCK: sdl2.SDLK_CAPSLOCK,
 
     Key.L_CTRL: sdl2.SDLK_LCTRL,

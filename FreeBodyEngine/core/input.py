@@ -84,6 +84,11 @@ class Key(Enum):
     RETURN = auto()
     ENTER = RETURN
     BACKSPACE = auto()
+    # Android's system Back (hardware button or the back gesture). SDL
+    # delivers it as an ordinary key, SDLK_AC_BACK, so it reaches apps
+    # through exactly the same path as any other key rather than needing
+    # a platform-specific event hook. No desktop keyboard produces it.
+    AC_BACK = auto()
     TAB = auto()
     ESCAPE = auto()
     CAPS_LOCK = auto()
@@ -235,6 +240,7 @@ CHARACTERSTRINGMAP = {
     "RETURN": Key.RETURN,
     "ENTER": Key.RETURN,
     "BACKSPACE": Key.BACKSPACE,
+    "AC_BACK": Key.AC_BACK,
     "TAB": Key.TAB,
     "ESCAPE": Key.ESCAPE,
     "CAPS_LOCK": Key.CAPS_LOCK,
