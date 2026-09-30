@@ -325,6 +325,30 @@ class AndroidWindow(Window):
             if insets is None:
                 return (0.0, 0.0, 0.0, 0.0)
 
+            # getRootWindowInsets() reports how big the system bars are,
+            # not whether they overlap anything of ours. With visible
+            # bars and a window the system has already laid out between
+            # them, that's space reserved twice - once by Android, once
+            # again by every caller here - and the app ends up with a
+            # blank strip at each end. Confirmed on device: the display
+            # is 1080x2340 while the app is given 1080x2105, exactly the
+            # 100px status bar and 135px navigation bar removed.
+            #
+            # So the surface is measured against the real display. A
+            # smaller surface means Android already did the reserving
+            # and there is nothing left to avoid; an equal one means the
+            # window really does extend under the bars (fullscreen, or
+            # edge-to-edge on API 35+) and the insets are the real
+            # answer.
+            DisplayMetrics = autoclass('android.util.DisplayMetrics')
+            metrics = DisplayMetrics()
+            activity.getWindowManager().getDefaultDisplay().getRealMetrics(metrics)
+            display_height = metrics.heightPixels
+            surface_height = self.framebuffer_size[1]
+            if 0 < surface_height < display_height:
+                self._safe_area_insets_cache = (0.0, 0.0, 0.0, 0.0)
+                return self._safe_area_insets_cache
+
             scale = self.content_scale
             if scale <= 0:
                 scale = 1.0
