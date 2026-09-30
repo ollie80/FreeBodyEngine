@@ -874,6 +874,21 @@ class UIRenderer(Service):
                 truncated = truncated[:-1]
             text = (truncated + ellipsis) if truncated else ellipsis
 
+        # Horizontally aligned within the padded content box. Text is
+        # drawn from the left edge by default, which is right for a
+        # label and wrong for anything whose box is wider than its words
+        # - a tab that owns a third of a bar renders its caption hard
+        # against the left of that third, not in the middle of it.
+        # Without this the only way to centre text was to make the box
+        # hug it, which is why buttons here *look* centred: they're
+        # shrink-wrapped, not aligned.
+        align = styles.get('text_align', 'left')
+        if align in ('center', 'right') and available_width > 0:
+            text_width = text_renderer.measure_text(font, text, font_size)
+            slack = available_width - text_width
+            if slack > 0:
+                draw_x += slack / 2 if align == 'center' else slack
+
         # Vertically centered in the padded content box using the font's
         # real ascender/descender (not just font_size) - previously this
         # always baseline-aligned to the top (padding_top + font_size),

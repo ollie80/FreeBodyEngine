@@ -665,6 +665,14 @@ class UIElement(GenericElement):
         text_color
             (r, g, b, a) text color, 0-1 per channel.
 
+        text_align
+            "left" (default), "center" or "right" - where the text sits
+            within the element's padded content box when that box is
+            wider than the text. Only matters for an element sized
+            independently of its caption (a tab owning a third of a bar,
+            a value aligned to a column's right edge); a shrink-wrapped
+            button looks centered either way.
+
     State overrides:
         normal
         clicked
@@ -724,6 +732,7 @@ class UIElement(GenericElement):
         "font_size": 24,
         "font_weight": "regular",
         "text_color": (1.0, 1.0, 1.0, 1.0),
+        "text_align": "left",
 
         "editable": False,
         "secret": False,
