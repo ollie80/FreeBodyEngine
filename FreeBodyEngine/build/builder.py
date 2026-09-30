@@ -1267,7 +1267,14 @@ if not any(a.startswith("--path=") for a in sys.argv):
 # not obviously connected to "HOME is unset" from the error alone. Setting
 # it explicitly to this app's own private, writable storage root fixes
 # that for any such code, not just one project's specific cache path.
-os.environ.setdefault("HOME", project_root)
+# Set, not defaulted. Both of this app's processes - the activity and
+# the foreground service - run one of these shims, and anything either
+# derives from Path.home() (a cache directory, say) is only the *same*
+# path in both if they agree on HOME. setdefault agreed only as long as
+# neither process happened to inherit one, which is not something this
+# can rely on: a file written by one process and looked for by the
+# other would simply not be found, with nothing in the log to say why.
+os.environ["HOME"] = project_root
 
 # [android] fullscreen from fbproject.toml, which buildozer.spec also
 # carries - but that copy only reaches the activity theme. SDL asks for
@@ -1336,7 +1343,14 @@ project_root = os.path.dirname(os.path.abspath(__file__))
 if not any(a.startswith("--path=") for a in sys.argv):
     sys.argv.append(f"--path={{project_root}}")
 
-os.environ.setdefault("HOME", project_root)
+# Set, not defaulted. Both of this app's processes - the activity and
+# the foreground service - run one of these shims, and anything either
+# derives from Path.home() (a cache directory, say) is only the *same*
+# path in both if they agree on HOME. setdefault agreed only as long as
+# neither process happened to inherit one, which is not something this
+# can rely on: a file written by one process and looked for by the
+# other would simply not be found, with nothing in the log to say why.
+os.environ["HOME"] = project_root
 
 import runpy
 runpy.run_module("_project_service", run_name="__main__")
