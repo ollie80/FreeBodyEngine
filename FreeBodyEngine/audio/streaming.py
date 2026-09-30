@@ -279,6 +279,9 @@ class StreamingSound(BaseSound):
         self._eof = False
         self._closed = False
         self._consumed_frames = 0
+        # See _feed_loop(): lets a read started before a seek be
+        # recognised as stale rather than applied or read as EOF.
+        self._generation = 0
 
         self.start_frame = 0
         self.position = 0
@@ -290,25 +293,50 @@ class StreamingSound(BaseSound):
 
     # -- decode --------------------------------------------------------------
 
-    def _decode_one_chunk_locked(self):
-        raw = self._decoder.read()
-        if not raw:
-            self._eof = True
-            return
+    def _decode(self, raw):
+        """Raw decoder bytes as float32 frames. Pure conversion, so it
+        runs outside the lock."""
         pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
         usable = (len(pcm) // self._out_channels) * self._out_channels
-        pcm = pcm[:usable].reshape(-1, self._out_channels)
-        self._buffer = np.concatenate((self._buffer, pcm), axis=0) if len(self._buffer) else pcm
+        return pcm[:usable].reshape(-1, self._out_channels)
 
     def _feed_loop(self):
+        """Decodes ahead of the audio callback, with the lock released
+        across the read.
+
+        Holding it there is a realtime bug: get_frames() runs on the
+        audio callback and takes the same lock, so a blocking network
+        read would stall playback for as long as the network took. The
+        generation counter is what makes releasing it safe - a seek
+        respawns the decoder, and any read already in flight then
+        belongs to a stream nobody is listening to, whose empty return
+        would otherwise be mistaken for end-of-input."""
         while not self._closed:
             with self._state_lock:
-                behind = len(self._buffer) / self.sample_rate < STREAM_LOOKAHEAD_SECONDS
-                needs_more = behind and not self._eof
-                if needs_more:
-                    self._decode_one_chunk_locked()
-            if not needs_more:
+                buffered = len(self._buffer) / self.sample_rate
+                at_eof = self._eof
+                generation = self._generation
+                decoder = self._decoder
+
+            if at_eof or buffered >= STREAM_LOOKAHEAD_SECONDS:
                 time.sleep(0.05)
+                continue
+
+            try:
+                raw = decoder.read()
+            except Exception:
+                raw = None
+
+            pcm = self._decode(raw) if raw else None
+
+            with self._state_lock:
+                if generation != self._generation:
+                    continue  # seeked mid-read - this data is stale
+                if pcm is None:
+                    self._eof = True
+                else:
+                    self._buffer = (np.concatenate((self._buffer, pcm), axis=0)
+                                    if len(self._buffer) else pcm)
 
     # -- playback ------------------------------------------------------------
 
@@ -358,6 +386,7 @@ class StreamingSound(BaseSound):
     def seek(self, position_s):
         position_s = max(0.0, position_s)
         with self._state_lock:
+            self._generation += 1
             self._decoder.seek(position_s)
             self._buffer = np.empty((0, self._out_channels), dtype=np.float32)
             self._eof = False

@@ -246,6 +246,10 @@ class Sound(BaseSound):
         self._eof = False
         self._closed = False
         self._consumed_frames = 0
+        # Bumped on every seek, so the feeder can tell whether a read
+        # it started belongs to the stream that's still playing - see
+        # _feed_loop().
+        self._generation = 0
 
         self._feeder = threading.Thread(target=self._feed_loop, daemon=True)
         self._feeder.start()
@@ -267,30 +271,61 @@ class Sound(BaseSound):
             return pcm[:, :self._out_channels]
         return np.repeat(pcm, self._out_channels, axis=1)
 
-    def _decode_one_chunk_locked(self):
-        """Reads and appends one chunk from the underlying stream to
-        `self._buffer`. Caller must already hold `self._state_lock`."""
-        raw_bytes = self._decoder.read()
-        if not raw_bytes:
-            self._eof = True
-            return
-
+    def _decode(self, raw_bytes):
+        """Raw decoder output as float32 frames at the mixer's channel
+        count. Pure conversion - touches no shared state, so it runs
+        outside the lock."""
         pcm = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         usable_samples = (len(pcm) // self._src_channels) * self._src_channels
         pcm = pcm[:usable_samples].reshape(-1, self._src_channels)
-        pcm = self._remix_channels(pcm)
-        self._buffer = np.concatenate((self._buffer, pcm), axis=0) if len(self._buffer) else pcm
+        return self._remix_channels(pcm)
 
     def _feed_loop(self):
+        """Decodes ahead of the audio callback.
+
+        The read happens with the lock *released*. It used to be held
+        across it, which quietly undid the whole design: get_frames()
+        runs on the realtime audio thread and takes the same lock, so
+        while the feeder sat in a blocking network read - which over a
+        mobile connection is routinely tens or hundreds of
+        milliseconds - the audio callback could not be serviced and
+        playback broke up. The module docstring already said the
+        callback must never wait on I/O; this is what made that true
+        in practice rather than only in intent.
+
+        Releasing it means a seek can respawn the decoder underneath a
+        read in flight, whose result then belongs to a stream nobody
+        is listening to any more - and, worse, whose empty return
+        would otherwise be read as end-of-input. A generation counter,
+        bumped by every seek, is what lets that result be recognised
+        and dropped.
+        """
         while not self._closed:
             with self._state_lock:
                 have_seconds = len(self._buffer) / self.sample_rate
                 at_eof = self._eof
-                needs_more = not at_eof and have_seconds < _STREAM_LOOKAHEAD_SECONDS
-                if needs_more:
-                    self._decode_one_chunk_locked()
-            if not needs_more:
+                generation = self._generation
+                decoder = self._decoder
+
+            if at_eof or have_seconds >= _STREAM_LOOKAHEAD_SECONDS:
                 time.sleep(0.05)
+                continue
+
+            try:
+                raw_bytes = decoder.read()
+            except Exception:
+                raw_bytes = None
+
+            pcm = self._decode(raw_bytes) if raw_bytes else None
+
+            with self._state_lock:
+                if generation != self._generation:
+                    continue  # seeked while we were reading - stale
+                if pcm is None:
+                    self._eof = True
+                else:
+                    self._buffer = (np.concatenate((self._buffer, pcm), axis=0)
+                                    if len(self._buffer) else pcm)
 
     def _detect_leading_silence(self, threshold=0.01):
         """Waits (briefly, bounded) for enough of the stream to decode
@@ -357,6 +392,7 @@ class Sound(BaseSound):
     def _seek_to(self, position_s):
         position_s = max(0.0, position_s)
         with self._state_lock:
+            self._generation += 1
             self._decoder.seek(position_s)
             self._buffer = np.empty((0, self._out_channels), dtype=np.float32)
             self._eof = False
