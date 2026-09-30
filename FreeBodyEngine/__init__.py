@@ -37,6 +37,7 @@ NATIVE_UI = "NATIVE_UI"  # fb.set_flag(fb.NATIVE_UI, False) before any UIElement
 PROJECT_PATH = "PROJECT_PATH"
 PROFILER = "PROFILER"
 NAME = "NAME"
+FULLSCREEN = "FULLSCREEN"  # fb.set_flag(fb.FULLSCREEN, False) before init() to keep Android's status/navigation bars on screen - see core.window.android.AndroidWindow. Defaults True (a game's expectation); an app wants False. Set for you from [android] fullscreen in fbproject.toml - see build/builder.py.
 FORCE_RENDERER = "FORCE_RENDERER"  # e.g. fb.set_flag(fb.FORCE_RENDERER, "gl33") to override graphics.get_renderer()'s auto-detection
 
 MAX_FPS = "MAX_FPS"

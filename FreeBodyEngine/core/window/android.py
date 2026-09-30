@@ -44,7 +44,7 @@ from FreeBodyEngine.core.window.headless import SDL_KEY_MAP
 from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.core.input import Key, KeyCallbackType
 from FreeBodyEngine.math import Vector
-from FreeBodyEngine import emit_event, error, get_main, get_service, get_time, QUIT
+from FreeBodyEngine import emit_event, error, get_main, get_service, get_time, get_flag, QUIT, FULLSCREEN
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -144,6 +144,26 @@ class AndroidWindow(Window):
         if not self._window:
             sdl2.SDL_Quit()
             error(f"Failed to create SDL window: {sdl2.SDL_GetError().decode()}")
+
+        # Dropped again immediately when the project asked for visible
+        # system bars. The flag above is about *surface* size - Android
+        # has no windowed mode - but SDL also reads it as a request for
+        # immersive mode and tells SDLActivity so, which sets its
+        # mFullscreenModeActive and, from then on, re-hides the status
+        # and navigation bars two seconds after anything reveals them
+        # (SDLActivity.rehideSystemUi). That's the "swipe up and they
+        # vanish again" behaviour, and it is not what buildozer's own
+        # `fullscreen` setting controls - that one only reaches the
+        # activity theme, so a project could set it and still be left
+        # in immersive mode by this window.
+        #
+        # Clearing it here rather than never setting it keeps the
+        # creation path identical for everything else and routes through
+        # SDL's own COMMAND_CHANGE_WINDOW_STYLE, which is what actually
+        # sets mFullscreenModeActive back to false and restores
+        # SYSTEM_UI_FLAG_VISIBLE.
+        if not get_flag(FULLSCREEN, True):
+            sdl2.SDL_SetWindowFullscreen(self._window, 0)
 
         self._gl_context = sdl2.SDL_GL_CreateContext(self._window)
         if not self._gl_context:
