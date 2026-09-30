@@ -55,6 +55,36 @@ class Window(Service):
         register_event(WINDOW_RESIZE, 'window')
         register_event(FRAMEBUFFER_RESIZE, 'window')
 
+        self._apply_project_icon()
+
+    def _apply_project_icon(self):
+        """Applies `[icons] app` from the project, if there is one.
+
+        Done here rather than by the project's own main.py because
+        every project would otherwise write the same few lines, and
+        done in on_initialize() rather than __init__() because the
+        native window a backend has to hand the icon to doesn't exist
+        until the subclass's own constructor has finished.
+
+        The path is resolved through the asset system, so the same
+        config line works in a dev run and in a release build where
+        there is no fbproject.toml to read."""
+        from FreeBodyEngine.core.dev import get_project
+
+        project = get_project()
+        if project is None:
+            return  # release build, or DEVMODE off - see find_project()
+
+        icons = getattr(project, "icons", None) or {}
+        relative = icons.get("app")
+        if not relative:
+            return
+
+        import os
+        path = os.path.join(project.path, project.assets, relative)
+        if os.path.isfile(path):
+            self.set_icon(path)
+
     def on_destroy(self):
         """Undoes on_initialize() - unhooks the per-frame update/draw calls and unregisters the window events."""
         unregister_service_update(UpdatePhase.EARLY, self.update)
@@ -136,6 +166,18 @@ class Window(Service):
         inset applied anywhere, real UI (a top bar, bottom nav) render
         partly hidden behind them instead of just stopping short of them."""
         return (0.0, 0.0, 0.0, 0.0)
+
+    def set_icon(self, path: str):
+        """Sets the window's icon from an image file.
+
+        A default no-op, not an abstractmethod: most backends have no
+        window decoration to put an icon on at all (Android, a browser
+        tab, a terminal), and those that do can differ on whether it's
+        even settable after creation. A backend that can, overrides
+        this; the rest silently do nothing rather than every caller
+        having to know which is which.
+        """
+        pass
 
     @abstractmethod
     def create_mouse(self) -> Mouse:

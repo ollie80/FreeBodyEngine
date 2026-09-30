@@ -145,6 +145,26 @@ GLFW_CHARACTER_MAP = {
 # GLFW key code -> engine Key, for _key_callback (which receives GLFW codes).
 GLFW_KEY_TO_ENGINE_MAP = {code: key for key, code in GLFW_CHARACTER_MAP.items()}
 
+# See GLFWWindow.set_icon(): a Wayland session can't have one, and
+# saying so on every launch would be noise.
+_WAYLAND_ICON_NOTED = False
+
+
+def _is_wayland() -> bool:
+    """Whether GLFW is talking to a Wayland compositor.
+
+    Not window_type, which is always 'glfw' for this backend - the
+    wayland/x11 distinction there belongs to the other, non-GLFW
+    backends. GLFW's own get_platform() is the authority and is asked
+    first; the environment is only a fallback for a GLFW too old to
+    have it."""
+    try:
+        return glfw.get_platform() == glfw.PLATFORM_WAYLAND
+    except Exception:
+        import os
+        return bool(os.environ.get("WAYLAND_DISPLAY"))
+
+
 class GLFWWindow(Window):
     """Window backend built on GLFW, the engine's cross-platform fallback.
 
@@ -328,6 +348,43 @@ class GLFWWindow(Window):
         across every backend it supports, no serial/data-source dance
         needed the way the Wayland backend's own implementation does."""
         glfw.set_clipboard_string(self._window, text)
+
+    def set_icon(self, path: str):
+        """Sets the window icon via glfwSetWindowIcon.
+
+        GLFW wants raw RGBA rather than an encoded file, so the image is
+        decoded here. Failures are warned about and otherwise ignored -
+        a missing or unreadable icon is a cosmetic problem, and taking
+        the window down over one would not be a trade anybody wants.
+
+        Not attempted on Wayland, which has no protocol for an app to
+        set its own icon at all: the compositor takes it from the
+        .desktop file whose name matches the app id. GLFW reports that
+        as an error, and pyGLFW surfaces it as a Python *warning*
+        rather than an exception - so it would slip past the except
+        below and print on every single launch, about something no
+        amount of application code can fix. Said once instead.
+        """
+        global _WAYLAND_ICON_NOTED
+        if _is_wayland():
+            if not _WAYLAND_ICON_NOTED:
+                _WAYLAND_ICON_NOTED = True
+                from FreeBodyEngine import warning
+                warning("Window icons can't be set by an application on Wayland - "
+                        "it uses the .desktop file's Icon= instead. Ignoring "
+                        "[icons] app for this window.")
+            return
+
+        try:
+            from PIL import Image as PILImage
+
+            with PILImage.open(path) as image:
+                rgba = image.convert("RGBA")
+                pixels = numpy.asarray(rgba, dtype=numpy.uint8)
+            glfw.set_window_icon(self._window, 1, [(rgba.width, rgba.height, pixels)])
+        except Exception as e:
+            from FreeBodyEngine import warning
+            warning(f"Could not set the window icon from {path!r}: {e}")
 
     def create_mouse(self):
         """Creates and returns this window's GLFWMouse."""

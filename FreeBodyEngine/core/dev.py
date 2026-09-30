@@ -14,6 +14,10 @@ class Project:
     code: str
     main_file: str
     name: str
+    # The [icons] table, verbatim. Paths in it are relative to `assets`
+    # - see Window._apply_project_icon() and the builder's
+    # get_icon_setting(), which is the other half of the same config.
+    icons: dict
 
 PROJECT: Project = None
 
@@ -24,7 +28,9 @@ def load_project() -> Project:
     path = get_flag(PROJECT_PATH, '/')
     project_file_path = path + "/fbproject.toml"
     project_data = loads(open_file(project_file_path, 'r').read())
-    return Project(path, project_data['assets'], project_data['code'], project_data['main_file'], project_data["name"])
+    return Project(path, project_data['assets'], project_data['code'],
+                   project_data['main_file'], project_data["name"],
+                   project_data.get("icons", {}) or {})
 
 def _add_code_dir_to_path(project: Project):
     """Puts the project's code directory (and its compiled cpp_scripts/

@@ -14,6 +14,7 @@ import venv
 import struct
 import venv
 import importlib
+from FreeBodyEngine import warning
 from FreeBodyEngine.font.atlasgen import generate_atlas
 from FreeBodyEngine.build.atlas_gen import AtlasGen
 from FreeBodyEngine.build.progress import ProgressBar
@@ -131,6 +132,32 @@ class Builder:
             self.build_for_dev()
         else:
             self.build_for_release()
+
+    # Where a notification icon is placed in the APK's resources. Fixed
+    # rather than configurable so runtime code can look it up by a name
+    # it knows without being told - see Window/notification services.
+    ANDROID_NOTIFICATION_DRAWABLE = "fb_notification_icon"
+
+    def get_icon_setting(self, name: str) -> str | None:
+        """An absolute path to one of the project's `[icons]`, or None.
+
+        Paths are given relative to the project's assets directory, the
+        same place every other art path in a project points at, so the
+        one icon can be referenced identically from the build (which
+        needs a real file) and at runtime (which loads it through the
+        asset system, and so works the same in a release build where
+        there's no fbproject.toml to read)."""
+        icons = self.get_user_setting('icons', {}) or {}
+        relative = icons.get(name)
+        if not relative:
+            return None
+
+        path = os.path.abspath(os.path.join(self.asset_path, relative))
+        if not os.path.isfile(path):
+            warning(f"[icons] {name} = {relative!r} does not exist under "
+                    f"{self.asset_path} - skipping it.")
+            return None
+        return path
 
     def get_user_setting(self, name: str, default: any = None):
         """Looks up `name` in the project's `fbproject.toml` settings.
@@ -1467,6 +1494,42 @@ runpy.run_module("_project_service", run_name="__main__")
         # is the whole workaround, but there was no way to ship them.
         java_src = os.path.join(self.project_path_root, "java")
         java_line = f"android.add_src = {java_src}\n" if os.path.isdir(java_src) else ""
+
+        # [icons] - see get_icon_setting(). Every one of these is
+        # optional; an absent key emits no line at all, so p4a keeps its
+        # own default rather than being handed an empty path.
+        icon_lines = ""
+        app_icon = self.get_icon_setting('app')
+        if app_icon:
+            icon_lines += f"icon.filename = {app_icon}\n"
+
+        # Adaptive icons are the pair Android actually wants from API 26
+        # on - the launcher masks the foreground to whatever shape the
+        # device uses. Only emitted together, since one without the
+        # other produces an icon with a missing half.
+        foreground = self.get_icon_setting('adaptive_foreground')
+        background = self.get_icon_setting('adaptive_background')
+        if foreground and background:
+            icon_lines += f"icon.adaptive_foreground.filename = {foreground}\n"
+            icon_lines += f"icon.adaptive_background.filename = {background}\n"
+        elif foreground or background:
+            warning("[icons] adaptive_foreground and adaptive_background must both "
+                    "be set - ignoring the one that is.")
+
+        splash = self.get_icon_setting('splash')
+        if splash:
+            icon_lines += f"presplash.filename = {splash}\n"
+        splash_color = (self.get_user_setting('icons', {}) or {}).get('splash_color')
+        if splash_color:
+            icon_lines += f"android.presplash_color = {splash_color}\n"
+
+        # The status-bar icon is a *resource*, not a file p4a has a key
+        # for, so it's copied into res/drawable under a fixed name the
+        # app can then look up at runtime by that name alone.
+        notification_icon = self.get_icon_setting('notification')
+        if notification_icon:
+            icon_lines += (f"android.add_resources = {notification_icon}:"
+                           f"drawable/{self.ANDROID_NOTIFICATION_DRAWABLE}.png\n")
         permissions = "INTERNET"
         if has_service:
             # WAKE_LOCK: without it, Android can suspend the CPU mid-track
@@ -1545,7 +1608,7 @@ android.archs = arm64-v8a
 # access for anything server-backed, so it's on by default here rather
 # than something every single project has to remember to add itself.
 android.permissions = {permissions}
-{services_line}{java_line}
+{icon_lines}{services_line}{java_line}
 [buildozer]
 log_level = 2
 """
