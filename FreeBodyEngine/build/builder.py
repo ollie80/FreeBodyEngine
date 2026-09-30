@@ -1452,6 +1452,21 @@ runpy.run_module("_project_service", run_name="__main__")
         # own code is running (see AndroidNotificationService in phonon).
         has_service = os.path.isfile(os.path.join(self.project_path_root, "service.py"))
         services_line = "services = playback:service.py:foreground\n" if has_service else ""
+
+        # A `java/` directory at the project root is compiled into the
+        # APK alongside the Python. Detected by presence, the same way
+        # service.py above is, rather than adding a config key for a
+        # single path.
+        #
+        # This exists because pyjnius can only implement Java
+        # *interfaces*, and several of the Android APIs an app actually
+        # needs are abstract *classes* - MediaSession.Callback, which is
+        # the only way to receive transport presses from the system's
+        # own media controls, being the case that forced it. A handful
+        # of lines of Java that forward into something Python can reach
+        # is the whole workaround, but there was no way to ship them.
+        java_src = os.path.join(self.project_path_root, "java")
+        java_line = f"android.add_src = {java_src}\n" if os.path.isdir(java_src) else ""
         permissions = "INTERNET"
         if has_service:
             # WAKE_LOCK: without it, Android can suspend the CPU mid-track
@@ -1530,7 +1545,7 @@ android.archs = arm64-v8a
 # access for anything server-backed, so it's on by default here rather
 # than something every single project has to remember to add itself.
 android.permissions = {permissions}
-{services_line}
+{services_line}{java_line}
 [buildozer]
 log_level = 2
 """
