@@ -364,7 +364,18 @@ class Sound(BaseSound):
         self.position = self._consumed_frames
 
     def play(self):
-        if self.stopped:
+        # Only re-seek if it isn't already sitting there. A freshly
+        # created Sound - which is every preloaded one - is already at
+        # start_frame with a buffer the feeder has filled, and seeking
+        # to where it already is means killing and respawning ffmpeg
+        # and throwing that buffer away. That respawn is most of the
+        # silence between two tracks: the gap isn't the transition
+        # being detected late, it's the next track's decoder starting
+        # from nothing at the exact moment it's needed.
+        #
+        # Replaying a track that ran to the end still seeks, because
+        # there _consumed_frames really has moved.
+        if self.stopped and self._consumed_frames != self.start_frame:
             self._seek_to(self.start_frame / self.sample_rate)
         self.stopped = False
         self.paused = False
