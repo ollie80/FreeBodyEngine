@@ -2,7 +2,7 @@
 binding hasn't changed between GL 3.3 and 4.4. Kept as a separate copy
 (rather than importing gl33's) so this backend has no runtime dependency on
 gl33 at all, matching every other file in this module."""
-from FreeBodyEngine.graphics.texture import TextureManager, Texture, TextureStack, MAX_TEXTURE_STACK_SIZE
+from FreeBodyEngine.graphics.texture import TextureManager, Texture, TextureStack, MAX_TEXTURE_STACK_SIZE, decode_image_bytes
 from FreeBodyEngine import warning
 from FreeBodyEngine import error as fb_error
 from OpenGL.GL import *
@@ -113,11 +113,17 @@ class GL44TextureManager(TextureManager):
         self._delete_texture(id)
 
     def _create_standalone_texture(self, data) -> Texture:
-        img = Image.open(io.BytesIO(data)).transpose(Image.Transpose.FLIP_TOP_BOTTOM).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-        image_data = np.array(img.convert('RGBA'), dtype=np.uint8)
+        image_data, width, height = decode_image_bytes(data)
+        return self.create_texture_from_pixels(image_data, width, height)
 
-        width, height = img.size
+    def create_texture_from_pixels(self, image_data, width: int, height: int) -> Texture:
+        """The upload half of _create_standalone_texture, given pixels
+        that have already been decoded (see decode_image_bytes).
 
+        Separate because only this half has to happen on the thread
+        holding the GL context. A caller with many images - the glTF
+        loader - decodes them in parallel and then calls this for each
+        in turn."""
         tex_id = glGenTextures(1)
         glBindTexture(GL_TEXTURE_2D, tex_id)
 
