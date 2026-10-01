@@ -8,6 +8,7 @@ import tomllib
 
 from FreeBodyEngine.build.builder import build
 from FreeBodyEngine.build.progress import ProgressBar
+from FreeBodyEngine.dev import android_sync
 
 def main(path='./'):
     """CLI entry point for `fb run`: builds the project fresh (`build(path, True)`), then launches its main file in a subprocess with `--dev`/`--path=`/`--name=` plus every original CLI argument forwarded, so the launched process sees the same flags this one was invoked with. Swallows Ctrl+C so interrupting the dev run doesn't surface as a traceback.
@@ -185,6 +186,52 @@ def _run_android(path):
         print("Could not find 'adb'. Install it with your system package manager, e.g. 'pacman -S android-tools' on Arch.")
         return
 
+    txt = open(f'{path}/fbproject.toml')
+    build_config = tomllib.loads(txt.read())
+    package_id = _android_package_id(build_config)
+    activity = f"{package_id}/org.kivy.android.PythonActivity"
+
+    devices = subprocess.run([adb, "devices"], capture_output=True, text=True).stdout
+    connected = [line for line in devices.splitlines()[1:] if line.strip().endswith("device")]
+    if not connected:
+        print("No Android device found by adb. Plug one in over USB with USB debugging enabled (check 'adb devices').")
+        return
+
+    # A Python edit doesn't need a new APK - p4a extracts loose .py and
+    # assets into the app's own directory, so the changed ones can be
+    # copied straight in. Which path to take is decided from what
+    # actually changed rather than from a flag: anything that is
+    # packaged rather than extracted (the spec, Java sources, native
+    # code) means a real build, and everything else doesn't.
+    java_dir = os.path.join(path, "java")
+    pushable, packaged = android_sync.fingerprint(
+        android_dir, [java_dir] if os.path.isdir(java_dir) else [])
+    state = android_sync.load_state(android_dir)
+    fast, reason = android_sync.can_fast_sync(adb, package_id, pushable, packaged, state)
+
+    if fast:
+        changed = android_sync.changed_files(pushable, state)
+        removed = android_sync.deleted_files(pushable, state)
+        if not changed and not removed:
+            progress.stage("No app files changed - restarting")
+            android_sync.restart(adb, package_id, activity)
+            progress.done("Restarted the app")
+        else:
+            progress.stage(f"Syncing {len(changed)} changed file(s) to the device")
+            if android_sync.push(adb, package_id, android_dir, changed, removed):
+                android_sync.save_state(android_dir, pushable, packaged, package_id)
+                progress.done(f"Synced {len(changed)} file(s) and restarted")
+                android_sync.restart(adb, package_id, activity)
+            else:
+                progress.done("Sync failed - falling back to a full build")
+                fast = False
+
+    if fast:
+        _stream_logs(adb)
+        return
+
+    print(f"Full build: {reason}.")
+
     # Indeterminate (total=None) - like PyInstaller packaging elsewhere in
     # this pipeline, buildozer's own internal stages (SDK/NDK download,
     # p4a recipe builds, gradle) aren't reliably parseable into a real
@@ -202,17 +249,6 @@ def _run_android(path):
         return
     apk_path = max(apks, key=os.path.getmtime)
 
-    devices = subprocess.run([adb, "devices"], capture_output=True, text=True).stdout
-    connected = [line for line in devices.splitlines()[1:] if line.strip().endswith("device")]
-    if not connected:
-        print("No Android device found by adb. Plug one in over USB with USB debugging enabled (check 'adb devices').")
-        return
-
-    txt = open(f'{path}/fbproject.toml')
-    build_config = tomllib.loads(txt.read())
-    package_id = _android_package_id(build_config)
-    activity = f"{package_id}/org.kivy.android.PythonActivity"
-
     progress.stage(f"Installing {os.path.basename(apk_path)}")
     result = _run_quiet(progress, [adb, "install", "-r", apk_path])
     if result.returncode != 0:
@@ -225,6 +261,11 @@ def _run_android(path):
         return
     progress.done(f"Launched {activity}")
 
+    # Recorded only after a successful install: this is the state the
+    # device is now actually in, and it's what the next run diffs
+    # against to decide it can skip all of the above.
+    android_sync.save_state(android_dir, pushable, packaged, package_id)
+
     # p4a's sdl2 bootstrap redirects the running app's stdout/stderr (i.e.
     # every fb.log()/warning()/error() call - see core/logger.py) into
     # logcat under the fixed tag "python", same as every p4a app - not
@@ -233,9 +274,20 @@ def _run_android(path):
     # this app's logs" instead of the whole device's - every other
     # process/system service/kernel line that unfiltered `adb logcat`
     # would otherwise interleave this with.
+    _stream_logs(adb)
+
+
+def _stream_logs(adb: str):
+    """Streams just this app's logcat output until Ctrl+C.
+
+    Both tags, not only "python": a foreground service runs in its own
+    process under its own tag (see the builder's `services =` line), so
+    filtering to "python" alone hides everything the player itself
+    logs - which on this engine is where playback, caching and the
+    media notification all report from."""
     subprocess.run([adb, "logcat", "-c"])
     print("Streaming app logs - press Ctrl+C to stop (the app keeps running on the device).")
-    logcat = subprocess.Popen([adb, "logcat", "-s", "python:*"])
+    logcat = subprocess.Popen([adb, "logcat", "-s", "python:*", "playback:*"])
     try:
         logcat.wait()
     except KeyboardInterrupt:
