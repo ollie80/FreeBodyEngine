@@ -371,6 +371,28 @@ class StreamingSound(BaseSound):
         return chunk
 
     def play(self):
+        """Starts, or restarts a sound that has already run out.
+
+        The restart matters for loop-track. PlaybackService loops a
+        track by calling play() again on the sound that just finished,
+        on the understanding that play() rewinds - which the other
+        backends do by resetting an index. This one has no index to
+        reset: the decoder has reached the end of its input and the
+        buffer is empty, so without an explicit seek the sound reports
+        finished again on the very next callback. Loop-track on a
+        streamed track became a silent spin, re-triggering end-of-track
+        every frame and never playing anything.
+
+        Only when it's actually exhausted. A sound that is simply
+        stopped but still has a decoder and a buffer - a preloaded one,
+        most of all - must not be rewound here, or every track change
+        would throw away the buffering done ahead of it.
+        """
+        with self._state_lock:
+            exhausted = self._eof and len(self._buffer) == 0
+        if exhausted:
+            self.seek(0.0)
+
         self.stopped = False
         self.paused = False
         self.manager.add_sound(self)
