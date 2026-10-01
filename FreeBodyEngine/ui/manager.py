@@ -106,6 +106,15 @@ class UIManager(Service):
         # comment on why: unlike a wheel event, a touch press carries no
         # delta at all - "which way is this swipe going" isn't answerable
         # until the finger has actually moved).
+        # A gesture that claimed this drag instead of letting it
+        # scroll - see _claim_gesture(). Resolved at the same moment
+        # the scroll target is, because it is the same question: the
+        # first frame of real movement is when a drag's axis is finally
+        # known, and both answers depend on it.
+        self._gesture_element: UIElement = None
+        self._gesture_event: str = None
+        self._gesture_origin: Vector = None
+
         self._touch_scroll_hit: UIElement = None
         self._touch_scroll_press_point: Vector = None
         self._touch_scroll_target: UIElement = None
@@ -201,6 +210,35 @@ class UIManager(Service):
                 return child_hit if child_hit is not None else element
 
         return None
+
+    def _claim_gesture(self, element: UIElement, horizontal: bool) -> tuple:
+        """The nearest ancestor wanting to handle a drag on this axis.
+
+        Asked before a scroll target, so an element that declares a
+        gesture takes the drag and the list underneath never moves. The
+        two can't both act on one gesture, and the element is the more
+        specific answer.
+
+        The axes are deliberately given different triggers by whoever
+        declares them, not by this. A horizontal drag has no conflict
+        with a vertical list, so "swipe" can live on a whole row. A
+        vertical one does conflict, so "reorder" is meant to be
+        declared on a small grip inside the row rather than the row
+        itself - leaving a drag anywhere else to scroll normally. That
+        is a decision about where the handler goes, which is why there
+        is nothing here enforcing it."""
+        wanted = "swipe" if horizontal else "reorder"
+        # The *_move handler is what's looked for, since that's the one
+        # a gesture can't be handled without - _start and _end are both
+        # optional. There is no bare "swipe" event to test for; the
+        # three are delivered under suffixed names.
+        probe = f"{wanted}_move"
+        node = element
+        while node is not None:
+            if node.has_event(probe):
+                return node, wanted
+            node = node.get_parent()
+        return None, None
 
     def _find_scroll_target(self, element: UIElement, delta: Vector = None) -> UIElement:
         """Walks up from `element` (inclusive) to the nearest ancestor whose
@@ -334,7 +372,7 @@ class UIManager(Service):
                     self._dragging_thumb = hit
                     self._drag_start_pos = point.y if owner._scroll_dir == "vertical" else point.x
                     self._drag_start_offset = owner._scroll_offset
-                elif get_platform() == "android":
+                else:
                     # Deliberately doesn't resolve _touch_scroll_target
                     # here - see __init__'s own comment on why (the drag
                     # direction, needed for the same axis-matching
@@ -343,6 +381,13 @@ class UIManager(Service):
                     # where the finger landed; the touch-drag block below
                     # resolves the real target once real movement (and so
                     # a real direction) actually exists.
+                    #
+                    # Recorded on every platform, not just Android,
+                    # because a *gesture* can be claimed anywhere - a
+                    # drag handle has to work with a mouse. Only the
+                    # scroll half below stays Android-only: a mouse drag
+                    # across ordinary content means text selection or
+                    # nothing, never "scroll the list".
                     self._touch_scroll_hit = hit
                     self._touch_scroll_press_point = point
                     self._touch_scroll_target = None
@@ -388,7 +433,18 @@ class UIManager(Service):
         #
         if self._touch_scroll_hit is not None:
             if mouse.get_down(LEFT_MOUSE_BUTTON):
-                if not self._touch_scroll_engaged and mouse.get_dragging(LEFT_MOUSE_BUTTON):
+                if not self._touch_scroll_engaged and mouse.get_dragging(LEFT_MOUSE_BUTTON) \
+                        and (abs(point.x - self._touch_scroll_press_point.x) >= 1.0
+                             or abs(point.y - self._touch_scroll_press_point.y) >= 1.0):
+                    # Real movement, not just get_dragging() turning
+                    # true. A backend is free to report dragging the
+                    # instant the button goes down (the synthetic mouse
+                    # used by tests does exactly that), and deciding a
+                    # direction from a zero delta picks an axis by
+                    # accident and then commits to it for the whole
+                    # gesture. On a device the touch slop usually hides
+                    # this; relying on that is not a reason to decide
+                    # from nothing.
                     self._touch_scroll_engaged = True
 
                     # Only now - the first frame with real movement - is a
@@ -415,12 +471,32 @@ class UIManager(Service):
                     total_dy = point.y - self._touch_scroll_press_point.y
                     gesture_delta = Vector(total_dx, 0) if abs(total_dx) > abs(total_dy) else Vector(0, total_dy)
 
-                    target = self._find_scroll_target(self._touch_scroll_hit, gesture_delta)
+                    # A gesture gets first refusal on the drag. Only if
+                    # nothing claims this axis does it become a scroll.
+                    horizontal = abs(total_dx) > abs(total_dy)
+                    claimed, event = self._claim_gesture(self._touch_scroll_hit, horizontal)
+                    if claimed is not None:
+                        self._gesture_element = claimed
+                        self._gesture_event = event
+                        self._gesture_origin = Vector(
+                            self._touch_scroll_press_point.x, self._touch_scroll_press_point.y)
+                        claimed._emit(f"{event}_start")
+
+                    target = None
+                    if claimed is None and get_platform() == "android":
+                        target = self._find_scroll_target(self._touch_scroll_hit, gesture_delta)
                     if target is not None:
                         vertical = target.get_current_styles().get("layout", "vertical") == "vertical"
                         self._touch_scroll_target = target
                         self._touch_scroll_axis_start = point.y if vertical else point.x
                         self._touch_scroll_start_offset = target._scroll_offset
+
+                if self._gesture_element is not None:
+                    self._gesture_element._emit(
+                        f"{self._gesture_event}_move",
+                        point.x - self._gesture_origin.x,
+                        point.y - self._gesture_origin.y,
+                    )
 
                 if self._touch_scroll_target is not None:
                     target = self._touch_scroll_target
@@ -433,11 +509,31 @@ class UIManager(Service):
             else:
                 self._touch_scroll_hit = None
                 self._touch_scroll_target = None
+                # Deliberately not _gesture_element: this runs on the
+                # release frame too (the button is no longer down), and
+                # it runs *before* the release handling below that has
+                # to deliver the gesture's own end event. Clearing it
+                # here meant a swipe never ended, only stopped. The
+                # release handler owns that teardown.
 
         #
         # Release / click.
         #
         if mouse.get_released(LEFT_MOUSE_BUTTON):
+            if self._gesture_element is not None:
+                # Ended wherever the finger actually left, which is not
+                # necessarily over the element that has been following
+                # it - a row swiped far enough is no longer under the
+                # finger that swiped it.
+                self._gesture_element._emit(
+                    f"{self._gesture_event}_end",
+                    mouse.position.x - self._gesture_origin.x,
+                    mouse.position.y - self._gesture_origin.y,
+                )
+                self._gesture_element = None
+                self._gesture_event = None
+                self._gesture_origin = None
+
             if self._pressed is not None:
                 self._pressed._emit("release")
 
@@ -446,6 +542,10 @@ class UIManager(Service):
                 # lifting) never also activates whatever was under the
                 # finger - matching every real touchscreen, where a swipe
                 # across a button doesn't also "press" it.
+                # `_touch_scroll_engaged` is true for a claimed gesture
+                # too - it marks "this press became a drag", not "this
+                # press became a scroll" - so a swipe never also
+                # activates the row it was performed on.
                 if self._pressed is hit and not self._touch_scroll_engaged:
                     self._pressed._emit("click")
 
