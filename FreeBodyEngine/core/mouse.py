@@ -2,7 +2,7 @@ from FreeBodyEngine.math import Vector
 from FreeBodyEngine.utils import abstractmethod
 from FreeBodyEngine.core.service import Service
 from FreeBodyEngine.core.update import UpdatePhase
-from FreeBodyEngine import register_service_update, unregister_service_update, warning
+from FreeBodyEngine import register_service_update, unregister_service_update, warning, get_service
 
 class Mouse(Service):
     """Base mouse service - tracks cursor position, button state, dragging, and double-clicks. Each window backend (GLFW/X11/Wayland) provides a concrete subclass implementing the abstract methods below."""
@@ -13,6 +13,9 @@ class Mouse(Service):
 
         self._dragging = False
         self.drag_start = Vector()
+        # Where each held button went down, for the default
+        # get_dragging()/get_drag_start() below.
+        self._drag_origins: dict[int, Vector] = {}
 
         self.position = Vector()
         self.world_position = Vector()
@@ -88,15 +91,52 @@ class Mouse(Service):
         """Returns whether `button` was double-clicked this frame (two presses within `double_click_threshold` seconds)."""
         pass
 
-    @abstractmethod
     def get_dragging(self, button: int) -> bool:
-        """Returns whether `button` is currently being dragged."""
-        pass
+        """Whether `button` is held and has moved far enough to count as
+        a drag rather than a press.
 
-    @abstractmethod
+        A concrete default rather than an abstract method, because the
+        answer is the same for every backend that reports a position
+        and a button: held, and further from where it went down than
+        the window's own drag threshold (which is a real measurement on
+        a touchscreen - see AndroidWindow.drag_threshold). Backends
+        whose platform tells them directly still override it.
+
+        It was abstract, and the four backends that hadn't implemented
+        it raised NotImplementedError the first time anything asked -
+        which nothing did until drags became meaningful outside
+        Android. A desktop mouse not knowing whether it is dragging is
+        not a thing worth making each backend restate."""
+        if not self.get_down(button):
+            self._drag_origins.pop(button, None)
+            return False
+
+        origin = self._drag_origins.get(button)
+        if origin is None:
+            # First frame this button has been seen down - where it is
+            # now is the best available answer for where it started.
+            self._drag_origins[button] = Vector(self.position.x, self.position.y)
+            return False
+
+        try:
+            window = get_service("window")
+            threshold = getattr(window, "drag_threshold", 4.0) if window else 4.0
+        except Exception:
+            # No window service to ask - during teardown, or a mouse
+            # used outside a running engine. A sane constant beats
+            # taking input handling down over a threshold.
+            threshold = 4.0
+        dx = self.position.x - origin.x
+        dy = self.position.y - origin.y
+        return (dx * dx + dy * dy) >= (threshold * threshold)
+
     def get_drag_start(self, button: int, world: bool = False) -> Vector:
-        """Returns the position `button`'s current drag started at, in world or screen space depending on `world`."""
-        pass
+        """Where `button`'s current drag started, in world or screen space."""
+        origin = self._drag_origins.get(button)
+        if origin is None:
+            return Vector(self.world_position.x, self.world_position.y) if world \
+                else Vector(self.position.x, self.position.y)
+        return origin
 
     def get_scroll_delta(self) -> Vector:
         """Returns how far the scroll wheel moved this frame (x = horizontal,
