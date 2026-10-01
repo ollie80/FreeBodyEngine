@@ -170,6 +170,11 @@ class TilemapInjector(Injector):
         self.chunk_size = chunk_size
         self.tile_size = tile_size
 
+    def cache_key(self) -> str:
+        """The two numbers this injector bakes into the source - which is
+        everything it varies on (see source_inject below)."""
+        return f"tilemap:{self.chunk_size}:{self.tile_size}"
+
     def source_inject(self, source):
         """Replaces the `_ENGINE_*` placeholder tokens in `source` with this
         tilemap's actual chunk/tile sizes."""

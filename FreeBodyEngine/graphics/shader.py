@@ -1,6 +1,7 @@
 import sys
 from FreeBodyEngine.utils import abstractmethod
 from fbusl import compile, ShaderType
+from FreeBodyEngine.graphics.shader_cache import compile_cached
 from fbusl.injector import Injector
 
 import numpy as np
@@ -21,12 +22,15 @@ class Shader:
         if injector == None:
             injector = Injector()
 
-        self.fbusl_vertex_source = compile(vertex_source, ShaderType.VERTEX, generator, injector)
-        self.fbusl_fragment_source = compile(fragment_source, ShaderType.FRAGMENT, generator, injector)
+        # Through the on-disk cache (see graphics/shader_cache.py), which
+        # falls back to compiling normally whenever it cannot be sure the
+        # stored result belongs to these exact inputs.
+        self.fbusl_vertex_source = compile_cached(vertex_source, ShaderType.VERTEX, generator, injector)
+        self.fbusl_fragment_source = compile_cached(fragment_source, ShaderType.FRAGMENT, generator, injector)
 
         self.fbusl_geometry_source = None
         if geometry_source is not None:
-            self.fbusl_geometry_source = compile(geometry_source, ShaderType.GEOMETRY, generator, injector)
+            self.fbusl_geometry_source = compile_cached(geometry_source, ShaderType.GEOMETRY, generator, injector)
 
         self.fragment_source = fragment_source
         self.vertex_source = vertex_source

@@ -69,6 +69,18 @@ class MaterialInjector(Injector):
             PropertyType.COLOR_RGBA: 'vec4',
         }[property]
 
+    def cache_key(self) -> str:
+        """What this injector varies on: the set of material properties
+        and the GLSL type of each.
+
+        Not the material's actual values, and not whether a texture is
+        currently bound - ast_inject() emits the same
+        `useTexture ? sample(...) : color` either way, so two materials
+        with the same properties compile to identical source and should
+        share one cache entry."""
+        types = self._property_types()
+        return "mat:" + ",".join(f"{name}={glsl}" for name, glsl in sorted(types.items()))
+
     def _property_types(self) -> dict[str, str]:
         # `compile()` calls ast_inject() *before* get_builtins() (the tree is
         # rewritten, then handed to the semantic analyser along with the
