@@ -27,6 +27,8 @@ class GL44TextureManager(TextureManager):
         super().__init__(*args, **kwargs)
 
         self.texture_slots = {}
+        # id -> (width, height, channels) for stream textures.
+        self._stream_sizes = {}
         self.slot_textures = {}
         self.next_texture_slot = 0
         self.max_texture_slots = glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS)
@@ -39,6 +41,65 @@ class GL44TextureManager(TextureManager):
         self.texture_slots.clear()
         self.slot_textures.clear()
         self.next_texture_slot = 0
+
+    def create_stream_texture(self, width: int, height: int, channels: int = 3) -> Texture:
+        """An empty texture sized once, to be refilled every frame.
+
+        Separate from _create_standalone_texture() because the costs
+        that are fine once per image are not fine per frame: that one
+        decodes bytes through PIL and builds a mip chain, both of which
+        would be paid twelve times a second for a video. This allocates
+        the storage up front so every later upload can be a
+        glTexSubImage2D into it - no reallocation, no decode, no
+        mipmaps.
+
+        Linear filtering with no mipmaps on purpose: a stream texture is
+        drawn at roughly its own size or larger, and GL_LINEAR_MIPMAP_*
+        with no mip chain samples as incomplete and renders black."""
+        tex_id = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, tex_id)
+
+        fmt = GL_RGB if channels == 3 else GL_RGBA
+        glTexImage2D(GL_TEXTURE_2D, 0, fmt, width, height, 0, fmt, GL_UNSIGNED_BYTE, None)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+
+        id = self.gen_id()
+        self.standalone_textures[id] = tex_id
+        self._stream_sizes[id] = (width, height, channels)
+        return Texture(self, id, (0, 0, 1, 1))
+
+    def update_stream_texture(self, id, pixels) -> bool:
+        """Replaces a stream texture's contents with raw pixel bytes.
+
+        `pixels` must be exactly width*height*channels bytes, bottom-up
+        (GL's own row order - a video decoder can be asked to flip for
+        free, which is cheaper than flipping every frame here).
+
+        glTexSubImage2D rather than glTexImage2D: the storage already
+        exists at the right size, so this writes into it rather than
+        reallocating. Row alignment is forced to 1 because a width that
+        isn't a multiple of four would otherwise be read with padding
+        that isn't there, which shears the image."""
+        if id not in self._stream_sizes:
+            warning(f"Cannot stream into texture '{id}': it isn't a stream texture.")
+            return False
+
+        width, height, channels = self._stream_sizes[id]
+        expected = width * height * channels
+        if len(pixels) != expected:
+            warning(f"Stream texture '{id}' wants {expected} bytes, got {len(pixels)}.")
+            return False
+
+        fmt = GL_RGB if channels == 3 else GL_RGBA
+        glBindTexture(GL_TEXTURE_2D, self.standalone_textures[id])
+        previous = glGetIntegerv(GL_UNPACK_ALIGNMENT)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, fmt, GL_UNSIGNED_BYTE, pixels)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, previous)
+        return True
 
     def _create_standalone_texture(self, data) -> Texture:
         img = Image.open(io.BytesIO(data)).transpose(Image.Transpose.FLIP_TOP_BOTTOM).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
