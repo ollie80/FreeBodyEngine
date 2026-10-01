@@ -16,6 +16,7 @@ from FreeBodyEngine import get_service, warning
 from FreeBodyEngine.graphics.model import Model
 from FreeBodyEngine.graphics.mesh import create_static_mesh
 from FreeBodyEngine.graphics.texture import decode_image_bytes
+from FreeBodyEngine.graphics import fbimg
 from FreeBodyEngine.core.files.resource import FileResource
 from FreeBodyEngine.core.files import get_file, load_file
 
@@ -920,7 +921,23 @@ def bake_gltf_to_fbmesh(parser: 'GLTFParser', image_name_prefix: str) -> tuple[b
 
     for image_index in range(len(gltf.get("images", []))):
         data = parser.get_image_data(image_index)
-        ext = ".jpg" if data[:2] == b"\xff\xd8" else ".png"
+
+        # Pre-decoded where that is actually worth it. The runtime cost
+        # of a model is overwhelmingly image decoding - 3.8s of a 4.2s
+        # load for one real file - and a .fbimg is already the pixels
+        # the GPU wants, so loading one skips the decoder entirely.
+        #
+        # Not unconditionally, though: baking a JPEG produces something
+        # five to twelve times the size that is often slower to inflate
+        # than the JPEG was to decode. bake_image_bytes() returns None
+        # when that is the case and the original is kept. See
+        # graphics/fbimg.py's MAX_SIZE_RATIO for the measurements.
+        baked = fbimg.bake_image_bytes(data)
+        if baked is not None:
+            data, ext = baked, ".fbimg"
+        else:
+            ext = ".jpg" if data[:2] == b"\xff\xd8" else ".png"
+
         name = f"{image_name_prefix}_{image_index}{ext}"
         images_out[name] = data
         image_paths[image_index] = name

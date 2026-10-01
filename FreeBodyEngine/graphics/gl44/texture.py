@@ -252,14 +252,11 @@ class GL44TextureManager(TextureManager):
 
     def _create_atlas_texture(self, atlas_img, file_path, atlas_data, name):
         if not self._atlas_exists(file_path):
-            img = Image.open(io.BytesIO(atlas_img)).transpose(
-                Image.Transpose.FLIP_TOP_BOTTOM
-            ).transpose(
-                Image.Transpose.FLIP_LEFT_RIGHT
-            )
-
-            image_data = np.array(img.convert('RGBA'), dtype=np.uint8)
-            width, height = img.size
+            # Through the shared decode, which means the atlas gets the
+            # single-rotation path and the pre-decoded .fbimg fast path
+            # for free - and it is the one image a release build decodes
+            # at startup, so it is the one that most wants them.
+            image_data, width, height = decode_image_bytes(atlas_img)
 
             tex_id = glGenTextures(1)
             glBindTexture(GL_TEXTURE_2D, tex_id)

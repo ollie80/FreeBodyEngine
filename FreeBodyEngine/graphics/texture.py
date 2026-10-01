@@ -27,6 +27,15 @@ def decode_image_bytes(data) -> tuple:
     from PIL import Image
     import io
 
+    # A pre-decoded image (see graphics/fbimg.py) skips all of this: the
+    # bytes are already RGBA in the orientation below, so there is
+    # nothing to decode, convert or rotate. Checked here rather than at
+    # each call site so every loader in the engine - standalone
+    # textures, the release atlas, fonts, glTF - gets it at once.
+    from FreeBodyEngine.graphics import fbimg
+    if isinstance(data, (bytes, bytearray)) and fbimg.is_fbimg(data):
+        return fbimg.decode(data)
+
     image = Image.open(io.BytesIO(data)) if isinstance(data, (bytes, bytearray)) else Image.open(data)
     image = image.transpose(Image.Transpose.ROTATE_180)
     if image.mode != "RGBA":
