@@ -1,5 +1,5 @@
 from FreeBodyEngine import get_main, warning, get_flag, get_service
-from typing import Literal, overload
+from typing import Literal, overload, TYPE_CHECKING
 
 def get_platform() -> Literal['win32', 'darwin', 'linux', 'web', 'android']:
     """Returns the identifier for the current host platform, or None if it
@@ -135,16 +135,46 @@ def load_dlls():
 
     return dll_dir
 
-try:
-    import numba
-    HAS_NUMBA = True
-except ImportError:
-    HAS_NUMBA = False
+# numba is imported on first use, not here.
+#
+# This module is where `abstractmethod` lives, so essentially every file
+# in the engine imports it - and importing numba costs 300ms, dragging
+# scipy's 143ms in behind it, on every single startup. Nothing but the
+# tilemap actually uses the JIT, and a project with no tilemap in it was
+# paying nearly half a second to find that out.
+#
+# HAS_NUMBA is still readable as a module attribute (tilemap/renderer.py
+# imports it) via __getattr__ below, which resolves it the first time
+# anything asks - by which point whoever asked is about to use it.
+_numba = None
+_has_numba: bool | None = None
+
+
+def _load_numba() -> bool:
+    """Imports numba if it hasn't been tried yet; returns whether it's
+    available."""
+    global _numba, _has_numba
+    if _has_numba is None:
+        try:
+            import numba as _module
+            _numba, _has_numba = _module, True
+        except ImportError:
+            _numba, _has_numba = None, False
+    return _has_numba
+
+
+def __getattr__(name):
+    """Module-level attribute fallback - only consulted for names not
+    defined above, which is what keeps HAS_NUMBA lazy while leaving it
+    importable."""
+    if name == "HAS_NUMBA":
+        return _load_numba()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def fbjit(signature=None, *args, **kwargs):
     """JIT-compiles the decorated function with `numba.jit(signature, **kwargs)` when numba is installed; otherwise warns once and falls back to the no-op `decorator` below, which returns the function unchanged - lets call sites use `@fbjit` unconditionally regardless of whether numba is available."""
-    if HAS_NUMBA:
-        return numba.jit(signature, **kwargs)
+    if _load_numba():
+        return _numba.jit(signature, **kwargs)
 
     else:
         def decorator(func):
@@ -156,8 +186,8 @@ def fbjit(signature=None, *args, **kwargs):
 
 def fbnjit(*args, **kwargs):
     """JIT-compiles the decorated function in nopython mode via `numba.njit(*args, **kwargs)` when numba is installed; otherwise warns once and falls back to the no-op `decorator` below, which returns the function unchanged."""
-    if HAS_NUMBA:
-        return numba.njit(*args, **kwargs)
+    if _load_numba():
+        return _numba.njit(*args, **kwargs)
     else:
         def decorator(func):
             """No-op fallback used when numba isn't installed: returns `func` unmodified."""
@@ -166,8 +196,14 @@ def fbnjit(*args, **kwargs):
         warning('Could not import numba.')
         return decorator
 
-from FreeBodyEngine.core.node import Node
-from FreeBodyEngine.ui.element import UIElement
+# Imported for type checking only. At runtime these are resolved inside
+# add() itself: ui.element reaches graphics.color -> graphics -> the PBR
+# pipeline -> the tilemap, so importing it here dragged the entire
+# graphics stack into a module that every file imports `abstractmethod`
+# from. Measured at 636ms of the engine's 961ms import.
+if TYPE_CHECKING:
+    from FreeBodyEngine.core.node import Node
+    from FreeBodyEngine.ui.element import UIElement
 
 @overload
 def add(node: 'Node'):
@@ -177,7 +213,7 @@ def add(node: 'Node'):
     pass
 
 @overload
-def add(element: UIElement):
+def add(element: 'UIElement'):
     """
     Adds a ui element to the root node in the ui manager.
     """
@@ -187,6 +223,9 @@ def add(obj: any):
     """
     Adds a object to the correct service. e.g. giving a Node2D object would add it to the current scene in the scene manager service.
     """
+    from FreeBodyEngine.core.node import Node
+    from FreeBodyEngine.ui.element import UIElement
+
     if isinstance(obj, Node):
         get_service('scene').get_active().add(obj)
     

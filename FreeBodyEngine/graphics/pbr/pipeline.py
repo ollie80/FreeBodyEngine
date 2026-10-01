@@ -51,7 +51,12 @@ from FreeBodyEngine.graphics.pbr.lighting import Light, LightType
 from FreeBodyEngine.graphics.pbr.shaders import MAX_LIGHTS, LIGHTING_COMPOSITE_VERT, LIGHTING_COMPOSITE_FRAG
 
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
-from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
+# TilemapRenderer is deliberately not imported. Nothing here uses the
+# name - _collect() identifies one with node.inherits_from(
+# 'TilemapRenderer'), a string - and importing it reached the tilemap
+# module, whose @fbnjit decorators pull in numba and, behind numba,
+# scipy. That was 450ms on every engine import, for a symbol this
+# file never referred to.
 from FreeBodyEngine.graphics.sprite import Sprite2D, Sprite
 from FreeBodyEngine.graphics.debug import Debug2D
 from FreeBodyEngine.graphics.mesh2d import MeshNode2D
