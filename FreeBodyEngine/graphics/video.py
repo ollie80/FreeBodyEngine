@@ -218,9 +218,20 @@ class VideoTexture:
     def close(self):
         self._closed = True
         self._terminate()
+        if self.texture is not None:
+            manager = self._texture_manager()
+            if manager is not None and hasattr(manager, "delete_stream_texture"):
+                manager.delete_stream_texture(self.texture.id)
+            self.texture = None
 
     def __del__(self):
+        """Kills the ffmpeg process, and deliberately does not free the
+        texture: __del__ runs on whichever thread happened to trigger
+        collection, and a GL call from the wrong thread is a crash rather
+        than an error. A leaked texture is the better failure, and
+        close() frees it properly when called by hand."""
+        self._closed = True
         try:
-            self.close()
+            self._terminate()
         except Exception:
             pass

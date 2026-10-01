@@ -134,6 +134,17 @@ class GLTextureManager(TextureManager):
         glPixelStorei(GL_UNPACK_ALIGNMENT, previous)
         return True
 
+    def delete_stream_texture(self, id):
+        """Frees a stream texture and forgets its size.
+
+        Needed as its own method because _delete_texture() knows nothing
+        about _stream_sizes - leaving an entry there after the GL texture
+        is gone would let a later id collision upload into nothing, and
+        the whole point of a stream texture is that something keeps
+        trying to upload into it."""
+        self._stream_sizes.pop(id, None)
+        self._delete_texture(id)
+
     def reload_standalone_texture(self, id, data):
         """Re-decodes `data` into the *same* GL texture this standalone
         Texture `id` already wraps (glTexImage2D on the existing tex_id,

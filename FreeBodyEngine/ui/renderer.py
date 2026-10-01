@@ -93,6 +93,10 @@ class UIRenderer(Service):
         # - see _mark_dirty's own docstring for why.
         self._dirty_rect = None
 
+        # Elements that asked for a redraw this frame regardless of the
+        # diff - see repaint().
+        self._repaint_requests = []
+
         # What self.ui.root.children looked like (by child identity/order)
         # last frame - compared
         # directly in draw() (not by recursing into _compute_dirty_rect,
@@ -257,6 +261,15 @@ class UIRenderer(Service):
         # visible and swallowing clicks, and of a swapped-out view
         # leaving the previous screen painted underneath.
         self._dirty_rect = None
+
+        # Whatever asked to be redrawn without having changed - an
+        # element showing an animated texture, see repaint(). Unioned in
+        # here, after the clear above and with layout settled, so the
+        # request survives to the pass that actually uses it.
+        for element in self._repaint_requests:
+            layout = element._layout
+            self._mark_dirty((layout.x, layout.y, layout.width, layout.height))
+        self._repaint_requests.clear()
 
         root_children = tuple(id(c) for c in self.ui.root.children.values())
         if root_children != self._prev_root_children:
@@ -669,15 +682,47 @@ class UIRenderer(Service):
         window = get_service('window')
         return window.content_scale if window is not None else 1.0
 
-    def _resolve_image(self, path: str):
-        cached = self._image_cache.get(path)
+    def _resolve_image(self, image):
+        """The `image` style, as a Texture to sample.
+
+        Usually an asset path, loaded once and cached - the same cover
+        appears in a dozen rows and must not be decoded a dozen times.
+        It can also be a Texture already, which is how anything *live*
+        gets into the UI: a GifTexture's or VideoTexture's frame changes
+        underneath a fixed texture id, so there is no path to load and
+        nothing worth caching (caching it by identity would be caching
+        the one thing whose contents are meant to change). Such an
+        element also won't repaint on its own - its styles never change -
+        so whoever advances the frames calls repaint() as well."""
+        if not isinstance(image, str):
+            return image
+
+        cached = self._image_cache.get(image)
         if cached is not None:
             return cached
 
-        texture = load_file(path)
+        texture = load_file(image)
         if texture is not None:
-            self._image_cache[path] = texture
+            self._image_cache[image] = texture
         return texture
+
+    def repaint(self, element: 'UIElement'):
+        """Redraws `element` this frame even though nothing about it
+        changed.
+
+        The damage tracking below is a diff of layout and styles, which
+        is everything for a UI that only changes when something is
+        clicked - but it cannot see a texture whose *contents* changed
+        while its id stayed the same, which is exactly what an animated
+        cover or a video backdrop is. Those elements say so themselves,
+        once per new frame, instead of being guessed at.
+
+        Deliberately a request held until draw() rather than a direct
+        _mark_dirty(): draw() clears the dirty rect at its own start (it
+        has to - see the comment there), so a mark made between frames
+        would be thrown away, and the element's layout rect isn't final
+        until layout has run anyway."""
+        self._repaint_requests.append(element)
 
     def _draw_background(self, element: 'UIElement', styles: dict):
         width, height = element._layout.width, element._layout.height

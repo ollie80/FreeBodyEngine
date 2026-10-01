@@ -101,6 +101,17 @@ class GL44TextureManager(TextureManager):
         glPixelStorei(GL_UNPACK_ALIGNMENT, previous)
         return True
 
+    def delete_stream_texture(self, id):
+        """Frees a stream texture and forgets its size.
+
+        Needed as its own method because _delete_texture() knows nothing
+        about _stream_sizes - leaving an entry there after the GL texture
+        is gone would let a later id collision upload into nothing, and
+        the whole point of a stream texture is that something keeps
+        trying to upload into it."""
+        self._stream_sizes.pop(id, None)
+        self._delete_texture(id)
+
     def _create_standalone_texture(self, data) -> Texture:
         img = Image.open(io.BytesIO(data)).transpose(Image.Transpose.FLIP_TOP_BOTTOM).transpose(Image.Transpose.FLIP_LEFT_RIGHT)
         image_data = np.array(img.convert('RGBA'), dtype=np.uint8)
