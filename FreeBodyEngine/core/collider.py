@@ -356,7 +356,20 @@ class RectangleCollisionShape(CollisionShape):
         return _convex_polygons_overlap(corners, self._get_axes(corners), other._get_corners(), other._get_axes())
 
     def get_aabb(self) -> tuple[Vector, Vector]:
-        """The rectangle's bounding box: the min/max of its (possibly rotated) corners."""
+        """The rectangle's bounding box: the min/max of its (possibly rotated) corners.
+
+        An unrotated rectangle - which in a 2D game is most of them, every
+        tile collider included - is its own bounding box, so the four rotated
+        corners never need building. That mattered once a broad phase started
+        asking for this: _get_corners allocates four vectors and runs eight
+        trig-weighted multiplies per call.
+        """
+        if not self.rotation:
+            half_w = self.size.x / 2
+            half_h = self.size.y / 2
+            return (Vector(self.position.x - half_w, self.position.y - half_h),
+                    Vector(self.position.x + half_w, self.position.y + half_h))
+
         corners = self._get_corners()
         xs = [c.x for c in corners]
         ys = [c.y for c in corners]
@@ -510,7 +523,6 @@ class RectangleCollider2D(Collider2D):
         """Creates a RectangleCollider2D with the collision shape's size taken directly from `scale`."""
         super().__init__(RectangleCollisionShape, position, rotation, scale)
         self.collision_shape: RectangleCollisionShape
-
     def toggle_debug_visuals(self):
         """Adds a RectangleColliderDebug child if this collider (already initialized) has none yet, otherwise removes any existing ones."""
         if self.is_initialized:

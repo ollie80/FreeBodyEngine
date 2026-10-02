@@ -171,6 +171,9 @@ class TilemapRenderer(Node2D):
         super().__init__(position, rotation, scale)
         self.parental_requirement = "Tilemap"
         self.parent: 'Tilemap'
+        # (layer, chunk position, spritesheet index) -> mesh, rebuilt only when
+        # the chunk's data actually changes. See draw().
+        self._meshes: dict = {}
 
     def on_initialize(self):
         """Creates the tilemap material, generating its shader source with
@@ -199,8 +202,13 @@ class TilemapRenderer(Node2D):
 
     def draw(self, camera):
         """Draws every visible layer of the parent tilemap, one draw call per
-        (chunk, spritesheet) pair. A chunk's mesh is rebuilt from its raw
-        tile data every call rather than cached.
+        (chunk, spritesheet) pair.
+
+        Meshes are cached and rebuilt only when a chunk's data changes, which
+        is what `Chunk._updated` was always for - nothing had ever read it.
+        Every chunk's mesh used to be regenerated from raw tile data on every
+        single frame, each one also allocating a fresh VAO and vertex buffers
+        that were never freed.
 
         Layers are drawn in insertion order with alpha blending on and depth
         writes off (`BlendMode.TRANSPARENT`), so a transparent tile on one
@@ -232,13 +240,14 @@ class TilemapRenderer(Node2D):
                     chunk = layer.chunks[chunk_pos]
 
                     for sheet_index, sheet in tilemap.iter_spritesheets():
-                        cols, rows = sheet.size
-                        vertices, uvs, indices = generate_chunk_mesh(
-                            chunk.tiles, tilemap.tile_size, tilemap.chunk_size,
-                            sheet_index, cols, rows,
-                        )
+                        key = (layer_name, chunk_pos, sheet_index)
 
-                        if indices.shape[0] == 0:
+                        if chunk._updated or key not in self._meshes:
+                            self._meshes[key] = self._build_mesh(
+                                tilemap, chunk, sheet, sheet_index, mesh_class)
+
+                        mesh = self._meshes[key]
+                        if mesh is None:
                             continue
 
                         albedo = sheet.get_map('albedo')
@@ -255,19 +264,36 @@ class TilemapRenderer(Node2D):
                         # also what a sprite with no normal map gets.
                         self.material.properties['normal'] = normal if normal is not None else Color("#00000000")
 
-                        mesh = mesh_class(
-                            attributes={
-                                'vertices': (AttributeType.VEC2, vertices),
-                                'uvs': (AttributeType.VEC2, uvs),
-                            },
-                            indices=indices,
-                            usage=BufferUsage.DYNAMIC,
-                        )
-
                         shader['chunk_pos'] = (chunk.position.x, chunk.position.y)
                         renderer.draw_mesh(mesh, self.material)
+
+                    # Cleared once every spritesheet's mesh for this chunk has
+                    # been rebuilt, not before, or the later sheets would keep
+                    # a stale mesh.
+                    chunk._updated = False
         finally:
             renderer.set_blend_mode(BlendMode.OPAQUE)
+
+    def _build_mesh(self, tilemap, chunk, sheet, sheet_index, mesh_class):
+        """Builds one (chunk, spritesheet) mesh, or None if that pair has no
+        tiles."""
+        cols, rows = sheet.size
+        vertices, uvs, indices = generate_chunk_mesh(
+            chunk.tiles, tilemap.tile_size, tilemap.chunk_size,
+            sheet_index, cols, rows,
+        )
+
+        if indices.shape[0] == 0:
+            return None
+
+        return mesh_class(
+            attributes={
+                'vertices': (AttributeType.VEC2, vertices),
+                'uvs': (AttributeType.VEC2, uvs),
+            },
+            indices=indices,
+            usage=BufferUsage.DYNAMIC,
+        )
 
 
 class TilemapInjector(Injector):

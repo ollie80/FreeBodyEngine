@@ -168,11 +168,18 @@ class Scene:
         #
         # PhysicsWorld.step() already does exactly this for RigidBody2D, for
         # the same reason - see its own comment.
+        # Each collider's bounds are computed once here, with its transform,
+        # and handed to every body: neither the list nor the bounds can change
+        # during the narrow phase, and doing it per body meant a full tree walk
+        # and a fresh bounding box per body per step.
+        colliders = []
         for collider in self.root.find_nodes_with_type('Collider2D'):
             collider.apply_transform()
+            aabb_min, aabb_max = collider.collision_shape.get_aabb()
+            colliders.append((collider, aabb_min, aabb_max))
 
         for node in physics_nodes:
-            node._check_collisions()
+            node._check_collisions(colliders)
 
         # Coexists with the loop above rather than replacing it - a scene
         # can freely mix the older arcade-physics PhysicsBody with the

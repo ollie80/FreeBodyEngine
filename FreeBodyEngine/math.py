@@ -519,12 +519,24 @@ class Vector(GenericVector):
         """Builds a vector from another `Vector`, a 2-element sequence, an
         explicit `(x, y)` pair, or a single scalar broadcast to both axes
         (`Vector()` defaults to `(0, 0)`)."""
+        # Deliberately not `isinstance(x, Sequence)`: typing.Sequence is an
+        # ABC, so that check runs typing.__instancecheck__ ->
+        # __subclasscheck__ rather than a plain type test. This constructor is
+        # one of the hottest functions in the engine - a single second of
+        # physics with a handful of bodies built ten million vectors, and that
+        # one check was most of the cost. Concrete types are tested first and
+        # the general sequence case falls back to duck typing, which keeps
+        # every input the ABC accepted working (numpy arrays included).
         if isinstance(x, Vector):
             self.x, self.y = x.x, x.y
-        elif isinstance(x, Sequence):
+        elif isinstance(x, (list, tuple)):
             self.x, self.y = x[0], x[1]
         elif y is not None:
             self.x, self.y = x, y
+        elif isinstance(x, (int, float)):
+            self.x, self.y = x, x
+        elif hasattr(x, '__getitem__'):
+            self.x, self.y = x[0], x[1]
         else:
             self.x, self.y = x, x
 
