@@ -15,6 +15,7 @@ from OpenGL.GL import (
 )
 from PIL import Image as PILImage
 import glfw
+import numpy
 
 from FreeBodyEngine.core.window.glfw import GLFWWindow
 from FreeBodyEngine.core.mouse import Mouse
@@ -133,7 +134,26 @@ class SyntheticMouse(Mouse):
     def inject_move(self, x: float, y: float):
         """Moves the cursor to (x, y) in screen space - takes effect immediately, not queued (position is a level value, not edge-triggered)."""
         self.position = Vector(x, y)
+        # Unprojected through the active camera, exactly as a real backend's
+        # mouse does (see GLFWMouse.update). Left as the raw screen position,
+        # anything that aims at the cursor - a weapon, a cursor-following
+        # character - silently behaves as though the pointer were hundreds of
+        # world units away, which makes a driven test look like it is aiming
+        # somewhere it is not.
         self.world_position = self.position
+        scene = get_service('scene_manager').get_active()
+        if scene is not None and scene.camera is not None:
+            camera = scene.camera
+            size = self.window.size
+            ndc_x = (self.position.x / size[0]) * 2.0 - 1.0
+            ndc_y = (self.position.y / size[1]) * 2.0 - 1.0
+            try:
+                inverse = numpy.linalg.inv(camera.proj_matrix @ camera._get_view_mat())
+            except numpy.linalg.LinAlgError:
+                return
+            point = inverse @ (ndc_x, ndc_y, 0.0, 1.0)
+            point /= point[3]
+            self.world_position = Vector(point[0], point[1])
 
     def inject_press(self, button: int = 0):
         """Queues `button` to read as pressed on the next frame this mouse's update() runs."""
