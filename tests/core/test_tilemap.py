@@ -228,3 +228,84 @@ def test_uv_runs_opposite_to_x_matching_generate_quad():
     left = int(np.argmin(v[:, 0]))
     right = int(np.argmax(v[:, 0]))
     assert uv[left, 0] > uv[right, 0]
+
+
+# -- collision geometry ----------------------------------------------------
+
+from FreeBodyEngine.core.tilemap.collision import merge_solid_rects, rect_to_collider
+
+
+def _covers(rects, solid):
+    """Every solid cell is covered exactly once by `rects`."""
+    seen = []
+    for x, y, w, h in rects:
+        for dy in range(h):
+            for dx in range(w):
+                seen.append((x + dx, y + dy))
+    return sorted(seen) == sorted(solid) and len(seen) == len(set(seen))
+
+
+def test_merge_collapses_a_horizontal_run():
+    solid = [(x, 0) for x in range(5)]
+    assert merge_solid_rects(solid) == [(0, 0, 5, 1)]
+
+
+def test_merge_collapses_a_vertical_run():
+    solid = [(0, y) for y in range(4)]
+    assert merge_solid_rects(solid) == [(0, 0, 1, 4)]
+
+
+def test_merge_collapses_a_filled_block_into_one_rect():
+    solid = [(x, y) for x in range(3) for y in range(3)]
+    assert merge_solid_rects(solid) == [(0, 0, 3, 3)]
+
+
+def test_merge_covers_every_cell_exactly_once():
+    """An L shape cannot be one rectangle, but the cover must still be exact -
+    no gaps (a body would pass through) and no overlaps (two colliders would
+    each push a body out by the full overlap)."""
+    solid = [(0, 0), (1, 0), (2, 0), (0, 1), (0, 2)]
+    rects = merge_solid_rects(solid)
+    assert _covers(rects, solid)
+    assert len(rects) < len(solid)
+
+
+def test_merge_handles_a_hole():
+    solid = [(x, y) for x in range(3) for y in range(3) if (x, y) != (1, 1)]
+    rects = merge_solid_rects(solid)
+    assert _covers(rects, solid)
+
+
+def test_merge_of_nothing_is_nothing():
+    assert merge_solid_rects([]) == []
+
+
+def test_disjoint_regions_stay_separate():
+    solid = [(0, 0), (5, 0)]
+    assert sorted(merge_solid_rects(solid)) == [(0, 0, 1, 1), (5, 0, 1, 1)]
+
+
+def test_collider_is_centred_on_its_tiles_with_rows_running_downward():
+    """A RectangleCollisionShape is centred on its position, and tile row y
+    occupies world y from -(y+1)*tile to -y*tile."""
+    collider = rect_to_collider((0, 0, 1, 1), 1.0)
+    assert collider.transform.position.x == pytest.approx(0.5)
+    assert collider.transform.position.y == pytest.approx(-0.5)
+    assert collider.transform.scale.x == pytest.approx(1.0)
+    assert collider.transform.scale.y == pytest.approx(1.0)
+
+
+def test_collider_spans_a_merged_run():
+    collider = rect_to_collider((3, 0, 1, 6), 1.0)
+    assert collider.transform.position.x == pytest.approx(3.5)
+    assert collider.transform.position.y == pytest.approx(-3.0)
+    assert collider.transform.scale.x == pytest.approx(1.0)
+    assert collider.transform.scale.y == pytest.approx(6.0)
+
+
+def test_collider_scales_with_tile_size():
+    collider = rect_to_collider((2, 1, 2, 1), 16.0)
+    assert collider.transform.position.x == pytest.approx(48.0)
+    assert collider.transform.position.y == pytest.approx(-24.0)
+    assert collider.transform.scale.x == pytest.approx(32.0)
+    assert collider.transform.scale.y == pytest.approx(16.0)

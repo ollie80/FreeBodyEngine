@@ -3,6 +3,7 @@ from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
 from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS, _MAX_TILE_VAL
 from FreeBodyEngine.core.tilemap.chunk import Chunk
 from FreeBodyEngine.core.tilemap.tile import Tile
+from FreeBodyEngine.core.tilemap.collision import merge_solid_rects, rect_to_collider, TilemapCollider2D
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine import warning, error
 from FreeBodyEngine.utils import fbnjit
@@ -29,6 +30,7 @@ class Layer:
     name: str
     chunks: dict[Vector, Chunk]
     visible: bool
+    collision: bool = False
 
 @fbnjit("uint8[:](uint16, uint16)")
 def generate_empty_chunk_data(chunk_size: int, num_tile_vals: int) -> np.ndarray:
@@ -64,6 +66,12 @@ class Tilemap(Node2D):
             AutoSpritesheet.get_name(): AutoSpritesheet,
         }
         self.spritesheets: dict[str, TilemapSpritesheet] = {}
+
+        # Collision geometry is rebuilt at most once per frame, from on_update,
+        # rather than on every edit - loading a room places hundreds of tiles
+        # one at a time and would otherwise re-merge the whole map for each.
+        self._collision_dirty = False
+        self._collision_colliders: list = []
         # A chunk stores a tile's spritesheet as a one-byte index, not a
         # name, so a name <-> index registry is what makes the two halves of
         # the API meet. There was none: add_spritesheet keyed spritesheets by
@@ -73,7 +81,7 @@ class Tilemap(Node2D):
         self._spritesheet_order: list[str] = []
 
 
-    def add_layer(self, name, chunks: dict[Vector, Chunk] = None, visible = True):
+    def add_layer(self, name, chunks: dict[Vector, Chunk] = None, visible = True, collision = False):
         """Creates a new, empty (unless `chunks` is given) layer under `name`.
 
         `chunks` defaults to None rather than `{}`: a mutable default is
@@ -86,8 +94,15 @@ class Tilemap(Node2D):
         `visible` defaults to True because `TilemapRenderer.draw` ignored the
         flag entirely until it was honoured, so every layer drew regardless -
         defaulting to False while honouring it would silently stop existing
-        tilemaps from rendering at all."""
-        self.layers[name] = Layer(name, {} if chunks is None else chunks, visible)
+        tilemaps from rendering at all.
+
+        `collision` makes this layer's tiles solid: the tilemap generates
+        merged rectangle colliders over them, which the physics system then
+        treats like any other static geometry (see core/tilemap/
+        collision.py)."""
+        self.layers[name] = Layer(name, {} if chunks is None else chunks, visible, collision)
+        if collision:
+            self._collision_dirty = True
 
     def add_spritesheet_type(self, type: type['TilemapSpritesheet']):
         """Registers a `TilemapSpritesheet` subclass so it can be created by
@@ -285,6 +300,9 @@ class Tilemap(Node2D):
         # neighbours' own cells may now be wrong too.
         self._resolve_around(position, layer)
 
+        if self.layers[layer].collision:
+            self._collision_dirty = True
+
     def remove_tile(self, position: Vector, layer: str):
         """Clears the tile at tilemap `position` on `layer`."""
         chunk = self.get_chunk(self.chunk_pos(position), layer)
@@ -294,6 +312,9 @@ class Tilemap(Node2D):
         # Removing a tile changes what its neighbours border on, the same way
         # placing one does.
         self._resolve_around(position, layer)
+
+        if self.layers[layer].collision:
+            self._collision_dirty = True
 
     def get_tile(self, position: Vector, layer: str) -> Tile:
         """Gets the tile at tilemap `position` on `layer`, resolving it to the
@@ -314,6 +335,55 @@ class Tilemap(Node2D):
         """Creates a chunk at chunk-grid `position` on `layer`, backed by `data`
         if given, otherwise a freshly allocated empty chunk."""
         self.layers[layer].chunks[position] = Chunk(self, position, self.chunk_size, generate_empty_chunk_data(self.chunk_size, _NUM_TILE_VALS) if not isinstance(data, np.ndarray) else data)
+
+        # A chunk handed its tile data wholesale - how a saved room is loaded -
+        # never goes through set_tile, so collision has to be marked dirty
+        # here as well as there.
+        if self.layers[layer].collision:
+            self._collision_dirty = True
+
+    def solid_tiles(self) -> set:
+        """Every tilemap position holding a tile on a layer marked
+        `collision`, as `(x, y)` integer pairs."""
+        solid = set()
+        for layer in self.layers.values():
+            if not layer.collision:
+                continue
+            for chunk_position, chunk in layer.chunks.items():
+                origin_x = int(chunk_position.x) * self.chunk_size
+                origin_y = int(chunk_position.y) * self.chunk_size
+                tiles = chunk.tiles
+                for index in range(self.chunk_size * self.chunk_size):
+                    if tiles[index * _NUM_TILE_VALS] == 0:
+                        continue
+                    solid.add((origin_x + index % self.chunk_size,
+                               origin_y + index // self.chunk_size))
+        return solid
+
+    def build_collision(self):
+        """Regenerates this tilemap's collision geometry from its `collision`
+        layers, replacing whatever it generated before.
+
+        Only colliders this method created are removed - they are
+        `TilemapCollider2D`, so a collider a project added to the tilemap
+        itself survives.
+        """
+        for collider in self._collision_colliders:
+            collider.kill()
+        self._collision_colliders = []
+
+        for rect in merge_solid_rects(self.solid_tiles()):
+            collider = rect_to_collider(rect, self.tile_size)
+            self.add(collider)
+            self._collision_colliders.append(collider)
+
+        self._collision_dirty = False
+
+    def on_update(self):
+        """Rebuilds collision geometry if a `collision` layer changed since
+        the last frame."""
+        if self._collision_dirty:
+            self.build_collision()
 
     def tilemap_pos(self, position: Vector) -> Vector:
         '''Converts a world position into a position in the tilemap.'''
