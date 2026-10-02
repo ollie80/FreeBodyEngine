@@ -320,6 +320,38 @@ class GL44Framebuffer(Framebuffer):
 
     def set_draw_buffers(self, names: list[str]):
         """See Framebuffer.set_draw_buffers / GLFramebuffer.set_draw_buffers
-        (gl33) - identical implementation. Assumes this FBO is already
-        bound."""
-        glDrawBuffers(len(names), [self.attachments[name] for name in names])
+        (gl33). Assumes this FBO is already bound.
+
+        Builds the full-width, position-equals-attachment-index array (GL_NONE
+        at every color attachment not in `names`) that gl33's implementation
+        builds, which this claimed to be identical to but was not: it passed
+        the compact `[self.attachments[n] for n in names]` form instead,
+        remapping the requested attachments onto draw-buffer slots 0..n-1.
+
+        That silently broke every PBRPipeline pass whose shader relies on the
+        padded-`@output` convention - a fragment shader declares its real
+        output at whatever location its *physical* attachment index is, padded
+        with unused leading fields to get there (see graphics/pbr/shaders.py's
+        LIGHTING_COMPOSITE_FRAG and default_forward.fbfrag). The deferred
+        lighting composite narrows output to a single attachment,
+        `set_draw_buffers(['lit'])`, and writes `result` at location 7 ('lit'
+        being the 8th color attachment); under the compact form slot 0 pointed
+        at 'lit' and slot 7 at nothing, so the composite's only output was
+        discarded and the 'lit' attachment was never written at all.
+
+        The opaque G-buffer pass hid it: it binds attachments 0..6 in order,
+        for which the compact and full-width forms are identical. So the
+        G-buffer filled correctly while the composite that reads it back
+        produced nothing - on GL44, every 2D scene (sprites and tilemaps
+        alike) rendered as a blank background, with no error anywhere.
+        """
+        requested = {self.attachments[name] for name in names}
+        color_count = sum(
+            1 for name, attachment in self._attachments.items()
+            if attachment[0] == AttachmentType.COLOR
+        )
+        bufs = [
+            (GL_COLOR_ATTACHMENT0 + i) if (GL_COLOR_ATTACHMENT0 + i) in requested else GL_NONE
+            for i in range(color_count)
+        ]
+        glDrawBuffers(len(bufs), bufs)
