@@ -1,7 +1,7 @@
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.collider import Collider2D, RectangleCollisionShape, CircleCollisionShape
 from FreeBodyEngine.math import Vector
-from FreeBodyEngine import physics_delta, log
+from FreeBodyEngine import physics_delta, log, warning
 from typing import Union
 
 
@@ -21,12 +21,21 @@ class PhysicsBody(Node2D):
     :param velocity: The starting velocity of body.
     :type velocity: Vector
 
-    :param friction: The friction that will be applied to the body.
+    :param friction: The fraction of its speed the body keeps per second -
+        1.0 for no drag at all, 0.98 to bleed off 2% a second, 0.5 to halve
+        it. Values above 1.0 accelerate the body indefinitely and are
+        almost certainly a mistake.
     :type friction: float
     """
     def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1), mass: int = 1, velocity: Vector = Vector(0, 0), rotational_velocity: float = 0.0, friction: float = 0.98):
         """Sets up the body's starting motion state and requires a sibling Collider2D (declared in `self.requirements`) for collision checks."""
         super().__init__(position, rotation, scale)
+        if friction > 1.0:
+            warning(
+                f"{type(self).__name__} was given friction={friction}, which is above 1.0. "
+                "friction is the fraction of speed kept per second, so a value above 1.0 "
+                "makes the body accelerate on its own without any force applied."
+            )
         self.vel = velocity
         self.rot_vel = rotational_velocity
         self.mass = mass
@@ -46,11 +55,23 @@ class PhysicsBody(Node2D):
         
         self.vel += acceleration * dt
         self.rot_vel += rot_accel * dt
-    
-        self.vel *= (self.friction * dt)
+
+        # `friction` is the fraction of speed a body keeps per second, so the
+        # per-step factor is it raised to the step length: 1.0 leaves motion
+        # untouched, 0.98 bleeds off 2% a second, 0.5 halves it.
+        #
+        # This was `self.vel *= (self.friction * dt)`, which multiplied
+        # velocity by friction*dt - at 60Hz that is 0.0163 for the default
+        # friction of 0.98, and still 0.0167 for friction=1.0. Velocity was
+        # annihilated within a step or two whatever the value, so no amount of
+        # tuning made `vel` usable and nothing could be moved by setting it;
+        # the parameter also had no framerate-independent meaning, since the
+        # damping scaled with the step length instead of compensating for it.
+        decay = self.friction ** dt
+        self.vel *= decay
         self.transform.position += self.vel * dt
 
-        self.rot_vel *= (self.friction * dt)
+        self.rot_vel *= decay
         self.transform.rotation += self.rot_vel * dt
 
         self.forces = Vector()
