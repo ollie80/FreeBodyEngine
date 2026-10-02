@@ -21,13 +21,16 @@ class PhysicsBody(Node2D):
     :param velocity: The starting velocity of body.
     :type velocity: Vector
 
+    :param fixed_rotation: When True the body never rotates - its rotational
+        velocity stays at zero and collisions apply no torque to it.
+
     :param friction: The fraction of its speed the body keeps per second -
         1.0 for no drag at all, 0.98 to bleed off 2% a second, 0.5 to halve
         it. Values above 1.0 accelerate the body indefinitely and are
         almost certainly a mistake.
     :type friction: float
     """
-    def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1), mass: int = 1, velocity: Vector = Vector(0, 0), rotational_velocity: float = 0.0, friction: float = 0.98):
+    def __init__(self, position: Vector = Vector(), rotation: float = 0.0, scale: Vector = Vector(1, 1), mass: int = 1, velocity: Vector = Vector(0, 0), rotational_velocity: float = 0.0, friction: float = 0.98, fixed_rotation: bool = False):
         """Sets up the body's starting motion state and requires a sibling Collider2D (declared in `self.requirements`) for collision checks."""
         super().__init__(position, rotation, scale)
         if friction > 1.0:
@@ -41,6 +44,12 @@ class PhysicsBody(Node2D):
         self.mass = mass
         self.friction = friction
         self.requirements = ["Collider2D"]
+        # A body that must never spin. Collision resolution converts the
+        # push-out into torque, so anything that is upright by nature - a
+        # character, a pickup, a sprite whose art has a fixed orientation -
+        # otherwise ends up slowly rotating just from brushing a wall.
+        # RigidBody2D has had this; PhysicsBody had no way to say it.
+        self.fixed_rotation = fixed_rotation
         self.forces = Vector()
         self.accumulated_acceleration = Vector()
 
@@ -71,8 +80,12 @@ class PhysicsBody(Node2D):
         self.vel *= decay
         self.transform.position += self.vel * dt
 
-        self.rot_vel *= decay
-        self.transform.rotation += self.rot_vel * dt
+        if self.fixed_rotation:
+            self.rot_vel = 0.0
+            self.transform.rotation = 0.0
+        else:
+            self.rot_vel *= decay
+            self.transform.rotation += self.rot_vel * dt
 
         self.forces = Vector()
         self.accumulated_acceleration = Vector()
@@ -145,7 +158,7 @@ class PhysicsBody(Node2D):
                 mtv_dir = mtv.normalized
                 self.vel -= mtv_dir * self.vel.dot(mtv_dir)
 
-            if contact_point:
+            if contact_point and not self.fixed_rotation:
                 r = contact_point - self.world_transform.position
                 torque = r.cross(mtv)
                 self.rot_vel += torque / self.mass
