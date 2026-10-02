@@ -34,7 +34,12 @@ class Sprite:
         self.z = z
 
         self.texture = texture
-        self.material = material
+        # A per-object copy, because the next line writes this sprite's own
+        # texture into the material's albedo slot - and a `.fbmat` is cached
+        # per path, so every sprite loaded from the same material file would
+        # otherwise share one slot and the last one constructed would win for
+        # all of them. See Material.instance().
+        self.material = material.instance()
         self.material.properties['albedo'] = self.texture
         self.quad = generate_quad()
         self.visisble = visisble

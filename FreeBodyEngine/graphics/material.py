@@ -8,6 +8,8 @@ from FreeBodyEngine.graphics.image import Image
 from FreeBodyEngine.graphics.texture import Texture
 from FreeBodyEngine import warning
 import numpy as np
+import copy as _copy
+
 from enum import Enum, auto
 from FreeBodyEngine.math import Transform, Vector3, Vector
 import sys
@@ -217,6 +219,32 @@ class Material:
         geom_file = files.get_file(geom_source) if geom_source is not None else None
 
         self.shader: Shader = get_service('renderer').load_shader(files.get_file(vert_source), files.get_file(frag_source), injector, geom_file)
+
+    def instance(self) -> 'Material':
+        """Returns a per-object copy of this Material: its own `properties`
+        dict, sharing the same compiled `shader`.
+
+        A `.fbmat` is loaded once and cached per path (see
+        core/files/loaders/material.py), so every object loaded from the same
+        material file gets the *same* Material object - while
+        `Sprite.__init__` assigns its own texture into
+        `material.properties['albedo']`. Two sprites sharing one `.fbmat` but
+        drawing different images therefore fought over one albedo slot, and
+        whichever was constructed last won for both of them. Sharing a
+        material file is the natural way to author (one "pixel art" material
+        for everything), so that is the common case, not an edge one.
+
+        The shader is deliberately shared: it is the expensive half (compile
+        + link) and nothing per-object mutates it - uniforms are uploaded
+        from `properties` at `use()` time, per draw. Batching groups by
+        material identity (see graphics/instancing.py's group_by_state), so
+        per-object materials do cost some grouping, but that grouping only
+        ever saved redundant uniform/texture churn between consecutive draws
+        and `_draw_call` re-sends the per-call uniforms regardless.
+        """
+        copy = _copy.copy(self)
+        object.__setattr__(copy, 'properties', dict(self.properties))
+        return copy
 
     def reload(self, data: dict):
         """Re-applies freshly loaded `.fbmat` TOML data to this SAME
