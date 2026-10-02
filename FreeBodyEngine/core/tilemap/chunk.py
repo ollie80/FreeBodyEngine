@@ -2,9 +2,11 @@ from FreeBodyEngine.math import Vector
 import numpy as np
 from typing import TYPE_CHECKING
 from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS
+# Tile is imported for real, not just for type checking: get_tile()
+# constructs one, and under TYPE_CHECKING alone that raised NameError.
+from FreeBodyEngine.core.tilemap.tile import Tile
 if TYPE_CHECKING:
     from FreeBodyEngine.core.tilemap import Tilemap
-    from FreeBodyEngine.core.tilemap import Tile
 
 class Chunk:
     """A square block of `size` x `size` tiles within a `Tilemap` layer.

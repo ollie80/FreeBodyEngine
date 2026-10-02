@@ -1,21 +1,42 @@
-@input
-vertex: vec4
-uv: vec2
-
 @uniform
 proj: mat4
 view: mat4
 model: mat4
 chunk_pos: vec2
 
+@input
+vertex: vec2
+uvs: vec2
+
 @output
-texcoord: vec2
-image_id: flat int
-spritesheet_id: flat int
+uv: vec2
+worldPos: vec4
+worldNormal: vec4
 
 def main():
-    texcoord = uv
-    image_id = round(vertex.z)
-    spritesheet_id = round(vertex.w)
+    # The cell's sub-rect within its spritesheet is already baked into this
+    # attribute, in sheet-local 0..1 space, by generate_chunk_mesh - so
+    # sample()'s own uv_rect handling (which maps 0..1 onto the sheet
+    # texture's rect inside whatever atlas it lives in) composes with it
+    # correctly in both dev and release builds. The fragment stage needs no
+    # image_id/spritesheet_id indirection at all as a result.
+    uv = uvs
+
+    # The chunk's y offset is *subtracted*, not added: chunk rows count
+    # downward (chunk_pos comes from floor(tilemap_row / chunk_size), and
+    # tilemap rows run downward - see generate_chunk_mesh), while world +y
+    # is up. generate_chunk_mesh already emits each chunk's tile rows into
+    # local y in [-CHUNK_WORLD_SIZE, 0], so the chunk offset has to carry
+    # them further down, not up.
     chunk_world_pos: vec2 = vec2(chunk_pos.x * float(_ENGINE_CHUNK_WORLD_SIZE), chunk_pos.y * float(_ENGINE_CHUNK_WORLD_SIZE))
-    VERTEX_POSITION = proj * view * model * vec4(vertex.xy + chunk_world_pos, 0.0, 1.0)
+    world: vec4 = model * vec4(vertex.x + chunk_world_pos.x, vertex.y - chunk_world_pos.y, 0.0, 1.0)
+    worldPos = vec4(world.x, world.y, world.z, 1.0)
+
+    # Tiles are coplanar quads facing +Z, exactly like generate_quad()'s
+    # sprite mesh - there's no per-vertex normal attribute to transform, so
+    # the facing normal is constant. A normal *map* still perturbs this
+    # per pixel in the fragment stage.
+    world_normal: vec4 = model * vec4(0.0, 0.0, 1.0, 0.0)
+    worldNormal = vec4(world_normal.x, world_normal.y, world_normal.z, 1.0)
+
+    VERTEX_POSITION = proj * view * world

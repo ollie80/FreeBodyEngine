@@ -1,13 +1,69 @@
-@input
-uv: vec2
-image_id: flat int
-spritesheet_id: flat int
+@output
+albedo: vec4
+normal: vec4
+emmisive: vec4
+roughness: float
+metallic: float
+gWorldPos: vec4
+gWorldNormal: vec4
 
 @uniform
-textures: textureStack
+Albedo_Texture: texture
+Albedo_Color: vec4
+Albedo_useTexture: bool
+Normal_Texture: texture
+Normal_Color: vec4
+Normal_useTexture: bool
+Emmisive_Texture: texture
+Emmisive_Color: vec4
+Emmisive_useTexture: bool
+Roughness_Texture: texture
+Roughness_Color: float
+Roughness_useTexture: bool
+Metallic_Texture: texture
+Metallic_Color: float
+Metallic_useTexture: bool
 
-@output
-color: vec4
+@input
+uv: vec2
+worldPos: vec4
+worldNormal: vec4
 
-def main():
-    color = vec4(sample(textures, image_id, uv))
+def main() -> void:
+    # Writes the same G-buffer channel set as default_shader.fbfrag, rather
+    # than the single `color` output this shader used to declare. A fragment
+    # shader's outputs bind to color attachments in declaration order, so
+    # one output meant tiles only ever wrote attachment 0 ('albedo') and
+    # never gWorldPos - and the lighting composite's very first branch is
+    # `if world_pos4.w < 0.5: result = vec4(0,0,0,0)`, keyed on exactly that
+    # channel to tell real geometry from untouched background. Every tile
+    # pixel was therefore discarded before lighting: tilemaps rendered as
+    # nothing at all under PBRPipeline.
+    albedo4: vec4 = sample(Albedo_Texture, uv) if Albedo_useTexture else Albedo_Color
+
+    # Every channel carries the albedo's alpha, not its own. TilemapRenderer
+    # draws layers with alpha blending and depth writes off (one layer's
+    # transparent tile has to let the layer below show through - a deferred
+    # G-buffer cannot hold two surfaces per pixel, and FBUSL has no discard
+    # builtin), and GL blends each attachment by *that attachment's* own
+    # alpha. Left as a constant 1.0, a fully transparent tile pixel would
+    # still overwrite the normal/position channels of the tile underneath it
+    # while correctly leaving its albedo alone - lighting the lower tile's
+    # colour with the upper tile's normals. Matching the alpha across every
+    # channel makes a transparent pixel leave all of them untouched.
+    a: float = albedo4.w
+
+    albedo = albedo4
+
+    normal4: vec4 = sample(Normal_Texture, uv) if Normal_useTexture else Normal_Color
+    normal = vec4(normal4.x, normal4.y, normal4.z, a)
+
+    emmisive4: vec4 = sample(Emmisive_Texture, uv) if Emmisive_useTexture else Emmisive_Color
+    emmisive = vec4(emmisive4.x, emmisive4.y, emmisive4.z, a)
+
+    roughness = sample(Roughness_Texture, uv).x if Roughness_useTexture else Roughness_Color
+    metallic = sample(Metallic_Texture, uv).x if Metallic_useTexture else Metallic_Color
+
+    n: vec3 = normalize(vec3(worldNormal.x, worldNormal.y, worldNormal.z))
+    gWorldPos = vec4(worldPos.x, worldPos.y, worldPos.z, a)
+    gWorldNormal = vec4(n.x, n.y, n.z, a)

@@ -1,15 +1,33 @@
+"""Tilemap spritesheets: how a tile's stored `image_id` becomes an actual
+image.
+
+A tilemap spritesheet wraps an ordinary `.fbsheet` - the same grid-sliced
+spritesheet format `.fbanim` frames already address with `pos = [col, row]`
+(see `core/files/loaders/spritesheet.py`). Tiles are cells of that grid, so
+a tileset is authored exactly like an animation sheet and carries the same
+texture maps (`albedo`, `normal`, ...).
+
+This replaced a parallel mechanism built on `TextureStack`, which uploaded
+one GL array-texture layer per separate image file - that capped a tilemap
+at `MAX_TEXTURE_STACK_SIZE` (64) distinct tiles and meant a grid sheet had
+to be sliced into one file per tile on disk, duplicating what `.fbsheet`
+already does with pure UV math.
+"""
+
 from FreeBodyEngine.utils import abstractmethod
-import numpy as np
+from FreeBodyEngine.core.files import load_file, SPRITESHEET_FILE
+from FreeBodyEngine import warning
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, Sequence, Union
 if TYPE_CHECKING:
-    from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
     from FreeBodyEngine.core.tilemap import Tilemap, Tile
+    from FreeBodyEngine.graphics.spritesheet import Spritesheet
 
-from enum import Enum, auto
+from enum import auto
+
 
 class UpdateMode:
-    """Determines when the 'get_image_index' function will be called. Frame means every its called every frame. Chunk means its called on every chunk update. Once is only called once per tile. Never means it will never be called, and the image id will be used instead."""
+    """Determines when the 'get_image_index' function will be called. Frame means its called every frame. Chunk means its called on every chunk update. Once is only called once per tile. Never means it will never be called, and the image id will be used instead."""
     FRAME = auto()
     CHUNK = auto()
     ONCE = auto()
@@ -17,30 +35,72 @@ class UpdateMode:
 
 
 class TilemapSpritesheet:
-    """Base class for a tilemap's image-lookup source: maps a tile's
-    `image_id` (and its neighbors, for auto-tiling) to an index into the
-    renderer's uploaded texture stack. Subclasses implement `get_image_index`,
-    `_extract_paths`, and `update` for a particular lookup strategy (static,
-    auto-tiled, animated)."""
+    """Base class for a tilemap's image lookup: maps a tile's stored
+    `image_id` (and, for auto-tiling, its neighbours) to a cell of this
+    spritesheet's grid.
 
-    def __init__(self, data: dict[str, any], renderer: 'TilemapRenderer', update_mode: UpdateMode = UpdateMode.NEVER):
+    Subclasses implement `get_image_index` for a particular lookup strategy
+    (fixed, auto-tiled, animated). `update_mode` says how often the tilemap
+    re-runs that lookup for a tile - see `UpdateMode`.
+    """
+
+    def __init__(self, data: dict[str, any], tilemap: 'Tilemap', update_mode: UpdateMode = UpdateMode.NEVER):
         """Args:
-            data: The spritesheet definition data (as passed to `Tilemap.create_spritesheet`).
-            renderer: The tilemap's renderer; its texture stack is extended
-                with the paths this spritesheet extracts from `data`.
-            update_mode: How often `get_image_index` is re-run for a tile - see `UpdateMode`.
+            data: The spritesheet definition. `name` identifies it within the
+                tilemap, `sheet` is the path to its `.fbsheet`.
+            tilemap: The tilemap this spritesheet belongs to.
+            update_mode: How often `get_image_index` is re-run for a tile.
         """
         self.data = data
-        self.path_map = renderer._add_textures(self._extract_paths(data))
+        self.tilemap = tilemap
         self.update_mode = update_mode
 
-    @classmethod
-    def _initialize_type(cls, tilemap: 'Tilemap'):
-       tilemap._spritesheet_types[cls.get_name()] = cls
+        self.name: str = data.get('name')
+        if self.name is None:
+            warning('Tilemap spritesheet has no "name".')
 
-    def _initialize(self, tilemap: 'Tilemap'):
+        sheet_path = data.get('sheet')
+        self.sheet: Optional['Spritesheet'] = None
+        if sheet_path is None:
+            warning(f'Tilemap spritesheet "{self.name}" has no "sheet" path.')
+        else:
+            self.sheet = load_file(sheet_path, SPRITESHEET_FILE)
+            if self.sheet is None:
+                warning(f'Tilemap spritesheet "{self.name}" could not load sheet "{sheet_path}".')
 
-        tilemap.spritesheets[tilemap] = self
+    @property
+    def size(self) -> tuple[int, int]:
+        """This sheet's grid as `(cols, rows)`, or `(1, 1)` if it failed to load."""
+        return self.sheet.size if self.sheet is not None else (1, 1)
+
+    @property
+    def cell_count(self) -> int:
+        """How many cells this sheet's grid holds."""
+        cols, rows = self.size
+        return cols * rows
+
+    def get_map(self, map_name: str):
+        """This sheet's whole-image texture for `map_name` (e.g. `albedo`,
+        `normal`), or None if the sheet declares no such map.
+
+        The whole sheet is returned, not one cell: a tile's cell is selected
+        by the UVs baked into the chunk mesh (see
+        `renderer.generate_chunk_mesh`), so every tile drawn from this sheet
+        shares one texture binding and therefore one draw call.
+        """
+        if self.sheet is None:
+            return None
+        return self.sheet.maps.get(map_name)
+
+    def cell_index(self, cell: Union[int, Sequence[int]]) -> int:
+        """Normalizes `cell` - either a flat cell index or a `[col, row]`
+        pair, matching how `.fbanim` frames address the same sheets - into a
+        flat index."""
+        if isinstance(cell, (list, tuple)):
+            cols, _ = self.size
+            col, row = cell
+            return int(row) * cols + int(col)
+        return int(cell)
 
     @staticmethod
     def get_name():
@@ -48,66 +108,38 @@ class TilemapSpritesheet:
         return "spritesheet"
 
     @abstractmethod
-    def get_image_index(self, tile: 'Tile', neighbors: tuple['Tile', 'Tile', 'Tile', 'Tile', 'Tile', 'Tile', 'Tile', 'Tile']) -> int:
+    def get_image_index(self, tile: 'Tile', neighbors: tuple['Tile', ...]) -> int:
         """
-        Standardized function to get the image_index for any given tile. The frequency this is run is determined by the tilemap's 'update_mode'.
-        
+        Standardized function to get the image_index for any given tile. The frequency this is run is determined by this spritesheet's 'update_mode'.
+
         :param tile: The tile that the image index is being gotten for.
         :type tile: Tile
 
-        :param neighbors: The 8 neighbors of the given tile, ordered in the clockwise direction stating in the top left. Includes neighbors in nearby chunks.
-        :type neighbors: tuple[Tile, Tile, Tile, Tile, Tile, Tile, Tile, Tile]
+        :param neighbors: The 8 neighbors of the given tile, ordered in the clockwise direction starting in the top left. Includes neighbors in nearby chunks, and None where there is no tile.
+        :type neighbors: tuple[Tile, ...]
 
         :rtype: int
         """
         pass
 
-    @abstractmethod    
-    def _extract_paths(self, data: dict[str, any]):
-        """
-        Used to extract paths from the data provided to the spritesheet.
-        """
-        pass
-
-    @abstractmethod
     def update(self):
         """
         Called when the tilemap node is updated.
         """
         pass
 
+
 class StaticSpritesheet(TilemapSpritesheet):
-    """A spritesheet where each tile's image is fixed by its `image_id` alone
-    (no auto-tiling/animation), so its image index only needs computing once
-    per tile (`UpdateMode.ONCE`)."""
+    """A spritesheet where each tile's image is fixed by its stored
+    `image_id` alone - no auto-tiling or animation, so the image never needs
+    resolving at all (`UpdateMode.NEVER`)."""
 
-    def __init__(self, data: dict[str, any], renderer: "TilemapRenderer"):
+    def __init__(self, data: dict[str, any], tilemap: 'Tilemap'):
         """Args:
-            data: Spritesheet definition; `data["paths"]` is a list of
-                `(key, path)` pairs, keyed by `image_id`.
-            renderer: The tilemap's renderer, whose texture stack the paths are added to.
+            data: Spritesheet definition; `name` and `sheet` (its `.fbsheet` path).
+            tilemap: The tilemap this spritesheet belongs to.
         """
-        self.data = data
-
-        super().__init__(self.data, renderer, UpdateMode.ONCE)
-
-    def _extract_paths(self, data: dict[str, any]):
-        path_data: list[tuple[str, str]] = data['paths']
-        paths = []
-
-        for i in range(len(path_data)):
-            paths.append(path_data[i][1])
-        
-        return paths
-
-    def get_image_id(self, key):
-        """Looks up the `image_id` registered under `key` in `data["paths"]`,
-        or `-1` if `key` isn't found."""
-        for i in self.data:
-            if self.data[i][0] == key:
-                return i
-
-        return -1
+        super().__init__(data, tilemap, UpdateMode.NEVER)
 
     @staticmethod
     def get_name():
@@ -115,37 +147,5 @@ class StaticSpritesheet(TilemapSpritesheet):
         return "static_spritesheet"
 
     def get_image_index(self, tile, neighbors):
-        """Looks up `tile`'s image index by its `image_id` alone; `neighbors` is unused."""
-        return self.path_map[self.data[tile.image_id][1]]
-
-class AutoSpritesheet(TilemapSpritesheet):
-    """A spritesheet whose image index depends on a tile's neighbors (e.g.
-    auto-tiling edges/corners), so it's recomputed on every chunk update
-    (`UpdateMode.CHUNK`) rather than once."""
-
-    def __init__(self, data: dict, renderer: "TilemapRenderer"):
-        """Args:
-            data: Spritesheet definition data.
-            renderer: The tilemap's renderer, whose texture stack the paths are added to.
-        """
-        super().__init__(data, renderer, UpdateMode.CHUNK)
-
-class AnimatedSpritesheet(TilemapSpritesheet):
-    """A spritesheet whose image index changes every frame (e.g. a looping
-    animation), so it's recomputed every frame (`UpdateMode.FRAME`)."""
-
-    def __init__(self, data: dict, renderer: "TilemapRenderer"):
-        """Args:
-            data: Spritesheet definition data.
-            renderer: The tilemap's renderer, whose texture stack the paths are added to.
-        """
-        super().__init__(data, renderer, UpdateMode.FRAME)
-
-    @staticmethod
-    def get_name():
-        """The type name spritesheet data uses to select this class (see `Tilemap.add_spritesheet_type`)."""
-        return 'animated_spritesheet'
-
-    def get_image_index(self, tile, neighbors):
-        """Gets `tile`'s current animation frame's image index."""
-        super().get_image_index(tile, neighbors)
+        """Returns `tile`'s stored image id unchanged; `neighbors` is unused."""
+        return tile.image_id

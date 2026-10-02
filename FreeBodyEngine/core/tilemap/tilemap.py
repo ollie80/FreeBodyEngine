@@ -1,6 +1,6 @@
 from FreeBodyEngine.core.tilemap.spritesheet import TilemapSpritesheet, StaticSpritesheet
 from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
-from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS
+from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS, _MAX_TILE_VAL
 from FreeBodyEngine.core.tilemap.chunk import Chunk
 from FreeBodyEngine.core.tilemap.tile import Tile
 from FreeBodyEngine.core.node import Node2D
@@ -47,8 +47,18 @@ class Tilemap(Node2D):
         self.tile_size = tile_size
         self.renderer = None
 
-        self._spritesheet_types: dict[str, type[TilemapSpritesheet]] = {'static': StaticSpritesheet}
+        self._spritesheet_types: dict[str, type[TilemapSpritesheet]] = {
+            'static': StaticSpritesheet,
+            StaticSpritesheet.get_name(): StaticSpritesheet,
+        }
         self.spritesheets: dict[str, TilemapSpritesheet] = {}
+        # A chunk stores a tile's spritesheet as a one-byte index, not a
+        # name, so a name <-> index registry is what makes the two halves of
+        # the API meet. There was none: add_spritesheet keyed spritesheets by
+        # name only, while Chunk.set_tile took an int, leaving a caller to
+        # invent indices by hand. Index 0 is reserved for "no spritesheet",
+        # which is also what an empty tile stores.
+        self._spritesheet_order: list[str] = []
 
 
     def add_layer(self, name, chunks: dict[Vector, Chunk] = None, visible = True):
@@ -72,55 +82,129 @@ class Tilemap(Node2D):
         `create_spritesheet`/`add_spritesheet` via its `get_name()`."""
         self._spritesheet_types[type.get_name()] = type
 
-    def get_tile_neighbors():
-        """Not yet implemented."""
-        pass
+    def create_spritesheet(self, data: dict):
+        """Creates a spritesheet from `data` and adds it to the tilemap's
+        spritesheets, taking its type from `data["type"]`.
 
-    def create_spritesheet(self, data):
-        """Creates a spritesheet and adds it the tilemaps spritesheets."""
-        spritesheet_type = data.get('type', 'static')
-        spritesheet_name = data.get('name', None)
-        
-        if spritesheet_name == None:
+        This used to call `add_spritesheet(name, type(data))` - passing the
+        spritesheet's *name* where that method expects a type, and
+        constructing the spritesheet with one argument where it takes two.
+        """
+        spritesheet_type = data.get('type', StaticSpritesheet.get_name())
+        if data.get('name') is None:
             error('Cannot add spritesheet because no name was set.')
             return
-        
-        self.add_spritesheet(spritesheet_name, self._spritesheet_types[spritesheet_type](data))
 
-    def add_spritesheet(self, spritesheet_type: str, data: dict):
-        """Instantiates a registered spritesheet type from `data` and stores it
-        under `data["name"]`. Requires `create_renderer` to have been called
-        first, since spritesheet construction needs the renderer to upload textures."""
-        if not spritesheet_type in self._spritesheet_types:
+        return self.add_spritesheet(spritesheet_type, data)
+
+    def add_spritesheet(self, spritesheet_type: str, data: dict) -> int:
+        """Instantiates a registered spritesheet type from `data`, stores it
+        under `data["name"]`, and returns the index tiles refer to it by.
+
+        No longer requires `create_renderer` to have been called first: a
+        spritesheet wraps a `.fbsheet` loaded through the file system, so it
+        has no need of the tilemap's own renderer at construction time.
+        """
+        if spritesheet_type not in self._spritesheet_types:
             warning(f"Spritesheet type '{spritesheet_type}' is not defined")
-        
-        if self.renderer:
-            name = data.get('name', None)
-            if name == None:
-                warning('Could not add spritesheet, a name was not defined in the provided data.')
-                return 
-            
-            self.spritesheets[name] = self._spritesheet_types[spritesheet_type](data, self.renderer)
-        else:
-            warning('Could not add spritesheet, as no tilemap renderer has been created')
+            return 0
+
+        name = data.get('name', None)
+        if name is None:
+            warning('Could not add spritesheet, a name was not defined in the provided data.')
+            return 0
+
+        spritesheet = self._spritesheet_types[spritesheet_type](data, self)
+        self.spritesheets[name] = spritesheet
+
+        if name not in self._spritesheet_order:
+            self._spritesheet_order.append(name)
+
+        index = self.get_spritesheet_index(name)
+        if spritesheet.cell_count > _MAX_TILE_VAL:
+            warning(
+                f'Spritesheet "{name}" has {spritesheet.cell_count} cells, but a tile '
+                f'stores its cell in one byte - only the first {_MAX_TILE_VAL} are addressable.'
+            )
+        if index > _MAX_TILE_VAL:
+            warning(
+                f'Tilemap has more than {_MAX_TILE_VAL} spritesheets; "{name}" is not addressable, '
+                'since a tile stores its spritesheet in one byte.'
+            )
+        return index
+
+    def get_spritesheet_index(self, name: str) -> int:
+        """The index tiles store to refer to the spritesheet called `name`, or
+        0 (meaning "no spritesheet") if no such spritesheet is registered.
+
+        Indices are 1-based so that 0 can mean "none", matching an empty
+        tile's stored bytes.
+        """
+        if name not in self._spritesheet_order:
+            return 0
+        return self._spritesheet_order.index(name) + 1
+
+    def get_spritesheet_by_index(self, index: int) -> 'TilemapSpritesheet':
+        """The spritesheet an `index` stored in a tile refers to, or None."""
+        if index < 1 or index > len(self._spritesheet_order):
+            return None
+        return self.spritesheets.get(self._spritesheet_order[index - 1])
+
+    def iter_spritesheets(self):
+        """Every registered spritesheet as `(index, spritesheet)` pairs, in
+        the order they were added."""
+        return [(i + 1, self.spritesheets[name]) for i, name in enumerate(self._spritesheet_order)]
+
+    def _resolve_spritesheet(self, spritesheet) -> int:
+        """Normalizes a spritesheet given as either a registered name or an
+        already-resolved index into an index."""
+        if isinstance(spritesheet, str):
+            index = self.get_spritesheet_index(spritesheet)
+            if index == 0:
+                warning(f'No spritesheet named "{spritesheet}" is registered on this tilemap.')
+            return index
+        return int(spritesheet)
 
     def create_renderer(self):
-        """Creates and attaches this tilemap's `TilemapRenderer`, and registers
-        the built-in `StaticSpritesheet` type. Must be called before any
-        spritesheet is added (see `add_spritesheet`)."""
+        """Creates and attaches this tilemap's `TilemapRenderer`.
+
+        Spritesheets may be added before or after this - they no longer need
+        the renderer to exist (see `add_spritesheet`) - but nothing is drawn
+        until it does.
+        """
         self.renderer = TilemapRenderer(Vector(), 0, Vector(1, 1))
         self.add(self.renderer)
-        self.add_spritesheet_type(StaticSpritesheet)
 
-    def set_tile(self, position: Vector, image_id: int, spritesheet: str, layer: str):
+    def set_tile(self, position: Vector, cell, spritesheet, layer: str):
         """Sets the tile at tilemap `position` on `layer`, resolving it to the
-        owning chunk first."""
+        owning chunk first.
+
+        Args:
+            position: Position in tilemap coordinates (see `tilemap_pos`).
+            cell: Which cell of the spritesheet's grid to draw - either a flat
+                cell index or a `[col, row]` pair, the same way a `.fbanim`
+                frame's `pos` addresses one.
+            spritesheet: The spritesheet's registered name, or its index.
+            layer: Which layer to place the tile on.
+        """
         chunk = self.get_chunk(self.chunk_pos(position), layer)
         if chunk is None:
             return
-        tile_pos = self.tile_pos(position)
 
-        chunk.set_tile(tile_pos, image_id, spritesheet)
+        sheet_index = self._resolve_spritesheet(spritesheet)
+        sheet = self.get_spritesheet_by_index(sheet_index)
+        cell_index = sheet.cell_index(cell) if sheet is not None else int(cell)
+
+        # Stored offset by one so that 0 can mean "no tile" - see
+        # renderer.generate_chunk_mesh.
+        chunk.set_tile(self.tile_pos(position), cell_index + 1, sheet_index)
+
+    def remove_tile(self, position: Vector, layer: str):
+        """Clears the tile at tilemap `position` on `layer`."""
+        chunk = self.get_chunk(self.chunk_pos(position), layer)
+        if chunk is None:
+            return
+        chunk.remove_tile(self.tile_pos(position))
 
     def get_tile(self, position: Vector, layer: str) -> Tile:
         """Gets the tile at tilemap `position` on `layer`, resolving it to the
