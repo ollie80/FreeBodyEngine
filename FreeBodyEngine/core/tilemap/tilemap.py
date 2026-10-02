@@ -51,9 +51,21 @@ class Tilemap(Node2D):
         self.spritesheets: dict[str, TilemapSpritesheet] = {}
 
 
-    def add_layer(self, name, chunks: dict[Vector, Chunk] = {}, visible = False):
-        """Creates a new, empty (unless `chunks` is given) layer under `name`."""
-        self.layers[name] = Layer(name, chunks, visible)
+    def add_layer(self, name, chunks: dict[Vector, Chunk] = None, visible = True):
+        """Creates a new, empty (unless `chunks` is given) layer under `name`.
+
+        `chunks` defaults to None rather than `{}`: a mutable default is
+        evaluated once at definition time, so every layer added without an
+        explicit dict used to share one single chunk dict - a tile placed on
+        any layer appeared on all of them. Invisible on a one-layer tilemap
+        (the only case anything had exercised), wrong the moment a second
+        layer existed.
+
+        `visible` defaults to True because `TilemapRenderer.draw` ignored the
+        flag entirely until it was honoured, so every layer drew regardless -
+        defaulting to False while honouring it would silently stop existing
+        tilemaps from rendering at all."""
+        self.layers[name] = Layer(name, {} if chunks is None else chunks, visible)
 
     def add_spritesheet_type(self, type: type['TilemapSpritesheet']):
         """Registers a `TilemapSpritesheet` subclass so it can be created by
@@ -104,15 +116,26 @@ class Tilemap(Node2D):
         """Sets the tile at tilemap `position` on `layer`, resolving it to the
         owning chunk first."""
         chunk = self.get_chunk(self.chunk_pos(position), layer)
+        if chunk is None:
+            return
         tile_pos = self.tile_pos(position)
 
         chunk.set_tile(tile_pos, image_id, spritesheet)
 
     def get_tile(self, position: Vector, layer: str) -> Tile:
         """Gets the tile at tilemap `position` on `layer`, resolving it to the
-        owning chunk first."""
+        owning chunk first.
+
+        Returns None if no chunk covers `position`.
+        """
         chunk = self.get_chunk(self.chunk_pos(position), layer)
-        return chunk.get_tile(position)
+        if chunk is None:
+            return None
+        # Chunk.get_tile addresses tiles local to the chunk, so the tilemap
+        # position has to be reduced the same way set_tile already does it -
+        # passing the raw tilemap position straight through read whatever
+        # unrelated slot that index happened to land on.
+        return chunk.get_tile(self.tile_pos(position))
 
     def add_chunk(self, position: Vector, layer: str, data: np.ndarray=None) -> Chunk:
         """Creates a chunk at chunk-grid `position` on `layer`, backed by `data`

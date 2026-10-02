@@ -1,5 +1,10 @@
 from FreeBodyEngine.math import Vector
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from FreeBodyEngine.core.tilemap import Chunk
+
+
 class Tile:
     """A single tile, backing onto its owning `Chunk`'s underlying data array.
 
@@ -9,18 +14,31 @@ class Tile:
     reflected in the chunk's tile data immediately.
     """
 
-    def __init__(self, position: Vector, image_id: Vector, spritesheet: str, chunk: 'Chunk'):
+    def __init__(self, position: Vector, image_id: int, spritesheet_index: int, chunk: 'Chunk'):
         """Args:
             position: The tile's position, local to `chunk`.
-            image_id: The id of the image drawn for this tile.
-            spritesheet: The name of the spritesheet `image_id` is looked up in.
+            image_id: The id of the image drawn for this tile, as stored in
+                the chunk - 0 means "no tile here", and any other value is
+                the tile's cell index within its spritesheet, plus one (see
+                `Chunk.set_tile`).
+            spritesheet_index: The index of the spritesheet `image_id` is
+                looked up in - an int, not a name, because that is what a
+                chunk's two-bytes-per-tile data array actually stores (see
+                `Tilemap.get_spritesheet_index` for the name mapping). 0
+                means "no spritesheet", which is also an empty tile.
             chunk: The chunk this tile belongs to; writes made through this
                 `Tile` are applied to `chunk`.
         """
         self._position = position
         self._image_id = image_id
-        self._spritesheet = spritesheet
+        self._spritesheet_index = spritesheet_index
         self._chunk = chunk
+
+    @property
+    def empty(self) -> bool:
+        """Whether this tile slot holds no tile at all."""
+        return self._image_id == 0 or self._spritesheet_index == 0
+
     @property
     def position(self) -> Vector:
         """The tile's position, local to its chunk."""
@@ -33,31 +51,33 @@ class Tile:
         if new != self._position:
             self._chunk.remove_tile(self._position)
             self._position = new
-            self._chunk.set_tile(self._position, self._image_id, self._spritesheet)
+            self._chunk._write_tile(self._position, self._image_id, self._spritesheet_index)
 
     @property
     def image_id(self) -> int:
         """The id of the image drawn for this tile."""
-        return self.image_id
+        return self._image_id
 
     @image_id.setter
     def image_id(self, new: int):
         """Sets the image drawn for this tile."""
-        self._chunk.set_image_id(self._position, new)
+        self._image_id = new
+        self._chunk._write_tile(self._position, new, self._spritesheet_index)
 
     @property
-    def spritesheet(self) -> str:
-        """The name of the spritesheet `image_id` is looked up in."""
-        return self._spritesheet
+    def spritesheet_index(self) -> int:
+        """The index of the spritesheet `image_id` is looked up in."""
+        return self._spritesheet_index
 
-    @spritesheet.setter
-    def spritesheet(self, new: str):
+    @spritesheet_index.setter
+    def spritesheet_index(self, new: int):
         """Sets the spritesheet `image_id` is looked up in."""
-        self._chunk.set_spritesheet(self._position, new)
+        self._spritesheet_index = new
+        self._chunk._write_tile(self._position, self._image_id, new)
 
     def destroy(self):
         """Removes this tile from its chunk."""
         self._chunk.remove_tile(self._position)
 
     def __repr__(self):
-        return f"Tile({self.position})"
+        return f"Tile({self.position}, image_id={self._image_id}, spritesheet_index={self._spritesheet_index})"

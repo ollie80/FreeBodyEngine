@@ -38,12 +38,18 @@ class Chunk:
 
         `Tile` objects are not stored - this reads the raw values back out
         of `tiles` and wraps them fresh on every call.
+
+        The owning chunk is passed to `Tile` so its property setters have
+        something to write through to; omitting it used to raise TypeError
+        on every single call, since `Tile.__init__` has always taken a
+        `chunk` argument. Nothing in the engine called `get_tile`, which is
+        why that went unnoticed.
         """
         array_offset = self._tile_index(position) * _NUM_TILE_VALS
 
-        image_id = self.tiles[array_offset]
-        spritesheet_index = self.tiles[array_offset + 1]
-        return Tile(position, image_id, spritesheet_index)
+        image_id = int(self.tiles[array_offset])
+        spritesheet_index = int(self.tiles[array_offset + 1])
+        return Tile(position, image_id, spritesheet_index, self)
 
     def _get_tile_neighbors(self, pos: tuple[int, int]):
         for y in range(-1, 1):
@@ -68,16 +74,26 @@ class Chunk:
         """Gets the tile's neighbors, reaching across chunk boundaries as needed."""
         return self._get_tile_neighbors((position.x, position.y))
 
-    def set_tile(self, position: Vector, image_id: int, spritesheet_index: int):
-        """Writes a tile's image id and spritesheet index at `position` (local to this chunk)."""
+    def _write_tile(self, position: Vector, image_id: int, spritesheet_index: int):
+        """Writes a tile's two raw stored bytes at `position` (local to this
+        chunk), with no further bookkeeping beyond marking the chunk dirty.
+
+        Separate from `set_tile` so `Tile`'s own property setters - and the
+        auto-tiling resolve pass, which rewrites a neighbour's `image_id`
+        without that counting as authoring a new tile - have a way to touch
+        the data array that does not recurse back into tile-placement
+        logic."""
         array_offset = self._tile_index(position) * _NUM_TILE_VALS
 
         self.tiles[array_offset] = image_id
         self.tiles[array_offset + 1] = spritesheet_index
+        self._updated = True
+
+    def set_tile(self, position: Vector, image_id: int, spritesheet_index: int):
+        """Places a tile at `position` (local to this chunk), storing its
+        image id and spritesheet index."""
+        self._write_tile(position, image_id, spritesheet_index)
 
     def remove_tile(self, position: Vector):
         """Clears the tile at `position` (local to this chunk) back to empty."""
-        array_offset = self._tile_index(position) * _NUM_TILE_VALS
-
-        self.tiles[array_offset] = 0
-        self.tiles[array_offset + 1] = 0
+        self._write_tile(position, 0, 0)
