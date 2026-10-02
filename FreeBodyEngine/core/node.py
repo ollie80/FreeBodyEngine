@@ -45,16 +45,28 @@ class GenericNode:
         found = []
         if self.inherits_from(type):
             found.append(self)
-        for child in self.children:
-            found += self.children[child].find_nodes_with_type(type)
+        # Snapshot, for the same reason update() does - this is called from
+        # inside update and physics, where a node may remove itself or add
+        # another while the walk is in progress.
+        for child in list(self.children.values()):
+            found += child.find_nodes_with_type(type)
         return found
 
     def update(self):
         """Runs `on_update` on this node, then recursively updates every
-        child."""
+        child.
+
+        Children are iterated over a snapshot taken up front, because
+        updating one routinely changes the set: a particle whose animation
+        finished removes itself, a weapon adds a projectile, a tilemap
+        rebuilds its collision colliders. Iterating the live dict raised
+        "dictionary changed size during iteration" and lost the rest of the
+        frame's updates - including, since the exception unwound the whole
+        scene update, every node after the one that had changed.
+        """
         self.on_update()
-        for node in self.children:
-            self.children[node].update()
+        for node in list(self.children.values()):
+            node.update()
 
     def inherits_from(self, *type: str) -> bool:
         """Returns whether this node's class or any of its base classes

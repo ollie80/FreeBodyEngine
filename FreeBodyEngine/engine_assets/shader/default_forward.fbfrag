@@ -261,7 +261,20 @@ def main() -> void:
     roughness: float = clamp(sample(Roughness_Texture, uv).x if Roughness_useTexture else Roughness_Color, 0.04, 1.0)
     metallic: float = sample(Metallic_Texture, uv).x if Metallic_useTexture else Metallic_Color
 
+    # Normal map, matching what the deferred composite does for opaque
+    # geometry (see graphics/pbr/shaders.py). Without this a transparent
+    # surface was lit by its interpolated facing normal alone - so a cut-out
+    # sprite, which is always transparent, could never have surface relief
+    # while the opaque floor beneath it did. Applied in world space: there are
+    # no tangents here, and for 2D every quad faces +Z so the two coincide.
     n: vec3 = normalize(vec3(worldNormal.x, worldNormal.y, worldNormal.z))
+    if Normal_useTexture == True:
+        normal_sample: vec4 = sample(Normal_Texture, uv)
+        mapped: vec3 = vec3(normal_sample.x * 2.0 - 1.0, normal_sample.y * 2.0 - 1.0, normal_sample.z * 2.0 - 1.0)
+        normal_sum: float = normal_sample.x + normal_sample.y + normal_sample.z
+        if normal_sum > 0.0:
+            n = normalize(mapped)
+
     world_pos: vec3 = vec3(worldPos.x, worldPos.y, worldPos.z)
     albedo: vec3 = vec3(albedo4.x, albedo4.y, albedo4.z)
     emissive: vec3 = vec3(emissive4.x, emissive4.y, emissive4.z)

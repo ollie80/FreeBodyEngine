@@ -152,6 +152,25 @@ class Scene:
         for node in physics_nodes:
             node._integrate_forces()
 
+        # Every collider's shape is synced to its node's world transform here,
+        # immediately before the narrow phase. Collider2D.on_update() also does
+        # this, but that runs in the UPDATE phase and PHYSICS runs *before*
+        # UPDATE each iteration (and can tick several times per update), so
+        # relying on it meant testing against wherever a shape was as of last
+        # frame.
+        #
+        # On the very first frame it meant worse than stale: a Collider2D
+        # builds its shape from its own *local* position, which is the origin
+        # unless one was passed, so until the first UPDATE every collider in
+        # the scene sat on top of each other at world (0, 0). A body that
+        # happened to start near there was shoved out of that pile before it
+        # ever drew a frame.
+        #
+        # PhysicsWorld.step() already does exactly this for RigidBody2D, for
+        # the same reason - see its own comment.
+        for collider in self.root.find_nodes_with_type('Collider2D'):
+            collider.apply_transform()
+
         for node in physics_nodes:
             node._check_collisions()
 
