@@ -15,7 +15,7 @@ class Sprite:
     """A drawable unit combining a texture, material, and generated quad
     mesh, independent of the node tree - Sprite2D/Sprite3D each wrap one to
     give it a scene position via a Transform."""
-    def __init__(self, texture: 'Texture', material: 'Material', renderer: 'Renderer', visisble: bool = True, z: float = 0):
+    def __init__(self, texture: 'Texture', material: 'Material', renderer: 'Renderer', visisble: bool = True, z: float = 0, normal: 'Texture' = None):
         """Stores `texture`/`material`/`renderer`, assigns `texture` onto
         the material's `albedo` property, and generates the flat quad mesh
         this sprite is drawn with. `z` is a world-space depth nudge applied
@@ -41,6 +41,14 @@ class Sprite:
         # all of them. See Material.instance().
         self.material = material.instance()
         self.material.properties['albedo'] = self.texture
+
+        # A normal map is set only when there is one: leaving the property
+        # absent (rather than present and zero) keeps a colour-only sprite
+        # lit by its geometric normal, which is what the lighting composite
+        # falls back to - see graphics/pbr/shaders.py.
+        self.normal = normal
+        if normal is not None:
+            self.material.properties['normal'] = normal
         self.quad = generate_quad()
         self.visisble = visisble
     
@@ -80,7 +88,8 @@ class AnimatedSprite2D(Sprite2D):
         with that sprite - so the sprite's texture starts out driven by the
         animation player from the very first frame."""
         self.player = AnimationPlayer(animation_set, default_animation)
-        sprite = Sprite(self.player.frame.texture, material, renderer, visible, z)
+        frame = self.player.frame
+        sprite = Sprite(frame.texture, material, renderer, visible, z, frame.normal)
         super().__init__(sprite, position, rotation, scale)
 
     def set_animation(self, name: str, restart: bool = False):
@@ -94,5 +103,15 @@ class AnimatedSprite2D(Sprite2D):
         that changed the current frame, reassigns the sprite's material
         `albedo` to the new frame's texture."""
         if self.player.update(delta()):
-            self._sprite.material.albedo = self.player.frame.texture
+            frame = self.player.frame
+            self._sprite.material.albedo = frame.texture
+            # Reassigned alongside the albedo so relief tracks the animation
+            # rather than staying on whichever frame happened to be first.
+            # Guarded on the property existing, since a colour-only
+            # animation's Sprite never created one (see Sprite.__init__) and
+            # Material.__setattr__ only redirects to a key already present -
+            # assigning it anyway would silently set a plain attribute that
+            # use() never uploads.
+            if frame.normal is not None and 'normal' in self._sprite.material.properties:
+                self._sprite.material.properties['normal'] = frame.normal
 

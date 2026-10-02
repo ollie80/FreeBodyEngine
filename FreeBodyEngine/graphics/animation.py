@@ -9,9 +9,16 @@ if TYPE_CHECKING:
 class AnimationFrame:
     """A single frame of an animation. `texture` may be a whole standalone
     image, or a Texture whose uv_rect has already been narrowed down to one
-    cell of a spritesheet image."""
+    cell of a spritesheet image.
+
+    `normal` is the matching cell of the spritesheet's `normal` map, where
+    the sheet declares one - a `.fbsheet` can hold several texture maps over
+    one grid, so an animation's frames can carry surface relief as well as
+    colour. None when the sheet has no normal map (or for a frame given a
+    standalone `image` with no `normal_image` alongside it)."""
     texture: 'Texture'
     duration: float
+    normal: 'Texture' = None
 
 
 @dataclass

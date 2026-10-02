@@ -47,11 +47,20 @@ def load_animation(file: FileResource) -> AnimationSet:
             image_path = frame_data.get('image')
             pos = frame_data.get('pos')
 
+            normal = None
+
             if image_path is not None:
                 texture = load_file(image_path)
                 if not texture:
                     warning(f'Animation "{name}" could not load frame image "{image_path}".')
                     continue
+                # A standalone-image frame can name its own normal map, the
+                # way a .fbspr can - there is no sheet to take one from.
+                normal_image_path = frame_data.get('normal_image')
+                if normal_image_path is not None:
+                    normal = load_file(normal_image_path)
+                    if not normal:
+                        warning(f'Animation "{name}" could not load frame normal image "{normal_image_path}".')
             elif pos is not None:
                 if not spritesheet_path:
                     warning(f'Animation "{name}" has a frame with "pos" set but no "spritesheet" is defined.')
@@ -66,11 +75,17 @@ def load_animation(file: FileResource) -> AnimationSet:
                 if texture is None:
                     warning(f'Animation "{name}" frame at pos {pos} has no "albedo" map in spritesheet "{spritesheet_path}".')
                     continue
+
+                # The same cell of the sheet's normal map, when it has one.
+                # get_cell returns None for a map the sheet doesn't declare,
+                # so this is simply absent rather than an error - most sheets
+                # are colour only.
+                normal = sheet.get_cell(pos, 'normal')
             else:
                 warning(f'Animation "{name}" has a frame with neither "pos" nor "image" set.')
                 continue
 
-            frames.append(AnimationFrame(texture, duration))
+            frames.append(AnimationFrame(texture, duration, normal))
 
         if frames:
             animations[name] = Animation(name, frames, loop)

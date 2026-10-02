@@ -34,7 +34,12 @@ def load_sprite(file: FileResource):
     visible = data.get('visible', True)
     z = data.get('z', 0)
 
-    sprite = Sprite(image, mat, get_service('renderer'), visible, z)
+    # Optional surface relief, so a static sprite can be lit the same way a
+    # tile or an animated sprite is.
+    normal_path = data.get('normal')
+    normal = load_file(normal_path) if normal_path else None
+
+    sprite = Sprite(image, mat, get_service('renderer'), visible, z, normal)
 
     if hot_reload.is_enabled():
         hot_reload.register(file.file_path, hot_reload.SPRITE, sprite)
