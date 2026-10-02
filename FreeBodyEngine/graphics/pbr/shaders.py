@@ -209,8 +209,25 @@ normal: vec3
 uv: vec2
 
 def main():
-    uv = uvs
-    VERTEX_POSITION = model * vec4(vertex.x, vertex.y, vertex.z, 1.0)
+    # UV is derived from the clip-space position, not taken from the quad's
+    # own `uvs` attribute. The fullscreen quad comes from generate_quad(),
+    # whose UVs are authored for the engine's *standalone* textures - those
+    # are uploaded rotated 180 degrees (see decode_image_bytes), so its u
+    # runs 1 -> 0 left to right to compensate. A G-buffer attachment is not
+    # rotated: it was rendered in normal screen orientation. Sampling it
+    # through that quad's attribute therefore mirrored the entire composited
+    # frame horizontally - every 2D scene came out flipped left-to-right,
+    # while the raw 'albedo' channel (blitted straight to the window, never
+    # resampled) looked correct, which is what made it look like a
+    # per-sprite UV problem rather than one in this pass.
+    #
+    # Deriving it here instead means this pass makes no assumption about any
+    # texture-orientation convention: the quad is already in NDC (model is
+    # identity), so this is just the standard NDC -> [0,1] remap, and v
+    # still runs with +y, matching GL's bottom-origin framebuffer textures.
+    clip: vec4 = model * vec4(vertex.x, vertex.y, vertex.z, 1.0)
+    uv = vec2(clip.x * 0.5 + 0.5, clip.y * 0.5 + 0.5)
+    VERTEX_POSITION = clip
 """
 
 LIGHTING_COMPOSITE_FRAG = f"""
