@@ -53,28 +53,21 @@ class Chunk:
         spritesheet_index = int(self.tiles[array_offset + 1])
         return Tile(position, image_id, spritesheet_index, self)
 
-    def _get_tile_neighbors(self, pos: tuple[int, int]):
-        for y in range(-1, 1):
-            for x in range(-1, 1):
-                neighbor_pos = (pos[0] + x, pos[1] + y)
+    def get_tile_neighbors(self, position: Vector, layer: str):
+        """This chunk-local tile's eight neighbours, reaching into adjoining
+        chunks as needed.
 
-                if neighbor_pos[0] < 0:
-                    chunk = self.tilemap.get_chunk()
-                    
-                    
-                    
-                    continue 
-                
-                if neighbor_pos[0] > self.size:
-                    chunk = self.tilemap.get_chunk()
-                    
-                    
-                    continue 
-                
-
-    def get_tile_neighbors(self, position: Vector):
-        """Gets the tile's neighbors, reaching across chunk boundaries as needed."""
-        return self._get_tile_neighbors((position.x, position.y))
+        Resolved through the parent tilemap in tilemap coordinates rather
+        than here: a neighbour across a chunk edge lives in a different chunk
+        (or in none at all, where nothing has been created yet), and the
+        tilemap is what knows how to find it. The previous implementation
+        looped `range(-1, 1)` - which omits the +1 side entirely - and
+        returned nothing at all.
+        """
+        size = self.size
+        tilemap_position = Vector(self.position.x * size + position.x,
+                                  self.position.y * size + position.y)
+        return self.tilemap.get_tile_neighbors(tilemap_position, layer)
 
     def _write_tile(self, position: Vector, image_id: int, spritesheet_index: int):
         """Writes a tile's two raw stored bytes at `position` (local to this

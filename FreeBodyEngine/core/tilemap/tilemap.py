@@ -1,4 +1,4 @@
-from FreeBodyEngine.core.tilemap.spritesheet import TilemapSpritesheet, StaticSpritesheet
+from FreeBodyEngine.core.tilemap.spritesheet import TilemapSpritesheet, StaticSpritesheet, AutoSpritesheet, UpdateMode
 from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
 from FreeBodyEngine.core.tilemap import _NUM_TILE_VALS, _MAX_TILE_VAL
 from FreeBodyEngine.core.tilemap.chunk import Chunk
@@ -11,6 +11,16 @@ from FreeBodyEngine.math import Vector
 import math
 import numpy as np
 from dataclasses import dataclass
+
+# The eight neighbours of a tile, clockwise from the top-left, as offsets in
+# tilemap coordinates. Rows run downward (see Tilemap.tilemap_pos), so -1 on
+# the y axis is the row above.
+_NEIGHBOUR_OFFSETS = (
+    (-1, -1), (0, -1), (1, -1),
+    (1, 0), (1, 1), (0, 1),
+    (-1, 1), (-1, 0),
+)
+
 
 @dataclass
 class Layer:
@@ -50,6 +60,8 @@ class Tilemap(Node2D):
         self._spritesheet_types: dict[str, type[TilemapSpritesheet]] = {
             'static': StaticSpritesheet,
             StaticSpritesheet.get_name(): StaticSpritesheet,
+            'auto': AutoSpritesheet,
+            AutoSpritesheet.get_name(): AutoSpritesheet,
         }
         self.spritesheets: dict[str, TilemapSpritesheet] = {}
         # A chunk stores a tile's spritesheet as a one-byte index, not a
@@ -81,6 +93,75 @@ class Tilemap(Node2D):
         """Registers a `TilemapSpritesheet` subclass so it can be created by
         `create_spritesheet`/`add_spritesheet` via its `get_name()`."""
         self._spritesheet_types[type.get_name()] = type
+
+    def peek_tile(self, position: Vector, layer: str) -> Tile:
+        """The tile at tilemap `position` on `layer`, or None where no chunk
+        covers it - without logging an error for the miss.
+
+        `get_tile` goes through `get_chunk`, which logs an error for a chunk
+        that does not exist. That is right for a direct lookup and wrong for a
+        neighbour sweep, where "nothing there" is the ordinary case and would
+        otherwise log eight times per resolved tile.
+        """
+        chunk_position = self.chunk_pos(position)
+        if layer not in self.layers:
+            return None
+        if chunk_position not in self.layers[layer].chunks:
+            return None
+        return self.layers[layer].chunks[chunk_position].get_tile(self.tile_pos(position))
+
+    def get_tile_neighbors(self, position: Vector, layer: str) -> tuple:
+        """The eight tiles surrounding tilemap `position` on `layer`,
+        clockwise from the top-left, with None for any that no chunk covers.
+
+        Rows run downward (see `tilemap_pos`), so "top" is one row *less* in
+        tilemap coordinates. Crossing a chunk edge is handled by addressing
+        every neighbour in tilemap coordinates and letting `peek_tile` find
+        whichever chunk owns it.
+        """
+        return tuple(
+            self.peek_tile(Vector(position.x + dx, position.y + dy), layer)
+            for dx, dy in _NEIGHBOUR_OFFSETS
+        )
+
+    def _resolve_tile(self, position: Vector, layer: str):
+        """Recomputes the image of the tile at tilemap `position` on `layer`,
+        if it belongs to a spritesheet that derives its image from its
+        neighbours.
+
+        Writes through `Chunk._write_tile` rather than `set_tile`, because
+        this is not placing a tile - the tile and its spritesheet are
+        unchanged, only the cell it draws - and going back through placement
+        would recurse into resolving again.
+        """
+        tile = self.peek_tile(position, layer)
+        if tile is None or tile.empty:
+            return
+
+        sheet = self.get_spritesheet_by_index(tile.spritesheet_index)
+        if sheet is None or sheet.update_mode == UpdateMode.NEVER:
+            return
+
+        neighbors = self.get_tile_neighbors(position, layer)
+        cell_index = sheet.get_image_index(tile, neighbors)
+
+        chunk = self.layers[layer].chunks[self.chunk_pos(position)]
+        chunk._write_tile(self.tile_pos(position), cell_index + 1, tile.spritesheet_index)
+
+    def _resolve_around(self, position: Vector, layer: str):
+        """Re-resolves the tile at `position` and each of its eight
+        neighbours.
+
+        The neighbours matter as much as the tile itself: placing a tile
+        changes what its neighbours see, so each of them may now want a
+        different cell. Neighbours are addressed in tilemap coordinates, so a
+        tile on a chunk edge correctly updates tiles in the adjoining chunk -
+        marking that chunk dirty too, since `_write_tile` sets `_updated` on
+        whichever chunk it writes to.
+        """
+        self._resolve_tile(position, layer)
+        for dx, dy in _NEIGHBOUR_OFFSETS:
+            self._resolve_tile(Vector(position.x + dx, position.y + dy), layer)
 
     def create_spritesheet(self, data: dict):
         """Creates a spritesheet from `data` and adds it to the tilemap's
@@ -199,12 +280,20 @@ class Tilemap(Node2D):
         # renderer.generate_chunk_mesh.
         chunk.set_tile(self.tile_pos(position), cell_index + 1, sheet_index)
 
+        # An auto-tiled sheet derives the cell from the tile's surroundings,
+        # so whatever `cell` said is only a starting value - and the
+        # neighbours' own cells may now be wrong too.
+        self._resolve_around(position, layer)
+
     def remove_tile(self, position: Vector, layer: str):
         """Clears the tile at tilemap `position` on `layer`."""
         chunk = self.get_chunk(self.chunk_pos(position), layer)
         if chunk is None:
             return
         chunk.remove_tile(self.tile_pos(position))
+        # Removing a tile changes what its neighbours border on, the same way
+        # placing one does.
+        self._resolve_around(position, layer)
 
     def get_tile(self, position: Vector, layer: str) -> Tile:
         """Gets the tile at tilemap `position` on `layer`, resolving it to the

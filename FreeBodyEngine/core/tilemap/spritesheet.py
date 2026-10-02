@@ -15,7 +15,8 @@ already does with pure UV math.
 """
 
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine.core.files import load_file, SPRITESHEET_FILE
+from FreeBodyEngine.core.files import load_file, SPRITESHEET_FILE, TILESET_FILE
+from FreeBodyEngine.core.tilemap.rules import parse_rules, NEIGHBOUR_GRID_INDEX
 from FreeBodyEngine import warning
 
 from typing import TYPE_CHECKING, Optional, Sequence, Union
@@ -149,3 +150,73 @@ class StaticSpritesheet(TilemapSpritesheet):
     def get_image_index(self, tile, neighbors):
         """Returns `tile`'s stored image id unchanged; `neighbors` is unused."""
         return tile.image_id
+
+
+class AutoSpritesheet(TilemapSpritesheet):
+    """A spritesheet whose tiles pick their image from what surrounds them,
+    by evaluating the project's own rules (see core/tilemap/rules.py).
+
+    The engine defines no tiling scheme here - no built-in edge/corner
+    handling, no fixed case count. The rules come from a `.fbtiles` file, so
+    a project writes whatever tiling behaviour it wants.
+
+    `UpdateMode.CHUNK`: a tile's image depends on its neighbours, so it is
+    resolved when the tilemap is edited rather than every frame - placing or
+    removing a tile re-resolves it and its eight neighbours, reaching into
+    adjoining chunks where it sits on a chunk edge (see
+    `Tilemap._resolve_around`).
+    """
+
+    def __init__(self, data: dict, tilemap: 'Tilemap'):
+        """Args:
+            data: Either `{'name': ..., 'tileset': 'path.fbtiles'}`, which
+                takes the sheet, default cell and rules from that file, or an
+                inline `{'name', 'sheet', 'rules', 'default'}`.
+            tilemap: The tilemap this spritesheet belongs to.
+        """
+        tileset_path = data.get('tileset')
+        if tileset_path is not None:
+            tileset = load_file(tileset_path, TILESET_FILE)
+            if not tileset:
+                warning(f'Tilemap spritesheet "{data.get("name")}" could not load tileset "{tileset_path}".')
+                tileset = {}
+            # The file supplies sheet/default/rules; `data` still supplies the
+            # name it is registered under, and wins on any key it sets itself.
+            merged = dict(tileset)
+            merged.update(data)
+            data = merged
+
+        super().__init__(data, tilemap, UpdateMode.CHUNK)
+
+        self.rules = parse_rules(data, where=f'tileset "{self.name}"')
+        if not self.rules:
+            warning(f'Auto spritesheet "{self.name}" has no usable rules; every tile will use its default cell.')
+
+        self.default_cell = data.get('default', 0)
+
+    @staticmethod
+    def get_name():
+        """The type name spritesheet data uses to select this class (see `Tilemap.add_spritesheet_type`)."""
+        return "auto_spritesheet"
+
+    def get_image_index(self, tile: 'Tile', neighbors) -> int:
+        """The cell index for `tile`, from the first of this tileset's rules
+        whose pattern its neighbours satisfy, falling back to `default`.
+
+        `neighbors` is the eight surrounding tiles clockwise from the
+        top-left, as `Tilemap.get_tile_neighbors` returns them; None entries
+        (no chunk in that direction) count as empty.
+        """
+        grid = [None] * 9
+        for i, neighbor in enumerate(neighbors):
+            grid[NEIGHBOUR_GRID_INDEX[i]] = neighbor
+        grid[4] = tile
+
+        position = tile.tilemap_position
+        sheet_index = tile.spritesheet_index
+
+        for rule in self.rules:
+            if rule.matches(grid, sheet_index):
+                return self.cell_index(rule.pick_cell(position.x, position.y))
+
+        return self.cell_index(self.default_cell)

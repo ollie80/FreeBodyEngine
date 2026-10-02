@@ -37,6 +37,7 @@ SOUND_FILE = "SOUND_FILE"
 FONT_FILE = "FONT_FILE"
 ANIMATION_FILE = "ANIMATION_FILE"
 SPRITESHEET_FILE = "SPRITESHEET_FILE"
+TILESET_FILE = "TILESET_FILE"
 
 from FreeBodyEngine.core.files.loader import load_file
 
@@ -69,6 +70,7 @@ from FreeBodyEngine.core.files.loaders.sound import load_sound
 from FreeBodyEngine.core.files.loaders.font import load_font
 from FreeBodyEngine.core.files.loaders.animation import load_animation
 from FreeBodyEngine.core.files.loaders.spritesheet import load_spritesheet
+from FreeBodyEngine.core.files.loaders.tileset import load_tileset
 # file_type: (loader, supported_extensions, supports_multiple_files)
 #
 # Loader order matters when multiple loaders support the same extension.
@@ -91,6 +93,7 @@ loaders = {
     FONT_FILE: (load_font, ('.fbfont',), False),
     ANIMATION_FILE: (load_animation, ('.fbanim',), False),
     SPRITESHEET_FILE: (load_spritesheet, ('.fbsheet',), False),
+    TILESET_FILE: (load_tileset, ('.fbtiles',), False),
 }
 
 

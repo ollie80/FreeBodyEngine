@@ -44,6 +44,19 @@ class Tile:
         """The tile's position, local to its chunk."""
         return self._position
 
+    @property
+    def tilemap_position(self) -> Vector:
+        """The tile's position in tilemap coordinates, i.e. its chunk's
+        position scaled up plus its own position within that chunk.
+
+        Auto-tiling rules need this: a rule that picks between several cells
+        does so by hashing the tile's position, which has to be unique across
+        the whole tilemap rather than repeating once per chunk."""
+        chunk = self._chunk
+        size = chunk.size
+        return Vector(chunk.position.x * size + self._position.x,
+                      chunk.position.y * size + self._position.y)
+
     @position.setter
     def position(self, new: Vector):
         """Moves the tile within its chunk, removing it from the old slot and
