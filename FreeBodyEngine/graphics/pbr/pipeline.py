@@ -366,6 +366,10 @@ class PBRPipeline(GraphicsPipeline):
             ('gAlbedo', 'albedo'), ('gEmmisive', 'emmision'),
             ('gRoughness', 'roughness'), ('gMetallic', 'metallic'),
             ('gWorldPos', 'gWorldPos'), ('gWorldNormal', 'gWorldNormal'),
+            # The normal-map channel. Written by every G-buffer shader since
+            # the pipeline was built, but never bound here, so nothing ever
+            # read it - see LIGHTING_COMPOSITE_FRAG's own note.
+            ('gNormal', 'normal'),
         ):
             gl_tex = self.main_framebuffer.get_attachment_texture(attachment)
             self._composite_shader[uniform_name] = texture_manager.wrap_external_texture(gl_tex)

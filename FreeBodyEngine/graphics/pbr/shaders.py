@@ -242,6 +242,7 @@ gRoughness: texture
 gMetallic: texture
 gWorldPos: texture
 gWorldNormal: texture
+gNormal: texture
 {_LIGHT_UNIFORM_BLOCK}
 @input
 uv: vec2
@@ -255,7 +256,39 @@ def main() -> void:
         result = vec4(0.0, 0.0, 0.0, 0.0)
     else:
         world_pos: vec3 = vec3(world_pos4.x, world_pos4.y, world_pos4.z)
-        normal: vec3 = normalize(vec3(sample(gWorldNormal, uv).x, sample(gWorldNormal, uv).y, sample(gWorldNormal, uv).z))
+
+        # The geometric (interpolated surface) normal.
+        geom_normal: vec3 = normalize(vec3(sample(gWorldNormal, uv).x, sample(gWorldNormal, uv).y, sample(gWorldNormal, uv).z))
+
+        # The 'normal' G-buffer channel - the normal *map* - is now read.
+        # It was written by every shader that fills the G-buffer but no pass
+        # ever sampled it: this frag declared gAlbedo/gEmmisive/gRoughness/
+        # gMetallic/gWorldPos/gWorldNormal and simply had no gNormal, so a
+        # normal map changed nothing anywhere in the engine. Lighting used
+        # the flat facing normal for every surface, which for 2D means every
+        # sprite and tile was lit by distance falloff alone, with no surface
+        # relief at all - and 2D art in this engine ships a normal map per
+        # sheet precisely to get that relief.
+        #
+        # Applied in world space rather than through a tangent basis: the
+        # G-buffer carries no tangents, and for the 2D case every surface is
+        # a quad facing +Z, so tangent space and world space coincide and a
+        # map's RGB is already its world-space normal. A 3D mesh with a
+        # normal map wants a real TBN and does not get one here.
+        normal_sample: vec4 = sample(gNormal, uv)
+        mapped_normal: vec3 = vec3(normal_sample.x * 2.0 - 1.0, normal_sample.y * 2.0 - 1.0, normal_sample.z * 2.0 - 1.0)
+
+        normal: vec3 = geom_normal
+        # A surface with no normal map leaves this channel at zero (see
+        # Material.use()'s own fallback, and TilemapRenderer's), which decodes
+        # to (-1,-1,-1) - a direction, not a "no data" value, so it has to be
+        # detected before decoding, on the raw sample. Summed into a local
+        # first because FBUSL's parser does not accept a parenthesised
+        # expression as a comparison's left operand in an `if`.
+        normal_sum: float = normal_sample.x + normal_sample.y + normal_sample.z
+        if normal_sum > 0.0:
+            normal = normalize(mapped_normal)
+
         albedo4: vec4 = sample(gAlbedo, uv)
         albedo: vec3 = vec3(albedo4.x, albedo4.y, albedo4.z)
         emissive: vec3 = vec3(sample(gEmmisive, uv).x, sample(gEmmisive, uv).y, sample(gEmmisive, uv).z)
