@@ -492,9 +492,19 @@ class GLFWMouse(Mouse):
             cam: Camera = scene.camera
             if cam != None:
                 ndc_x = (self.position.x / self.window.size[0]) * 2.0 - 1.0 #convert to clip space
-                ndc_y = (self.position.y / self.window.size[1]) * 2.0 - 1.0
+                # Screen y grows downward while NDC y grows upward, so this is
+                # 1 - 2t rather than 2t - 1. Without the flip every world position
+                # derived from the cursor was mirrored about the camera's own y:
+                # aiming up pointed down, and clicking in a scene hit the wrong
+                # tile. The web and android backends already did it this way.
+                ndc_y = 1.0 - (self.position.y / self.window.size[1]) * 2.0
                 clip_pos = (ndc_x, ndc_y, 0.0, 1.0)
                 
+                # _get_view_mat(), not view_matrix. The two are transposes: the renderer
+                # uploads view_matrix to GL, which transposes it on the way in, while
+                # this is CPU-side maths in the column-vector convention the projection
+                # matrix is already written in. Mixing the two makes the unprojection
+                # nearly insensitive to the cursor once the camera leaves the origin.
                 proj_view_inverse = numpy.linalg.inv(cam.proj_matrix @ cam._get_view_mat())
                 p =  proj_view_inverse @ clip_pos
                 p /= p[3]

@@ -146,8 +146,18 @@ class SyntheticMouse(Mouse):
             camera = scene.camera
             size = self.window.size
             ndc_x = (self.position.x / size[0]) * 2.0 - 1.0
-            ndc_y = (self.position.y / size[1]) * 2.0 - 1.0
+            # Screen y grows downward while NDC y grows upward, so this is
+            # 1 - 2t rather than 2t - 1. Without the flip every world position
+            # derived from the cursor was mirrored about the camera's own y:
+            # aiming up pointed down, and clicking in a scene hit the wrong
+            # tile. The web and android backends already did it this way.
+            ndc_y = 1.0 - (self.position.y / size[1]) * 2.0
             try:
+                                           # _get_view_mat(), not view_matrix. The two are transposes: the renderer
+                                           # uploads view_matrix to GL, which transposes it on the way in, while
+                                           # this is CPU-side maths in the column-vector convention the projection
+                                           # matrix is already written in. Mixing the two makes the unprojection
+                                           # nearly insensitive to the cursor once the camera leaves the origin.
                 inverse = numpy.linalg.inv(camera.proj_matrix @ camera._get_view_mat())
             except numpy.linalg.LinAlgError:
                 return
