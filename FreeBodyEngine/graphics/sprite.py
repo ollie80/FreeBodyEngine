@@ -57,12 +57,22 @@ class Sprite2D(Node2D):
     """Positions a Sprite in 2D space by wrapping it in a Node2D, so it can
     be added to the node tree and inherit a world transform - the Sprite
     itself stays transform-less."""
-    def __init__(self, sprite: Sprite, position: Vector = Vector(), rotaition: float = 0.0, scale: Vector = Vector(1, 1), z=0):
+    def __init__(self, sprite: Sprite, position: Vector = Vector(), rotaition: float = 0.0, scale: Vector = Vector(1, 1), z: Optional[float] = None):
         """Wraps `sprite` with a 2D Transform (`position`/`rotaition`/
-        `scale`) so it can be parented into the node tree."""
+        `scale`) so it can be parented into the node tree.
+
+        `z` defaults to None - meaning "leave the Sprite's own z alone" -
+        rather than 0, because `sprite` usually arrives already carrying
+        one: a `.fbspr` can declare `z` and its loader passes it to the
+        Sprite constructor (see core/files/loaders/sprite.py). This used to
+        assign `self._sprite.z = z` unconditionally, so merely wrapping a
+        loaded sprite in a Sprite2D silently reset that declared z to 0 and
+        every `z = ...` line in a `.fbspr` was dead. Pass a float here only
+        to deliberately override the file."""
         super().__init__(position, rotaition, scale)
         self._sprite = sprite
-        self._sprite.z = z
+        if z is not None:
+            self._sprite.z = z
 
     def on_draw(self):
         """Draws the wrapped sprite. Mirrors the `Node.on_draw` hook
@@ -91,6 +101,11 @@ class AnimatedSprite2D(Sprite2D):
         self.player = AnimationPlayer(animation_set, default_animation)
         frame = self.player.frame
         sprite = Sprite(frame.texture, material, renderer, visible, z, frame.normal)
+        # `z` is given to the Sprite above and deliberately not forwarded to
+        # Sprite2D, whose None default now leaves an already-set z alone.
+        # Forwarding 0 here is exactly the bug that made every animated
+        # sprite's z a no-op: the Sprite was built with the caller's z and
+        # Sprite2D.__init__ then overwrote it with its own default.
         super().__init__(sprite, position, rotation, scale)
 
     def set_animation(self, name: str, restart: bool = False):

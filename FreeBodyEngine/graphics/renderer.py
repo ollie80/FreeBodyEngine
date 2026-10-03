@@ -231,15 +231,31 @@ class Renderer(Service):
     def flush_transparent(self):
         """Draws and dequeues every TRANSPARENT Call currently queued,
         individually (no state-minimizing grouping - see flush_opaque()),
-        sorted back-to-front by camera distance (the only order that
-        composites correctly without per-pixel order-independent blending),
-        with alpha blending on and depth *testing* on but depth *writing*
+        sorted back-to-front - by each call's z, then by camera distance
+        within one z (painter's order being the only thing that composites
+        correctly without per-pixel order-independent blending), with alpha
+        blending on and depth *testing* on but depth *writing*
         off, so transparent objects don't occlude each other incorrectly or
         block opaque geometry drawn earlier."""
         transparent = [c for c in self.calls if c.blend_mode == BlendMode.TRANSPARENT]
         self.calls = [c for c in self.calls if c.blend_mode != BlendMode.TRANSPARENT]
 
-        transparent.sort(key=lambda c: c.camera_distance(), reverse=True)
+        # Keyed on `c.z` first and camera distance only as a tiebreaker.
+        # Sorting on camera distance alone made a transparent sprite's own z
+        # all but unusable as a layering control: camera_distance() squares
+        # its z term, so a nudge of ~1e-2 contributed ~1e-4 against an x/y
+        # term measured in world units (~1e2 for a sprite ten units off the
+        # camera centre) and was swamped by three orders of magnitude -
+        # whichever sprite sat nearest the camera centre drew on top
+        # regardless of z. Squaring also discarded the sign, so for two
+        # sprites at the *same* position a more negative z sorted as
+        # *farther*, inverting z's meaning against the opaque path
+        # (flush_opaque sorts ascending on call.z, drawn under GL_LESS, so
+        # more negative = nearer = on top). Descending z here matches that:
+        # most negative sorts last, and last drawn wins when depth writes
+        # are off. Equal-z calls still resolve farthest-first, which is what
+        # actually matters for two overlapping sprites on one layer.
+        transparent.sort(key=lambda c: (c.z, c.camera_distance()), reverse=True)
         if transparent:
             self.set_blend_mode(BlendMode.TRANSPARENT)
             for call in transparent:
