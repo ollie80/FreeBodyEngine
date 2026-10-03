@@ -57,11 +57,12 @@ class Sprite2D(Node2D):
     """Positions a Sprite in 2D space by wrapping it in a Node2D, so it can
     be added to the node tree and inherit a world transform - the Sprite
     itself stays transform-less."""
-    def __init__(self, sprite: Sprite, position: Vector = Vector(), rotaition: float = 0.0, scale: Vector = Vector(1, 1)):
+    def __init__(self, sprite: Sprite, position: Vector = Vector(), rotaition: float = 0.0, scale: Vector = Vector(1, 1), z=0):
         """Wraps `sprite` with a 2D Transform (`position`/`rotaition`/
         `scale`) so it can be parented into the node tree."""
         super().__init__(position, rotaition, scale)
         self._sprite = sprite
+        self._sprite.z = z
 
     def on_draw(self):
         """Draws the wrapped sprite. Mirrors the `Node.on_draw` hook

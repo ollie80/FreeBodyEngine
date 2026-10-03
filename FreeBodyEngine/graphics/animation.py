@@ -55,8 +55,10 @@ class AnimationPlayer:
         self.animation_set = animation_set
 
         if default is None:
+            if not animation_set.animations:
+                raise ValueError("AnimationSet contains no animations")
             default = next(iter(animation_set.animations))
-
+        
         self.current_animation = default
         self.frame_index = 0
         self.elapsed = 0.0

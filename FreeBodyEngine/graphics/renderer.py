@@ -217,7 +217,7 @@ class Renderer(Service):
         """
         from FreeBodyEngine.graphics.instancing import group_by_state
 
-        opaque = [c for c in self.calls if c.blend_mode in (BlendMode.OPAQUE, BlendMode.ADDITIVE)]
+        opaque = [c for c in sorted(self.calls, key=lambda call: call.z) if c.blend_mode in (BlendMode.OPAQUE, BlendMode.ADDITIVE)]
         self.calls = [c for c in self.calls if c.blend_mode == BlendMode.TRANSPARENT]
 
         for group in group_by_state(opaque):
