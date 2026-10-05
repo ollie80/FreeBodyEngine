@@ -244,4 +244,10 @@ class PhysicsBody(Node2D):
     def on_physics_process(self):
         """Called once per physics step - override to run custom per-step physics logic."""
         pass
-    
+
+
+from FreeBodyEngine.core.physics import joints
+from FreeBodyEngine.core.physics import body
+from FreeBodyEngine.core.physics import world
+from FreeBodyEngine.core.physics import contact
+from FreeBodyEngine.core.physics import broadphase

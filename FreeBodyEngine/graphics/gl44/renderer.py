@@ -132,7 +132,8 @@ class GL44Renderer(Renderer):
 
         glEnable(GL_DEBUG_OUTPUT)
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS)
-        glDebugMessageCallback(debug_callback, None)
+        if get_flag("RENDERER_DEBUG", False):
+            glDebugMessageCallback(debug_callback, None)
 
         glViewport(0, 0, width, height)
 

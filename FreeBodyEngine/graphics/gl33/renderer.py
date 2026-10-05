@@ -120,7 +120,8 @@ class GL33Renderer(Renderer):
             # initialization over on a driver that lacks it.
             glEnable(GL_DEBUG_OUTPUT)
             glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS)
-            glDebugMessageCallback(debug_callback, None)
+            if get_flag("RENDERER_DEBUG", False):
+                glDebugMessageCallback(debug_callback, None)
         except Exception:
             pass
         # framebuffer_size (physical/device pixels), not size (logical/
