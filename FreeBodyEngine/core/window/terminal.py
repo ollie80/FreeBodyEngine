@@ -83,6 +83,7 @@ except ImportError:
     _HAS_TERMIOS = False
 
 from OpenGL.GL import glReadPixels, GL_RGB, GL_UNSIGNED_BYTE
+import numpy as np
 import glfw
 
 from FreeBodyEngine.core.window.glfw import GLFWWindow
@@ -97,6 +98,13 @@ from FreeBodyEngine import get_service, get_main, warning
 # actually distinguish much more than this many distinct "densities" at a
 # glance anyway.
 ASCII_RAMP = " .:-=+*#%@"
+
+# What one terminal cell stands for, in notional pixels, for `size`. A cell
+# is about twice as tall as it is wide in every common terminal font, and
+# that ratio is the part that matters - the absolute scale only sets what a
+# game's zoom means, and 8x16 puts a typical 120x40 terminal at 960x640,
+# which is a normal window size.
+CELL_PIXELS = (8, 16)
 
 # Non-printable keys' well-known ANSI sequences in raw mode. Covers the
 # handful essentially every terminal emulator agrees on (arrows, home/end,
@@ -168,6 +176,10 @@ class TerminalWindow(GLFWWindow):
         columns, rows = shutil.get_terminal_size(fallback=(80, 24))
         self._columns = columns
         self._rows = rows
+        # The GL side draws at full pixel resolution; only presentation is
+        # per-cell. Without this the context stays at whatever `size` was
+        # passed in and never matches what framebuffer_size reports.
+        glfw.set_window_size(self._window, *self.size)
 
         # The real terminal emulator can be resized by the user at any
         # time, unlike a real OS window there's no GLFW/window-manager
@@ -272,13 +284,29 @@ class TerminalWindow(GLFWWindow):
             return
 
         self._columns, self._rows = columns, rows
-        glfw.set_window_size(self._window, columns, rows)
+        glfw.set_window_size(self._window, *self.size)
         sys.stdout.write("\x1b[2J")  # old frame was a different size - drop its leftover glyphs
         sys.stdout.flush()
 
     @property
     def size(self) -> tuple[int, int]:
-        return (self._columns, self._rows)
+        """The drawable area in *pixels* - not the character grid.
+
+        `framebuffer_size` is the character grid; this is deliberately not.
+        A camera builds its projection from this property (see
+        Camera._update_projection_matrix), so reporting cells here made a
+        game's zoom mean something entirely different from every other
+        backend. A game picking `zoom = 8` for a 960-pixel-wide window got a
+        fifteen-world-unit view in a 120-column terminal - less than a single
+        16-unit tile, stretched across the whole screen, which is not
+        recognisable as the game at all.
+
+        One cell stands for CELL_PIXELS. Its 1:2 ratio is what keeps squares
+        square: 120x40 cells reports as 960x640 pixels (aspect 1.5), and 120
+        cells wide by 40 cells of double height is also 1.5, so the
+        projection and the thing it is eventually displayed on agree.
+        """
+        return (self._columns * CELL_PIXELS[0], self._rows * CELL_PIXELS[1])
 
     @size.setter
     def size(self, new: tuple[int, int]):
@@ -286,9 +314,22 @@ class TerminalWindow(GLFWWindow):
 
     @property
     def framebuffer_size(self) -> tuple[int, int]:
-        """Same as `size` - see the module docstring for why there's no
-        separate "pixel" resolution here at all."""
-        return (self._columns, self._rows)
+        """The drawable area in pixels - the same as `size` here.
+
+        Was the character grid, which made this backend a special case for
+        everything that reads it: the UI laid out in cells (ui/manager.py
+        sizes its root from this), so an app authored in pixels came out
+        roughly ten times too large and its buttons' own padding swallowed
+        their labels, and the graphics pipeline built its framebuffer at
+        120x40, so the world and any custom pipeline - phonon's audio
+        visualizer among them - were rendered at that.
+
+        Now everything upstream of presentation works in ordinary pixels and
+        the character grid exists only at the very end, in draw(), where the
+        finished frame is averaged down into cells. That is the one place a
+        terminal is actually different from a window.
+        """
+        return self.size
 
     def _get_key_down(self, key: Key) -> float:
         """Approximates "is this key currently held" from raw terminal
@@ -455,29 +496,43 @@ class TerminalWindow(GLFWWindow):
         glfw.make_context_current(self._window)
 
         width, height = self._columns, self._rows
-        raw = glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE)
-        # GL's origin is bottom-left; a terminal's is top-left - each row
-        # is walked in reverse below rather than flipping the whole buffer
-        # up front.
-        row_stride = width * 3
+        pixel_w, pixel_h = self.size
+
+        # Read the frame at its real resolution and average each cell's block
+        # of pixels down to one colour. The world used to be *rendered* at the
+        # character grid - one pixel per cell, nothing to average - which made
+        # everything upstream of here a special case and threw away the detail
+        # a downsample keeps. A box filter over CELL_PIXELS is cheap (one
+        # reshape and one mean) and is what makes album art and a shader
+        # visualizer legible as cells rather than noise.
+        raw = glReadPixels(0, 0, pixel_w, pixel_h, GL_RGB, GL_UNSIGNED_BYTE)
+        frame = np.frombuffer(raw, dtype=np.uint8).reshape(pixel_h, pixel_w, 3)
+        # GL's origin is bottom-left and a terminal's is top-left, so the
+        # whole buffer is flipped once here rather than per row.
+        frame = frame[::-1]
+        cell_w, cell_h = CELL_PIXELS
+        cells = (frame.reshape(height, cell_h, width, cell_w, 3)
+                      .mean(axis=(1, 3))
+                      .astype(np.uint8))
+        luminance = (0.299 * cells[..., 0] + 0.587 * cells[..., 1]
+                     + 0.114 * cells[..., 2]) / 255.0
+        ramp_index = np.minimum(len(ASCII_RAMP) - 1,
+                                (luminance * len(ASCII_RAMP)).astype(int))
 
         out = ["\x1b[H"]  # cursor home - overwrite in place, no full clear (avoids visible flicker)
         last_fg = None
         last_bg = None
 
         for row in range(height):
-            gl_row = height - 1 - row
-            row_start = gl_row * row_stride
             for col in range(width):
                 overlay_cell = self.ui_overlay.get((col, row))
                 if overlay_cell is not None:
                     char, fg, bg = overlay_cell
                 else:
-                    px = row_start + col * 3
-                    r, g, b = raw[px], raw[px + 1], raw[px + 2]
-                    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
-                    char = ASCII_RAMP[min(len(ASCII_RAMP) - 1, int(luminance * len(ASCII_RAMP)))]
-                    fg, bg = (r, g, b), None
+                    pixel = cells[row, col]
+                    char = ASCII_RAMP[ramp_index[row, col]]
+                    fg = (int(pixel[0]), int(pixel[1]), int(pixel[2]))
+                    bg = None
 
                 if fg != last_fg:
                     out.append(f"\x1b[38;2;{fg[0]};{fg[1]};{fg[2]}m")

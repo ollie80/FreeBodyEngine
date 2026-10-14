@@ -30,6 +30,13 @@ class GraphicsPipeline(Service):
         unregister_service_update(UpdatePhase.DRAW, self.draw)
         unregister_event_callback(FRAMEBUFFER_RESIZE, self.resize)
 
+    # Which shader pair a Tilemap draws with. A tilemap writes whatever
+    # channels the pipeline's passes expect, so the pipeline owns the choice -
+    # the PBR G-buffer wants seven outputs and LitePipeline's surface pass
+    # wants three, and a tilemap cannot know which it is being drawn into.
+    tilemap_shader = ('engine://shader/graphics/tilemap.fbvert',
+                      'engine://shader/graphics/tilemap.fbfrag')
+
     @abstractmethod
     def resize(self, size: tuple[int, int]):
         """Called on FRAMEBUFFER_RESIZE with the new framebuffer `size` (pixels) - subclasses resize whatever framebuffers/render targets they own."""

@@ -3,9 +3,11 @@ from FreeBodyEngine.graphics import color
 from FreeBodyEngine.graphics import image
 from FreeBodyEngine.graphics import renderer
 from FreeBodyEngine.graphics import material
+from FreeBodyEngine.graphics import lighting
 from FreeBodyEngine.graphics import mesh
 from FreeBodyEngine.graphics import sprite
 from FreeBodyEngine.graphics import pbr
+from FreeBodyEngine.graphics import lite
 from FreeBodyEngine.graphics import pipeline
 from FreeBodyEngine.graphics import model
 from FreeBodyEngine.graphics import text

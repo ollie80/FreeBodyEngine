@@ -1,0 +1,23 @@
+# A flat colour, written straight into the finished image.
+#
+# Debug geometry is drawn over the scene rather than being part of it: an
+# editor's grid and markers are not surfaces to be lit, they are an overlay.
+# So this writes to the combined output directly and takes no part in either
+# the surface or the light pass.
+
+# Padded to attachment index 4 ('lit'): outputs bind by declaration order from
+# location 0 while set_draw_buffers builds a full-width array indexed by
+# attachment, so a single output would otherwise land in a disabled slot and
+# draw nothing at all - which is exactly how the editor's gizmos disappeared.
+@output
+_pad0: vec4
+_pad1: vec4
+_pad2: vec4
+_pad3: vec4
+result: vec4
+
+@uniform
+Colour: vec4
+
+def main() -> void:
+    result = Colour

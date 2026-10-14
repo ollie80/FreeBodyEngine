@@ -33,6 +33,25 @@ if TYPE_CHECKING:
     from FreeBodyEngine.core.window.terminal import TerminalWindow
 
 
+def _cell_rect(layout) -> tuple:
+    """A layout rect, in pixels, as the cell rect that covers it.
+
+    The UI lays out in pixels here exactly as it does on every other
+    backend (see TerminalWindow.framebuffer_size) - a terminal's character
+    grid only exists at presentation. So every coordinate this renderer
+    touches has to come through here first: left/top round down and
+    right/bottom round up, so a one-pixel sliver still claims the cell it
+    falls in rather than vanishing.
+    """
+    from FreeBodyEngine.core.window.terminal import CELL_PIXELS
+    cw, ch = CELL_PIXELS
+    x0 = int(layout.x // cw)
+    y0 = int(layout.y // ch)
+    x1 = int(-(-(layout.x + layout.width) // cw))
+    y1 = int(-(-(layout.y + layout.height) // ch))
+    return x0, y0, max(0, x1 - x0), max(0, y1 - y0)
+
+
 def _color_to_rgb(value) -> tuple:
     """Converts a style color (an (r, g, b[, a]) tuple of 0..1 floats -
     see ui/renderer.py's own `base_color`/`text_color`/etc. styles) to a
@@ -54,6 +73,8 @@ class TerminalUIRenderer(Service):
         super().__init__('ui_renderer')
         self.dependencies.append('ui')
         self.dependencies.append('window')
+
+    _image_cache: dict = {}
 
     def on_initialize(self):
         register_service_update(UpdatePhase.DRAW, self.draw)
@@ -89,12 +110,13 @@ class TerminalUIRenderer(Service):
         doesn't - checked per-cell in _set_cell() instead of via a bound
         GPU scissor rect)."""
         layout = element._layout
+        rect = _cell_rect(layout)
 
-        if scissor is not None and layout.width > 0 and layout.height > 0:
+        if scissor is not None and rect[2] > 0 and rect[3] > 0:
             sx, sy, sw, sh = scissor
             if (
-                layout.x >= sx + sw or layout.x + layout.width <= sx or
-                layout.y >= sy + sh or layout.y + layout.height <= sy
+                rect[0] >= sx + sw or rect[0] + rect[2] <= sx or
+                rect[1] >= sy + sh or rect[1] + rect[3] <= sy
             ):
                 return
 
@@ -105,7 +127,7 @@ class TerminalUIRenderer(Service):
 
         child_scissor = scissor
         if element.get_overflow(styles) != "visible":
-            own_rect = (layout.x, layout.y, layout.width, layout.height)
+            own_rect = rect
             child_scissor = (
                 self._intersect_rect(scissor, own_rect) if scissor is not None else own_rect
             )
@@ -129,9 +151,16 @@ class TerminalUIRenderer(Service):
 
     def _draw_background(self, element: 'UIElement', styles: dict, scissor: tuple):
         layout = element._layout
-        width, height = int(layout.width), int(layout.height)
+        x0, y0, width, height = _cell_rect(layout)
         if width <= 0 or height <= 0:
             return
+
+        # An `image` style is a real picture on every other backend (see
+        # UIRenderer._resolve_image) and was simply dropped here, so album
+        # art, avatars and cover images did not exist in a terminal at all.
+        if styles.get('image'):
+            if self._draw_image(styles, x0, y0, width, height, scissor):
+                return
 
         base_color = _color_to_rgb(styles.get('base_color', (1.0, 1.0, 1.0, 1.0)))
         # Rounded corners (border_radius) have no meaningful ASCII
@@ -141,7 +170,6 @@ class TerminalUIRenderer(Service):
         has_border = (border_width if isinstance(border_width, (int, float)) else border_width[0]) > 0
         border_color = _color_to_rgb(styles.get('border_color', (0.0, 0.0, 0.0, 1.0))) if has_border else None
 
-        x0, y0 = int(layout.x), int(layout.y)
         for row in range(y0, y0 + height):
             for col in range(x0, x0 + width):
                 if has_border and (row == y0 or row == y0 + height - 1 or col == x0 or col == x0 + width - 1):
@@ -153,6 +181,78 @@ class TerminalUIRenderer(Service):
                 else:
                     self._set_cell(col, row, " ", base_color, base_color, scissor)
 
+    def _image_pixels(self, image):
+        """An `image` style as an (h, w, 3) uint8 array, or None.
+
+        Decoded straight from the asset bytes rather than through
+        load_file(): that returns a GL Texture, whose pixels live on the GPU
+        and would need a round trip to read back. A terminal needs them on
+        the CPU anyway, and the file system service resolves an
+        asset-relative path identically in a dev tree and a packed build.
+
+        Cached per style value, because an element re-resolves its styles
+        every frame and decoding album art sixty times a second would cost
+        more than the whole rest of this renderer put together. A failure
+        caches None too, so a missing or GPU-only image is attempted once.
+        """
+        if not isinstance(image, str):
+            # An animated cover sets the style to a live Texture (see
+            # phonon's AnimatedArtService) - GPU-only, nothing to sample
+            # without a readback, so it falls back to a flat panel.
+            return None
+        if image in self._image_cache:
+            return self._image_cache[image]
+
+        pixels = None
+        try:
+            import io
+            import numpy as np
+            from PIL import Image
+
+            resource = get_service('files').get_file(image)
+            if resource is not None:
+                data = resource.read(bytes=True)
+                with Image.open(io.BytesIO(data)) as decoded:
+                    pixels = np.asarray(decoded.convert('RGB'), dtype=np.uint8)
+        except Exception:
+            pixels = None
+
+        self._image_cache[image] = pixels
+        return pixels
+
+    def _draw_image(self, styles: dict, x0: int, y0: int, width: int,
+                    height: int, scissor: tuple) -> bool:
+        """Draws an `image` style across a cell rect. False if it could not.
+
+        One cell gets the average of the source pixels that fall in it, as a
+        solid block - the same box filter TerminalWindow.draw() uses for the
+        rendered world, so a picture in the UI and the scene behind it are
+        reduced the same way and look like one image rather than two
+        techniques.
+        """
+        pixels = self._image_pixels(styles.get('image'))
+        if pixels is None or width <= 0 or height <= 0:
+            return False
+
+        import numpy as np
+        src_h, src_w = pixels.shape[0], pixels.shape[1]
+        if src_h == 0 or src_w == 0:
+            return False
+
+        # Nearest-neighbour cell centres into the source, then a mean over
+        # each cell's own footprint via reduceat - no interpolation library
+        # needed and no per-cell Python slicing.
+        rows = (np.arange(height) * src_h) // height
+        cols = (np.arange(width) * src_w) // width
+        sampled = pixels[rows][:, cols]
+
+        for row in range(height):
+            for col in range(width):
+                r, g, b = sampled[row, col]
+                colour = (int(r), int(g), int(b))
+                self._set_cell(x0 + col, y0 + row, " ", colour, colour, scissor)
+        return True
+
     def _draw_text(self, element: 'UIElement', styles: dict, scissor: tuple):
         text = styles.get('text') or ''
         show_cursor = styles.get('editable', False) and element.state == ElementStates.FOCUSED
@@ -162,13 +262,29 @@ class TerminalUIRenderer(Service):
         if styles.get('secret', False):
             text = '*' * len(text)
 
-        layout = element._layout
-        pad = styles.get('padding', 0)
-        pad_left = int(styles.get('padding_left', pad))
-        pad_top = int(styles.get('padding_top', pad))
-        pad_right = int(styles.get('padding_right', pad))
+        from FreeBodyEngine.core.window.terminal import CELL_PIXELS
+        cell_w = CELL_PIXELS[0]
 
-        available_width = max(0, int(layout.width) - pad_left - pad_right)
+        layout = element._layout
+        x0, y0, width, height = _cell_rect(layout)
+
+        # Padding is authored in pixels like everything else, so it has to be
+        # converted before it is subtracted from a width measured in cells.
+        # Subtracting pixels from cells is what hid every button label in
+        # phonon: a button 90 pixels wide is about 11 cells, and 12 pixels of
+        # padding either side read as 24 cells, so available_width came out
+        # negative and the text was skipped entirely.
+        pad = styles.get('padding', 0)
+        pad_left = int(styles.get('padding_left', pad)) // cell_w
+        pad_right = int(styles.get('padding_right', pad)) // cell_w
+
+        available_width = max(0, width - pad_left - pad_right)
+        if available_width <= 0:
+            # Too narrow for its own padding, but there is still a cell or
+            # two of element to write in - a label is worth more than its
+            # margins when space is this tight.
+            pad_left = 0
+            available_width = width
         if available_width <= 0:
             return
 
@@ -201,8 +317,8 @@ class TerminalUIRenderer(Service):
         # UIRenderer._draw_text's own line_height/baseline math, which
         # this mirrors the *intent* of without needing font ascender/
         # descender values a terminal font has no equivalent for).
-        row = int(layout.y) + max(0, (int(layout.height) - 1) // 2)
-        start_col = int(layout.x) + pad_left
+        row = y0 + max(0, (height - 1) // 2)
+        start_col = x0 + pad_left
 
         for offset, char in enumerate(visible):
             self._set_cell(start_col + offset, row, char, text_color, None, scissor)

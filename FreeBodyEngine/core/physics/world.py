@@ -26,6 +26,11 @@ from FreeBodyEngine.core.physics.contact import generate_manifold, Manifold
 
 VELOCITY_ITERATIONS = 8
 
+# Passes the joint position solver makes after integration, and the anchor
+# separation at which it stops early because the joints are close enough.
+POSITION_ITERATIONS = 3
+JOINT_POSITION_TOLERANCE = 0.01
+
 # How much of a contact's penetration to remove per step (0-1) - not all
 # of it at once, or a deeply-overlapping pair would "pop" apart violently
 # in a single frame instead of settling smoothly.
@@ -167,6 +172,11 @@ def step(scene: Scene, dt: float):
         return
 
     for body in bodies:
+        # A body whose subclass overrode on_initialize without calling super()
+        # never resolved its collider or its mass. Left alone it would fall
+        # forever with every constraint against it silently doing nothing -
+        # see RigidBody2D.ensure_mass_data.
+        body.ensure_mass_data()
         body.on_physics_process()
 
     non_colliding_pairs = set()
@@ -261,6 +271,39 @@ def step(scene: Scene, dt: float):
             constraint.init_velocity_constraint()
             contacts.append(constraint)
 
+    # A contact wakes the body it hits (above), but a joint has no equivalent,
+    # and without one a jointed body that falls asleep can never be woken by
+    # the thing it is attached to. Its constraint is still solved below, but
+    # the integration loop skips a sleeping body, so the solved velocity is
+    # thrown away every step: the partner walks off and the joint stretches to
+    # any length at all, silently. A chain hanging from a kinematic anchor does
+    # exactly that - it settles, sleeps, and is then left behind the moment the
+    # anchor moves.
+    #
+    # Box2D solves this by islanding bodies so that everything joined together
+    # sleeps and wakes as one. Short of that, a joint wakes its sleeper when
+    # the body on the other end is actually moving - testing movement rather
+    # than wakefulness matters, because a KINEMATIC or STATIC body never sleeps
+    # and "either end is awake" would therefore keep every chain hanging off
+    # one awake forever. The wake has to travel the length of a chain, so this
+    # repeats until nothing more wakes up.
+    for _ in range(len(joints)):
+        woke = False
+        for joint in joints:
+            a, b = joint.body_a, joint.body_b
+            if b is None:
+                continue
+            for sleeper, other in ((a, b), (b, a)):
+                if not sleeper.is_sleeping or other.is_sleeping:
+                    continue
+                if (other.linear_velocity.magnitude >= SLEEP_LINEAR_THRESHOLD
+                        or abs(other.angular_velocity) >= SLEEP_ANGULAR_THRESHOLD):
+                    sleeper.is_sleeping = False
+                    sleeper._sleep_timer = 0.0
+                    woke = True
+        if not woke:
+            break
+
     for joint in joints:
         joint.init_velocity_constraint(dt)
 
@@ -277,6 +320,25 @@ def step(scene: Scene, dt: float):
             continue
         body.transform.position += body.linear_velocity * dt
         body.transform.rotation += body.angular_velocity * dt
+
+    # Position correction for joints, after integration and separately from
+    # the velocity pass. The velocity constraints alone cannot hold a joint
+    # together: each step's drift is only fed back as a bias velocity, capped
+    # at MAX_JOINT_BIAS_SPEED so a large error resolves gently instead of
+    # explosively - which also means a joint being dragged along faster than
+    # that pulls apart faster than the bias can pull it back, every step, with
+    # nothing to stop it. A chain hung off a walking player stretches to
+    # several times its length that way. Correcting the positions directly
+    # here, as Box2D does, takes the drift out without leaving energy behind
+    # in the bodies.
+    for _ in range(POSITION_ITERATIONS):
+        worst = 0.0
+        for joint in joints:
+            if joint.body_b is None:
+                continue
+            worst = max(worst, joint.solve_position_constraint())
+        if worst <= JOINT_POSITION_TOLERANCE:
+            break
 
     for body in bodies:
         if body.body_type != BodyType.DYNAMIC or not body.allow_sleep:

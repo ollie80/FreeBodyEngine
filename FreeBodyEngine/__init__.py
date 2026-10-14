@@ -146,8 +146,17 @@ def main_exists():
     return _main_object != None
 
 def delta() -> float:
-    """Get deltatime for the current frame in seconds."""
-    return get_main().time.delta_time
+    """Seconds since the previous frame - the one to advance anything visual by.
+
+    This is the time between UPDATE/DRAW runs, not between main-loop
+    iterations: the loop iterates more often than it draws whenever it can run
+    faster than the frame cap, and a per-iteration delta silently loses the
+    time from the iterations that did not draw (see
+    UpdateCoordinator.update()). Fixed-timestep work belongs on
+    `physics_delta()` and the loop's own accumulators, which read
+    `time.delta_time` directly.
+    """
+    return get_main().time.frame_delta_time
 
 def register_event_callback(event_name: str, callable: Callable):
     """Registers `callable` to be invoked whenever `event_name` is emitted.
@@ -266,9 +275,13 @@ def init():
 
     DLL_DIRECTORY = load_dlls()
 
-    if get_flag(DEVMODE, False):
-        from FreeBodyEngine.core.dev import find_project
-        find_project()
+    # Not gated on DEVMODE: find_project() now decides for itself based on
+    # whether an fbproject.toml is actually there, so a project's code
+    # directory lands on sys.path whether or not --dev was passed. Gating it
+    # on the flag meant every project had to repeat the same sys.path
+    # insert in its own main.py to import its own modules without --dev.
+    from FreeBodyEngine.core.dev import find_project
+    find_project()
 
     main = core.main.Main()
     register_event(QUIT)

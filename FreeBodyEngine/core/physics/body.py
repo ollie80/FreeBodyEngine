@@ -125,13 +125,52 @@ class RigidBody2D(Node2D):
         inertia, a `fixed_rotation` one), so multiplying by inv_mass/
         inv_inertia anywhere naturally applies zero effect instead of
         needing a body-type check at every use site."""
+        self._claim_colliders()
+        self._compute_mass_data()
+
+    def _claim_colliders(self):
+        """Finds this body's collider, and marks every collider underneath it
+        as belonging to the RigidBody2D system.
+
+        That mark is what keeps the two physics systems apart. They are meant
+        not to interact, and a RigidBody2D does only ever see other
+        RigidBody2Ds - but the arcade side walked the tree for every Collider2D
+        in the scene regardless of what owned it, so the separation only ever
+        held in one direction. An arcade PhysicsBody would collide with a rigid
+        body's collider and shove itself back out of it, while the rigid body
+        felt nothing at all.
+        """
         colliders = self.find_nodes_with_type('Collider2D')
         if not colliders:
             warning(f"RigidBody2D '{self}' has no Collider2D child - it won't collide with anything.")
-        else:
-            self.collider = colliders[0]
+            return
 
-        self._compute_mass_data()
+        self.collider = colliders[0]
+        for collider in colliders:
+            collider.rigid_body = self
+
+    def ensure_mass_data(self):
+        """Resolves this body's collider and mass if that has not happened yet.
+
+        on_initialize() normally does it, but a subclass that overrides that
+        hook and forgets to call super() silently skips it - and the result is
+        not an error, it is a DYNAMIC body left with mass 0 and therefore
+        inv_mass 0. Gravity is applied to velocity directly, so such a body
+        still accelerates, while every constraint solved against it computes an
+        effective mass of zero and can apply no impulse at all. It falls
+        forever, through everything, and nothing reports a problem.
+
+        Called from the physics step so that failure mode cannot happen.
+        """
+        if self.collider is not None:
+            return
+
+        # Claimed even when the mass is overridden and there is nothing left to
+        # compute: the claim is what keeps this body's colliders out of the
+        # arcade system's hands, which matters either way.
+        self._claim_colliders()
+        if self._mass_override is None:
+            self._compute_mass_data()
 
     def _compute_mass_data(self):
         """(Re)computes mass/inertia and their inverses - called once at

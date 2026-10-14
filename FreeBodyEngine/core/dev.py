@@ -43,11 +43,26 @@ def _add_code_dir_to_path(project: Project):
             sys.path.insert(0, path)
 
 def find_project():
-    """Loads and caches the current project into the module-level `PROJECT` global, and puts its code directory on `sys.path` - but only when the `DEVMODE` flag is set, since a release build has no `fbproject.toml` to look up."""
-    if get_flag(DEVMODE, False):
-        global PROJECT
+    """Loads and caches the current project into the module-level `PROJECT`
+    global, and puts its code directory on `sys.path`.
+
+    Gated on an `fbproject.toml` actually being there rather than on the
+    `DEVMODE` flag. The flag was only ever standing in for "is there a
+    project file to read" - a release build has none - but it also meant
+    that running a project's main.py directly without `--dev` left the
+    code directory off `sys.path`, so every project had to repeat the same
+    `sys.path.insert` by hand in its own main file just to import its own
+    modules. Keying off the file itself covers both cases and costs one
+    failed open in the build that has no project file.
+    """
+    global PROJECT
+    try:
         PROJECT = load_project()
-        _add_code_dir_to_path(PROJECT)
+    except (OSError, KeyError):
+        # No project file (a release build), or one too malformed to read -
+        # neither is an error here, there is simply no code dir to add.
+        return
+    _add_code_dir_to_path(PROJECT)
 
 def get_project() -> Project:
     """Returns the project loaded by `find_project()`, or None if `find_project()` hasn't run yet (e.g. DEVMODE is off)."""

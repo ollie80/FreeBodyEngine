@@ -61,6 +61,17 @@ class MaterialInjector(Injector):
         self.material = material
         self.mat_properties: dict[str, str] = {}
 
+    # What a texture sample has to be narrowed to for each property type. A
+    # sample is always a vec4, so a property declared narrower than that needs
+    # a swizzle or the two halves of the ternary below have different types
+    # and the shader will not compile.
+    SWIZZLE = {
+        PropertyType.COLOR_R: 'x',
+        PropertyType.COLOR_RG: 'xy',
+        PropertyType.COLOR_RGB: 'xyz',
+        PropertyType.COLOR_RGBA: None,
+    }
+
     def parse_property(self, property: PropertyType) -> str:
         """Maps a COLOR_* PropertyType to the GLSL type its backing uniform
         is declared as (e.g. `COLOR_RGB` -> `'vec3'`)."""
@@ -94,6 +105,10 @@ class MaterialInjector(Injector):
                 for name, ptype in self.material.property_definitions.items()
             }
         return self.mat_properties
+
+    def _swizzle(self, prop: str) -> str:
+        """The component selector a sample of `prop`'s texture needs, if any."""
+        return self.SWIZZLE[self.material.property_definitions[prop]]
 
     def get_builtins(self):
         """Fragment-shader-only: declares each material property's
@@ -141,13 +156,19 @@ class MaterialInjector(Injector):
                 calls this."""
                 return isinstance(node, Identifier) and node.value == prop.upper()
 
-            def replacer(node, cap=cap):
+            def replacer(node, cap=cap, swizzle=self._swizzle(prop)):
                 """Builds the `useTexture ? sample(Texture, uv) : Color`
                 ternary that replaces a matched `PROPERTY` identifier;
-                `cap` is captured as a default arg for the same
+                `cap` and `swizzle` are captured as default args for the same
                 late-binding reason as `matcher`'s `prop`."""
+                sampled = FuncCall("sample", [Identifier(f"{cap}_Texture"), Identifier("uv")])
+                if swizzle is not None:
+                    # A property narrower than a vec4 takes only as many
+                    # channels as it declares, so both arms of the ternary
+                    # agree on a type.
+                    sampled = MemberAccess(sampled, swizzle)
                 return InlineIf(
-                    then_expr=FuncCall("sample", [Identifier(f"{cap}_Texture"), Identifier("uv")]),
+                    then_expr=sampled,
                     condition=Identifier(f"{cap}_useTexture"),
                     else_expr=Identifier(f"{cap}_Color"),
                 )
@@ -159,6 +180,63 @@ class MaterialInjector(Injector):
 
         return injected_uniforms + tree
 
+class ChainedInjector(Injector):
+    """Several injectors over one shader, applied in order.
+
+    A material always wants its property rewriting (MaterialInjector), and a
+    caller may want something of its own on top - the tilemap bakes its chunk
+    and tile sizes into the source this way. Before this, passing one meant
+    losing the other: `Material.__init__` took a single injector, so a shader
+    with a custom one got no `ALBEDO` and a shader with properties got no
+    custom pass.
+    """
+
+    def __init__(self, injectors):
+        self.injectors = list(injectors)
+
+    def initialize(self, shader_type):
+        super().initialize(shader_type)
+        for injector in self.injectors:
+            injector.initialize(shader_type)
+
+    def source_inject(self, source: str) -> str:
+        for injector in self.injectors:
+            source = injector.source_inject(source)
+        return source
+
+    def ast_inject(self, tree):
+        for injector in self.injectors:
+            tree = injector.ast_inject(tree)
+        return tree
+
+    def get_builtins(self) -> dict:
+        builtins = {}
+        for injector in self.injectors:
+            builtins.update(injector.get_builtins())
+        return builtins
+
+    def cache_key(self):
+        """Every link's key, or None if any one of them cannot be summarised.
+
+        One uncacheable injector makes the whole chain uncacheable - the same
+        rule the shader cache applies to a lone injector, for the same reason:
+        a key that does not cover everything shaping the source would let two
+        different shaders share an entry.
+        """
+        keys = []
+        for injector in self.injectors:
+            kind = type(injector)
+            if kind is not Injector and kind.cache_key is Injector.cache_key:
+                # A subclass that rewrites something but never said what it
+                # varies on. Treated as unsummarisable rather than trusted.
+                return None
+            key = injector.cache_key()
+            if key is None:
+                return None
+            keys.append(key)
+        return "chain:" + "|".join(keys)
+
+
 class Material:
     """A shader plus a set of named properties (colors or textures) that
     drive its uniforms - built from parsed `.fbmat` TOML `data` against a
@@ -167,7 +245,7 @@ class Material:
     attributes (`material.albedo`) and as dict items (`material['albedo']`),
     transparently redirected to `self.properties` via `__getattribute__`/
     `__setattr__`/`__getitem__`/`__setitem__` below."""
-    def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = Injector(),
+    def __init__(self, data: dict, property_definitions: dict[str, PropertyType], injector: Injector = None,
                  default_vert: str = 'engine://shader/default_shader.fbvert',
                  default_frag: str = 'engine://shader/default_shader.fbfrag'):
         """Parses `data` against `property_definitions` into
@@ -213,6 +291,15 @@ class Material:
         self._vert_source_path = vert_source
         self._frag_source_path = frag_source
         self._geom_source_path = geom_source
+        # Without one of these a shader has to declare `{Prop}_Texture`,
+        # `{Prop}_Color` and `{Prop}_useTexture` for every property and write
+        # the branch between them by hand, three times over. With it the
+        # shader says `ALBEDO` and the injector emits all of that. Built here
+        # rather than defaulted in the signature because it reads
+        # `property_definitions` off the material, which is only set above.
+        properties = MaterialInjector(self)
+        injector = properties if injector is None else ChainedInjector([injector, properties])
+
         self._shader_injector = injector
 
         files = get_service('files')
@@ -317,11 +404,32 @@ class Material:
         `return` follows the warning) for anything that doesn't match, or
         for any other PropertyType."""
         type = property_definitions[property]
-        if type in (PropertyType.COLOR_RGBA, PropertyType.COLOR_RGB):
-            if isinstance(val, (Texture, Image)):
-                return val
 
-            elif isinstance(val, str):
+        # A texture satisfies any property - which half of the shader's
+        # ternary runs is decided per draw by `{Prop}_useTexture`, not here.
+        if isinstance(val, (Texture, Image)):
+            return val
+
+        # The narrow colour types. Without these a property declared
+        # COLOR_R or COLOR_RG parsed to None and `use()` fell through to its
+        # magenta placeholder - so roughness and metallic were silently
+        # uploading a four-component colour into a float uniform.
+        if type is PropertyType.COLOR_R:
+            if isinstance(val, (int, float)):
+                return float(val)
+            if isinstance(val, (list, tuple)) and len(val) >= 1:
+                return float(val[0])
+            warning(f"Couldn't parse material value, '{property}' wants a single number.")
+            return None
+
+        if type is PropertyType.COLOR_RG:
+            if isinstance(val, (list, tuple)) and len(val) >= 2:
+                return (float(val[0]), float(val[1]))
+            warning(f"Couldn't parse material value, '{property}' wants two numbers.")
+            return None
+
+        if type in (PropertyType.COLOR_RGBA, PropertyType.COLOR_RGB):
+            if isinstance(val, str):
                 if val.startswith('#'):
                     return Color(val)
                 else:
@@ -351,7 +459,10 @@ class Material:
         for material_property in self.properties:
             
             val = self.properties[material_property]
-            if isinstance(val, Color):
+            if isinstance(val, (Color, int, float, tuple, list)):
+                # Numbers and pairs as well as colours: a property declared
+                # COLOR_R or COLOR_RG holds one, and its uniform is a float or
+                # a vec2 to match.
                 self.shader.set_uniform(f"{material_property.capitalize()}_Color", val)
                 self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)
             elif isinstance(val, (Texture, Image)):

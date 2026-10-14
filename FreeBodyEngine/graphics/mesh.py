@@ -335,11 +335,19 @@ def generate_cube(width: float = 1.0, height: float = 1.0, depth: float = 1.0):
         [0.0, 1.0, 0.0],  # Top
         [0.0, -1.0, 0.0],  # Bottom
     ]
+    # One normal per vertex: each face's normal repeated across its 6
+    # vertices, 36 in total.
     normals = (
-        np.array(normals_per_face * 6, dtype=np.float32).repeat(6, axis=0).flatten()
+        np.array(normals_per_face, dtype=np.float32).repeat(6, axis=0).flatten()
     )
     indices = np.array([i for i in range(36)], dtype=np.uint32)
-    return create_static_mesh(vertices, normals, uvs, indices)
+    # create_static_mesh takes (verticies, uvs, normals, indices) - passing
+    # these two the other way round bound the normal data to the `uvs`
+    # VEC2 attribute and the uv data to the `normals` VEC3 one, so a cube's
+    # UVs were nonsense and its normals were read past the end of a buffer
+    # a third too short to cover 36 vec3s. Every cube was textured and lit
+    # from garbage.
+    return create_static_mesh(vertices, uvs, normals, indices)
 
 
 def generate_sphere(radius=1.0, sectors=36, stacks=18):

@@ -498,6 +498,12 @@ class Collider2D(Node2D):
         self.collision_shape = collision_shape_cls(position, rotation, scale)
         self._last_matrix = None
 
+        # The RigidBody2D that claimed this collider, if any - set by
+        # RigidBody2D.on_initialize. The two physics systems are meant not to
+        # interact, and this is how the older arcade one in
+        # Scene._physics_process knows which colliders are not its to resolve.
+        self.rigid_body = None
+
     def on_update(self):
         """Keeps the collision shape's position/rotation/size in sync with the node's world transform every frame."""
         self.apply_transform()

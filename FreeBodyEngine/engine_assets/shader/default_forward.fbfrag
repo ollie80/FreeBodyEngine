@@ -1,3 +1,9 @@
+# ALBEDO, NORMAL, EMMISIVE, ROUGHNESS and METALLIC below are material
+# properties rather than uniforms declared here: MaterialInjector rewrites each
+# into that property's texture-or-colour branch and injects the uniforms it
+# needs, including the `{Prop}_useTexture` flags this shader still reads
+# directly (see graphics/material.py).
+
 @output
 # 7 unused leading fields so `result` lands at location 7, matching 'lit'
 # 's physical color-attachment index on PBRPipeline's main_framebuffer
@@ -19,23 +25,6 @@ _pad4: vec4
 _pad5: vec4
 _pad6: vec4
 result: vec4
-
-@uniform
-Albedo_Texture: texture
-Albedo_Color: vec4
-Albedo_useTexture: bool
-Normal_Texture: texture
-Normal_Color: vec4
-Normal_useTexture: bool
-Emmisive_Texture: texture
-Emmisive_Color: vec4
-Emmisive_useTexture: bool
-Roughness_Texture: texture
-Roughness_Color: float
-Roughness_useTexture: bool
-Metallic_Texture: texture
-Metallic_Color: float
-Metallic_useTexture: bool
 
 @uniform
 Light0_Active: bool
@@ -109,6 +98,18 @@ Unlit: bool
 
 ShadowEnabled: bool
 ShadowMap: texture
+# One texel of the shadow map in UV space, and how many texels wide the PCF
+# kernel reaches - see shadow_factor. Kept identical to the deferred
+# composite's (graphics/pbr/shaders.py) so a transparent surface and an
+# opaque one standing next to each other get the same shadow edge.
+ShadowTexelSize: float
+ShadowSoftnessRadius: float
+# Distance fog, kept identical to the deferred composite's so a transparent
+# surface fades into the distance the same way the opaque world does.
+FogColor: vec3
+FogStart: float
+FogEnd: float
+FogDensity: float
 ShadowMatrix: mat4
 
 @input
@@ -186,6 +187,13 @@ def light_contribution(world_pos: vec3, normal: vec3, view_dir: vec3, albedo: ve
     radiance: vec3 = l_color * (l_intensity * atten)
     return (diffuse + specular) * radiance * n_dot_l
 
+def shadow_tap(u: float, v: float, biased_depth: float) -> float:
+    # One shadow-map comparison: 0 if something is nearer the light here.
+    map_depth: float = sample(ShadowMap, vec2(u, v)).x
+    if biased_depth > (map_depth):
+        return 0.0
+    return 1.0
+
 def shadow_factor(world_pos: vec3) -> float:
     if ShadowEnabled == False:
         return 1.0
@@ -215,21 +223,43 @@ def shadow_factor(world_pos: vec3) -> float:
         return 1.0
 
     frag_depth: float = ndc.z * 0.5 + 0.5
-    map_depth: float = sample(ShadowMap, shadow_uv).x
     bias: float = 0.0025
     biased_depth: float = frag_depth - bias
 
-    # The trailing (map_depth) parens are load-bearing, not style: FBUSL's
-    # parser mis-parses a condition whose very last token is a bare
-    # identifier directly followed by ":" - it speculatively treats that
-    # identifier as the start of a new `name: type` var-decl statement
-    # (see parse_identifier's `tok.value == ":"` branch in fbusl/parser.py)
-    # and then fails looking for a type annotation that was never meant to
-    # be there. Any bare identifier ending a condition needs this same
-    # wrapping (a literal or a `== True`/`== False` comparison doesn't).
-    if biased_depth > (map_depth):
-        return 0.0
-    return 1.0
+    # 16-tap percentage-closer filtering, matching the deferred composite's
+    # (graphics/pbr/shaders.py) tap for tap - see the long note there for
+    # why a single comparison stair-steps.
+    step: float = ShadowTexelSize * ShadowSoftnessRadius
+    near_offset: float = step * 0.5
+    far_offset: float = step * 1.5
+
+    u0: float = shadow_uv.x - far_offset
+    u1: float = shadow_uv.x - near_offset
+    u2: float = shadow_uv.x + near_offset
+    u3: float = shadow_uv.x + far_offset
+    v0: float = shadow_uv.y - far_offset
+    v1: float = shadow_uv.y - near_offset
+    v2: float = shadow_uv.y + near_offset
+    v3: float = shadow_uv.y + far_offset
+
+    total: float = shadow_tap(u0, v0, biased_depth)
+    total = total + shadow_tap(u1, v0, biased_depth)
+    total = total + shadow_tap(u2, v0, biased_depth)
+    total = total + shadow_tap(u3, v0, biased_depth)
+    total = total + shadow_tap(u0, v1, biased_depth)
+    total = total + shadow_tap(u1, v1, biased_depth)
+    total = total + shadow_tap(u2, v1, biased_depth)
+    total = total + shadow_tap(u3, v1, biased_depth)
+    total = total + shadow_tap(u0, v2, biased_depth)
+    total = total + shadow_tap(u1, v2, biased_depth)
+    total = total + shadow_tap(u2, v2, biased_depth)
+    total = total + shadow_tap(u3, v2, biased_depth)
+    total = total + shadow_tap(u0, v3, biased_depth)
+    total = total + shadow_tap(u1, v3, biased_depth)
+    total = total + shadow_tap(u2, v3, biased_depth)
+    total = total + shadow_tap(u3, v3, biased_depth)
+
+    return total * 0.0625
 
 def accumulate_lighting(world_pos: vec3, normal: vec3, view_pos: vec3, albedo: vec3, roughness: float, metallic: float, emissive: vec3, ambient: vec3) -> vec3:
     view_dir: vec3 = normalize(view_pos - world_pos)
@@ -256,10 +286,10 @@ def accumulate_lighting(world_pos: vec3, normal: vec3, view_pos: vec3, albedo: v
 
 
 def main() -> void:
-    albedo4: vec4 = sample(Albedo_Texture, vec2(uv.x, uv.y)) if Albedo_useTexture else Albedo_Color
-    emissive4: vec4 = sample(Emmisive_Texture, uv) if Emmisive_useTexture else Emmisive_Color
-    roughness: float = clamp(sample(Roughness_Texture, uv).x if Roughness_useTexture else Roughness_Color, 0.04, 1.0)
-    metallic: float = sample(Metallic_Texture, uv).x if Metallic_useTexture else Metallic_Color
+    albedo4: vec4 = ALBEDO
+    emissive4: vec4 = EMMISIVE
+    roughness: float = clamp(ROUGHNESS, 0.04, 1.0)
+    metallic: float = METALLIC
 
     # Normal map, matching what the deferred composite does for opaque
     # geometry (see graphics/pbr/shaders.py). Without this a transparent
@@ -279,8 +309,18 @@ def main() -> void:
     albedo: vec3 = vec3(albedo4.x, albedo4.y, albedo4.z)
     emissive: vec3 = vec3(emissive4.x, emissive4.y, emissive4.z)
 
-    if Unlit == True:
-        result = vec4(albedo.x + emissive.x, albedo.y + emissive.y, albedo.z + emissive.z, albedo4.w)
-    else:
-        lit: vec3 = accumulate_lighting(world_pos, n, ViewPos, albedo, roughness, metallic, emissive, Ambient)
-        result = vec4(lit.x, lit.y, lit.z, albedo4.w)
+    shaded: vec3 = vec3(albedo.x + emissive.x, albedo.y + emissive.y, albedo.z + emissive.z)
+    if Unlit == False:
+        shaded = accumulate_lighting(world_pos, n, ViewPos, albedo, roughness, metallic, emissive, Ambient)
+
+    # Same linear distance fog as the composite - see its note.
+    fog_dx: float = world_pos.x - ViewPos.x
+    fog_dy: float = world_pos.y - ViewPos.y
+    fog_dz: float = world_pos.z - ViewPos.z
+    fog_distance: float = sqrt(fog_dx * fog_dx + fog_dy * fog_dy + fog_dz * fog_dz)
+    fog_span: float = max(FogEnd - FogStart, 0.0001)
+    fog_amount: float = clamp((fog_distance - FogStart) / fog_span, 0.0, 1.0) * FogDensity
+
+    shaded = mix(shaded, FogColor, fog_amount)
+
+    result = vec4(shaded.x, shaded.y, shaded.z, albedo4.w)

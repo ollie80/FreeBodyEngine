@@ -1,3 +1,11 @@
+# The G-buffer write for an opaque surface.
+#
+# ALBEDO, NORMAL, EMMISIVE, ROUGHNESS and METALLIC are material properties,
+# not uniforms this shader declares: MaterialInjector rewrites each one into
+# the texture-or-colour branch for that property and injects the uniforms it
+# needs (see graphics/material.py). Adding a property to the material adds it
+# here for free.
+
 @output
 albedo: vec4
 normal: vec4
@@ -7,36 +15,17 @@ metallic: float
 gWorldPos: vec4
 gWorldNormal: vec4
 
-@uniform
-Albedo_Texture: texture
-Albedo_Color: vec4
-Albedo_useTexture: bool
-Normal_Texture: texture
-Normal_Color: vec4
-Normal_useTexture: bool
-Emmisive_Texture: texture
-Emmisive_Color: vec4
-Emmisive_useTexture: bool
-Roughness_Texture: texture
-Roughness_Color: float
-Roughness_useTexture: bool
-Metallic_Texture: texture
-Metallic_Color: float
-Metallic_useTexture: bool
-
-
 @input
 uv: vec2
 worldPos: vec4
 worldNormal: vec4
 
 def main() -> void:
-    albedo = sample(Albedo_Texture, vec2(uv.x, uv.y)) if Albedo_useTexture else Albedo_Color
-    #albedo = vec4(, 0.0, 1.0)
-    normal = sample(Normal_Texture, uv) if Normal_useTexture else Normal_Color
-    emmisive = sample(Emmisive_Texture, uv) if Emmisive_useTexture else Emmisive_Color
-    roughness = sample(Roughness_Texture, uv).x if Roughness_useTexture else Roughness_Color
-    metallic = sample(Metallic_Texture, uv).x if Metallic_useTexture else Metallic_Color
+    albedo = ALBEDO
+    normal = NORMAL
+    emmisive = EMMISIVE
+    roughness = ROUGHNESS
+    metallic = METALLIC
 
     # Passed straight through from the vertex stage into their own G-buffer
     # channels - `gWorldPos.w`/`gWorldNormal.w` are both a constant 1.0
@@ -46,4 +35,3 @@ def main() -> void:
     n: vec3 = normalize(vec3(worldNormal.x, worldNormal.y, worldNormal.z))
     gWorldPos = worldPos
     gWorldNormal = vec4(n.x, n.y, n.z, 1.0)
-

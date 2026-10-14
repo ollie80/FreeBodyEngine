@@ -176,12 +176,24 @@ class Camera2D(Node2D, Camera):
 
 class Camera3D(Node3D, Camera):
     """A 3D counterpart to `Camera2D`."""
-    def __init__(self, position: 'Vector' = Vector3(), rotation: 'Vector' = Vector3(), zoom: float = 1.0, projection=CAMERA_PROJECTION.PERSPECTIVE, background_color: Color = Color("#324848")):
+    def __init__(self, position: 'Vector' = Vector3(), rotation: 'Vector' = Vector3(), zoom: float = 1.0, projection=CAMERA_PROJECTION.PERSPECTIVE, background_color: Color = Color("#324848"), fov: float = 60.0, near: float = 1.0, far: float = 100.0):
         """Initializes both the `Node3D` and `Camera` halves of this
         object, since `Camera3D` doesn't use a single cooperative
-        `super().__init__()` chain."""
+        `super().__init__()` chain.
+
+        `fov` (vertical, degrees), `near` and `far` describe the view
+        frustum and are read fresh by `_update_projection_matrix` every
+        frame, so changing any of them on a live camera takes effect on the
+        next one - a zoom-out at speed, or a far plane set to whatever a
+        given scene's draw distance actually needs. They were fixed at
+        60/1/100 before, which put a hard 100-unit ceiling on how far any
+        3D scene could see.
+        """
         Node3D.__init__(self, position=position, rotation=rotation)
         Camera.__init__(self, projection=projection, background_color=background_color, zoom=zoom)
+        self.fov = fov
+        self.near = near
+        self.far = far
 
     def on_initialize(self):
         """Builds the initial projection and view matrices once the camera
@@ -196,19 +208,37 @@ class Camera3D(Node3D, Camera):
         width = get_service('window').size[0]
         height = get_service('window').size[1]
         aspect = width / height if height != 0 else 1.0
-        near = 1.0
-        far = 100.0
+        near = self.near
+        far = self.far
 
         if self.projection == CAMERA_PROJECTION.PERSPECTIVE:
-            fov_deg = 60.0
-            fov_rad = math.radians(fov_deg)
+            fov_rad = math.radians(self.fov)
             f = 1.0 / math.tan(fov_rad / 2.0)
 
+            # Row-vector layout: the -1 that produces the perspective
+            # divide goes at [2][3] and the depth term in the last ROW.
+            #
+            # Written column-vector (the transpose of this) it was still
+            # consumed row-vector, because `proj * view * model * vertex`
+            # in a shader reads a numpy array that arrived transposed - so
+            # clip w came out as `(2*far*near)/(near-far) * z` instead of
+            # `-z`. Three things followed, each of which cost a debugging
+            # session: the depth range collapsed unless near was above
+            # about 0.5 (at near=0.4/far=420 only geometry within ~5m
+            # drew at all), the far plane never actually clipped, and -
+            # worst - w could go negative behind the camera without the
+            # near plane clipping it, so geometry behind the viewer wrapped
+            # around and painted over the frame. A skybox, which by
+            # definition surrounds the camera, cannot work at all until
+            # this is right.
+            #
+            # Camera2D builds its own projection in its own method, so this
+            # only changes 3D cameras.
             self.proj_matrix = np.array([
                 [f / aspect, 0.0, 0.0, 0.0],
                 [0.0, f, 0.0, 0.0],
-                [0.0, 0.0, (far + near) / (near - far), (2 * far * near) / (near - far)],
-                [0.0, 0.0, -1.0, 0.0],
+                [0.0, 0.0, (far + near) / (near - far), -1.0],
+                [0.0, 0.0, (2 * far * near) / (near - far), 0.0],
             ], dtype=np.float32)
 
         elif self.projection == CAMERA_PROJECTION.ORTHOGRAPHIC:
@@ -220,14 +250,32 @@ class Camera3D(Node3D, Camera):
             bottom = -half_height
             top = half_height
 
+            # Row-vector layout, for the same reason as the perspective
+            # branch above: the translation terms belong in the last row.
             self.proj_matrix = np.array([
-                [2.0 / (right - left), 0.0, 0.0, -(right + left) / (right - left)],
-                [0.0, 2.0 / (top - bottom), 0.0, -(top + bottom) / (top - bottom)],
-                [0.0, 0.0, -2.0 / (far - near), -(far + near) / (far - near)],
-                [0.0, 0.0, 0.0, 1.0],
+                [2.0 / (right - left), 0.0, 0.0, 0.0],
+                [0.0, 2.0 / (top - bottom), 0.0, 0.0],
+                [0.0, 0.0, -2.0 / (far - near), 0.0],
+                [-(right + left) / (right - left), -(top + bottom) / (top - bottom),
+                 -(far + near) / (far - near), 1.0],
             ], dtype=np.float32)
             
     def _update_view_matrix(self):
+        """Builds the view matrix from a yaw-then-pitch camera basis.
+
+        Yaw turns about world up and pitch about the camera's own right,
+        which is what keeps the horizon level at every heading. The previous
+        construction multiplied the Euler angles as Rz @ Ry @ Rx, which
+        leaks roll whenever pitch and yaw are both nonzero: the camera's
+        right vector picked up a Y component of sin(pitch)*sin(yaw), so a
+        camera pitched 14 degrees down rolled by up to 14 degrees depending
+        on which compass direction it faced. In a driving game that is a
+        horizon that tilts as you corner, and tilts differently depending on
+        which way the street runs.
+
+        `roll` still applies, as a rotation about the view direction - it is
+        simply applied last rather than being an accident of the other two.
+        """
         pos = self.world_transform.position
         rot = self.world_transform.rotation
 
@@ -237,23 +285,35 @@ class Camera3D(Node3D, Camera):
 
         cx, sx = math.cos(pitch), math.sin(pitch)
         cy, sy = math.cos(yaw), math.sin(yaw)
-        cz, sz = math.cos(roll), math.sin(roll)
 
-        rotation_matrix = np.array([
-            [cy * cz + sx * sy * sz, cz * sx * sy - cy * sz, cx * sy, 0.0],
-            [cx * sz, cx * cz, -sx, 0.0],
-            [cy * sx * sz - cz * sy, cy * cz * sx + sy * sz, cx * cy, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
+        # Positive yaw turns toward +X, positive pitch tilts down - the
+        # conventions the rest of the engine's 3D side is measured against.
+        forward = np.array([sy * cx, -sx, -cy * cx], dtype=np.float32)
+
+        world_up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        if abs(float(forward[1])) > 0.9999:
+            # Looking straight up or straight down: world up is parallel to
+            # the view direction and gives no usable right vector.
+            world_up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+        right = np.cross(forward, world_up)
+        right = right / np.linalg.norm(right)
+        up = np.cross(right, forward)
+
+        if roll != 0.0:
+            cr, sr = math.cos(roll), math.sin(roll)
+            rolled_right = right * cr + up * sr
+            up = up * cr - right * sr
+            right = rolled_right
+
+        # Row-vector world matrix: its rows are the camera's local axes in
+        # world space, local -Z being forward.
+        camera_world_matrix = np.array([
+            [right[0], right[1], right[2], 0.0],
+            [up[0], up[1], up[2], 0.0],
+            [-forward[0], -forward[1], -forward[2], 0.0],
+            [pos.x, pos.y, pos.z, 1.0],
         ], dtype=np.float32)
-
-        translation_matrix = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 1, 0],
-            [pos.x, pos.y, pos.z, 1]
-        ], dtype=np.float32)
-
-        camera_world_matrix = translation_matrix @ rotation_matrix
         self.view_matrix = np.linalg.inv(camera_world_matrix)
 
     def update(self):

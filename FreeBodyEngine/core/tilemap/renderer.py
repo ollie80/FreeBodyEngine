@@ -187,12 +187,16 @@ class TilemapRenderer(Node2D):
         redirects to a key that already exists - the same reason
         `Sprite.__init__` assigns its texture that way.
         """
-        self.material = get_service('graphics').create_material(
+        pipeline = get_service('graphics')
+        self.material = pipeline.create_material(
             {
                 "filter": "nearest",
                 "shader": {
-                    "vert": "engine://shader/graphics/tilemap.fbvert",
-                    "frag": "engine://shader/graphics/tilemap.fbfrag",
+                    # Asked of the pipeline rather than named here: a tilemap
+                    # writes whatever channels the pipeline's passes read, and
+                    # those differ between them (see GraphicsPipeline).
+                    "vert": pipeline.tilemap_shader[0],
+                    "frag": pipeline.tilemap_shader[1],
                 },
             },
             TilemapInjector(self.parent.chunk_size, self.parent.tile_size),
@@ -200,9 +204,55 @@ class TilemapRenderer(Node2D):
         self.material.properties['albedo'] = Color("#FFFFFFFF")
         self.material.properties['normal'] = Color("#00000000")
 
+    def _visible_chunks(self, camera, tilemap):
+        """The chunk-index rectangle the camera can see, or None for "all".
+
+        Without this every chunk of every layer was drawn every frame however
+        far off screen it was - a tilemap is the one thing in a 2D scene that
+        is routinely much larger than the view, so a hotel floor of 47 chunks
+        across 4 layers and 4 spritesheets spent most of a frame issuing draw
+        calls for tiles nobody could see.
+
+        Returns None rather than guessing whenever the camera or the tilemap
+        is not the simple axis-aligned 2D case this can reason about - drawing
+        too much is slow, drawing too little is a hole in the floor.
+        """
+        zoom = getattr(camera, 'zoom', None)
+        if not zoom or zoom <= 0:
+            return None
+
+        transform = tilemap.world_transform
+        scale = getattr(transform, 'scale', None)
+        if scale is not None and (abs(scale.x - 1.0) > 1e-6 or abs(scale.y - 1.0) > 1e-6):
+            return None
+        if abs(getattr(transform, 'rotation', 0.0) or 0.0) > 1e-6:
+            return None
+
+        size = get_service('window').size  # matches Camera._update_projection_matrix
+        centre = camera.transform.position
+        origin = transform.position
+
+        # Into the tilemap's own space, then into chunk indices. Chunk rows
+        # count downward while world +y is up (see the vertex shader), so the
+        # y bounds swap as they cross.
+        span = tilemap.chunk_size * tilemap.tile_size
+        half_w = size[0] / 2.0 / zoom
+        half_h = size[1] / 2.0 / zoom
+        left = centre.x - half_w - origin.x
+        right = centre.x + half_w - origin.x
+        bottom = centre.y - half_h - origin.y
+        top = centre.y + half_h - origin.y
+
+        import math
+        # One chunk of slack all round, so nothing is ever missing at the edge
+        # of the screen because of a rounding or a camera that lags its target.
+        return (math.floor(left / span) - 1, math.ceil(right / span) + 1,
+                math.floor(-top / span) - 1, math.ceil(-bottom / span) + 1)
+
     def draw(self, camera):
         """Draws every visible layer of the parent tilemap, one draw call per
-        (chunk, spritesheet) pair.
+        (chunk, spritesheet) pair - skipping the chunks the camera cannot see
+        (see _visible_chunks).
 
         Meshes are cached and rebuilt only when a chunk's data changes, which
         is what `Chunk._updated` was always for - nothing had ever read it.
@@ -229,6 +279,8 @@ class TilemapRenderer(Node2D):
         shader['view'] = camera.view_matrix
         shader['model'] = self.parent.world_transform.model
 
+        visible = self._visible_chunks(camera, tilemap)
+
         renderer.set_blend_mode(BlendMode.TRANSPARENT)
         try:
             for layer_name in tilemap.layers:
@@ -238,6 +290,12 @@ class TilemapRenderer(Node2D):
 
                 for chunk_pos in layer.chunks:
                     chunk = layer.chunks[chunk_pos]
+
+                    if visible is not None:
+                        cx, cy = int(chunk_pos.x), int(chunk_pos.y)
+                        if not (visible[0] <= cx <= visible[1]
+                                and visible[2] <= cy <= visible[3]):
+                            continue
 
                     for sheet_index, sheet in tilemap.iter_spritesheets():
                         key = (layer_name, chunk_pos, sheet_index)

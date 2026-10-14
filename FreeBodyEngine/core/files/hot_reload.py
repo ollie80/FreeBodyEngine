@@ -20,6 +20,7 @@ just "am I DevFileSystem", so the cache doesn't change a release build's
 "always a fresh object" behavior even if that ever became reachable another
 way.
 """
+import weakref
 from FreeBodyEngine import get_service, get_flag, DEVMODE, warning
 
 TEXTURE = "texture"
@@ -27,6 +28,8 @@ MATERIAL = "material"
 SPRITE = "sprite"
 
 _registry: dict[str, tuple[str, object]] = {}
+# Per-path copies handed out to callers - see track_instance().
+_instances: dict[str, "weakref.WeakSet"] = {}
 
 
 def is_enabled() -> bool:
@@ -52,6 +55,30 @@ def register(path: str, kind: str, obj):
     live object loaded from `path`, so a later edit to `path` can find and
     mutate it in place. Overwrites any previous registration for `path`."""
     _registry[path] = (kind, obj)
+
+
+def track_instance(path: str, obj):
+    """Records a per-object copy handed out for `path`, and returns it.
+
+    A texture or a material can be shared by everything that loads it, so one
+    registered object is all those kinds need. A sprite cannot: `visible` and
+    `z` are per-object state, and handing the same Sprite to every node that
+    loads one file made them impossible to show or hide independently (see
+    Sprite.instance). So the registry keeps the canonical object to reload
+    *into*, and this keeps track of the copies in use so a reload can reach
+    them too.
+
+    Weakly held - a sprite belonging to a node that has been killed should not
+    be kept alive by the reloader, and there is no unregister call to make at
+    the right moment even if anything knew when that moment was.
+    """
+    _instances.setdefault(path, weakref.WeakSet()).add(obj)
+    return obj
+
+
+def live_instances(path: str) -> list:
+    """Every copy handed out for `path` that is still in use."""
+    return list(_instances.get(path, ()))
 
 
 def reload_asset(path: str):
@@ -150,5 +177,18 @@ def _reload_sprite(path, sprite):
     # file says.
     sprite.material.properties['albedo'] = sprite.texture
 
-    sprite.visisble = data.get('visible', sprite.visisble)
+    sprite.visible = data.get('visible', sprite.visible)
     sprite.z = data.get('z', sprite.z)
+
+    # The registered Sprite is the one reloaded *into*; what is actually on
+    # screen are the per-object copies handed out from it (see
+    # Sprite.instance), so the same swap has to reach each of them. `visible`
+    # is deliberately not pushed across: it is the per-object state the copies
+    # exist for, and a game that has hidden one of them means it.
+    for live in live_instances(path):
+        live.texture = sprite.texture
+        live.material.properties['albedo'] = live.texture
+        if mat_path and live.material is not sprite.material:
+            live.material = sprite.material.instance()
+            live.material.properties['albedo'] = live.texture
+        live.z = sprite.z

@@ -53,3 +53,43 @@ def test_transform_compose_with_rotated_parent():
     assert world.position.x == pytest.approx(10, abs=1e-9)
     assert world.position.y == pytest.approx(1, abs=1e-9)
     assert world.rotation == pytest.approx(90, abs=1e-9)
+
+
+def test_from_matrix_preserves_a_mirrored_scale():
+    """A negative scale on one axis is how a sprite gets flipped, and
+    from_matrix extracted scale with hypot - which is never negative. The
+    mirror survived being set and was then thrown away the moment the
+    transform was composed with its parent's, so a flipped sprite drew
+    unflipped and nothing anywhere reported a problem.
+    """
+    from FreeBodyEngine.math import Transform
+
+    mirrored = Transform((3, 4), 30.0, (9, -6))
+    roundtripped = Transform.from_matrix(mirrored.to_matrix())
+
+    assert roundtripped.scale.y < 0
+    assert numpy.allclose(roundtripped.to_matrix(), mirrored.to_matrix())
+
+
+def test_composing_a_mirrored_child_keeps_the_mirror():
+    """The composition path is where this actually bit."""
+    from FreeBodyEngine.math import Transform
+
+    parent = Transform((10, 0), 0.0, (1, 1))
+    child = Transform((0, 0), 180.0, (9, -6))
+
+    composed = child.compose_with(parent)
+
+    assert composed.scale.y < 0
+    assert numpy.allclose(composed.to_matrix(), parent.to_matrix() @ child.to_matrix())
+
+
+def test_an_unmirrored_transform_is_untouched():
+    from FreeBodyEngine.math import Transform
+
+    plain = Transform((1, 2), 45.0, (3, 4))
+    roundtripped = Transform.from_matrix(plain.to_matrix())
+
+    assert roundtripped.scale.x == pytest.approx(3)
+    assert roundtripped.scale.y == pytest.approx(4)
+    assert roundtripped.rotation == pytest.approx(45)

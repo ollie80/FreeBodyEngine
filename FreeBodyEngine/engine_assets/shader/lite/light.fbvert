@@ -1,0 +1,29 @@
+# One light's volume: a quad covering exactly the world-space disc its range
+# reaches, so a light costs only the pixels it can actually light.
+
+@uniform
+view: mat4
+proj: mat4
+model: mat4
+
+@input
+vertex: vec3
+uvs: vec2
+normal: vec3
+
+@output
+worldPos: vec4
+screenUV: vec2
+
+def main():
+    world: vec4 = model * vec4(vertex.x, vertex.y, vertex.z, 1.0)
+    worldPos = vec4(world.x, world.y, world.z, 1.0)
+
+    clip: vec4 = proj * view * world
+    # Where this fragment lands in the surface pass's targets, so the light
+    # can read the normal written there. Computed here rather than from a
+    # fragment-coordinate builtin so the shader needs no resolution uniform.
+    ndc: vec2 = vec2(clip.x / clip.w, clip.y / clip.w)
+    screenUV = vec2(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5)
+
+    VERTEX_POSITION = clip

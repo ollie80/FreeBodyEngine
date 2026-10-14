@@ -12,7 +12,11 @@ class PBRMaterial(Material):
         surface per pixel and can't represent a blended one at all."""
         property_definitions = {
             'albedo': PropertyType.COLOR_RGBA,
-            'normal': PropertyType.COLOR_RG,
+            # RGBA, not RG: a normal map is sampled as a full texel and
+            # every shader already declared this uniform as a vec4. Declared
+            # RG, the injector would narrow the sample to two channels and
+            # drop the blue a tangent-space normal needs.
+            'normal': PropertyType.COLOR_RGBA,
             'emmisive': PropertyType.COLOR_RGBA,
             'roughness': PropertyType.COLOR_R,
             'metallic': PropertyType.COLOR_R

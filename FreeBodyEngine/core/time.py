@@ -12,6 +12,14 @@ class Time:
         self._last_time = self._start_time
         self.delta_time = 0.0
         self.unscaled_delta_time = 0.0
+        # Seconds since the previous UPDATE/DRAW, published by
+        # UpdateCoordinator - which is what `FreeBodyEngine.delta()` returns
+        # and what every per-frame consumer actually wants. `delta_time` is
+        # one *loop iteration*, and the loop iterates more often than it
+        # draws whenever it can run faster than the frame cap; anything
+        # advancing on it then loses the time from the iterations that did
+        # not draw. See UpdateCoordinator.update().
+        self.frame_delta_time = 0.0
         self.time_scale = 1.0
         self.total_time = 0.0
         self.frame_count = 0

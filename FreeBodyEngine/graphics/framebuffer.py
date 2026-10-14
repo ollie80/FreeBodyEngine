@@ -46,6 +46,22 @@ class Framebuffer:
         self.height = height
         self.attachments = attachments
 
+    @property
+    def color_attachments(self) -> list[str]:
+        """The names of this framebuffer's color attachments, in order.
+
+        `attachments` is not a reliable way to ask: a backend may rewrite it
+        to map names onto its own API handles (the GL ones replace each value
+        with a GL_COLOR_ATTACHMENTn enum), so the requested types only survive
+        in the private copy each keeps. This is the supported way to ask
+        "which of these can actually be shown", which is what anything
+        stepping through a G-buffer for display wants - a depth attachment is
+        not a picture, and a stencil one even less so.
+        """
+        declared = getattr(self, '_attachments', None) or self.attachments
+        return [name for name, spec in declared.items()
+                if isinstance(spec, tuple) and spec[0] == AttachmentType.COLOR]
+
     @abstractmethod
     def resize(self, size: tuple[int, int]):
         """Changes the size of the framebuffer."""

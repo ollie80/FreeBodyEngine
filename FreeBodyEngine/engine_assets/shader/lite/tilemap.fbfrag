@@ -1,0 +1,35 @@
+# Tiles, for LitePipeline's surface pass.
+#
+# The same three channels every other surface writes (see lite/surface.fbfrag)
+# - and nothing else. The PBR tilemap shader has to write seven, including a
+# world-position channel whose alpha doubles as a "real geometry here"
+# sentinel for the composite; none of that exists here, because the light pass
+# interpolates world position and reads only what it needs.
+
+@output
+colour: vec4
+normal: vec4
+emmisive: vec4
+
+@input
+uv: vec2
+worldPos: vec4
+worldNormal: vec4
+
+def main() -> void:
+    base: vec4 = ALBEDO
+    colour = base
+
+    # Every channel carries the albedo's alpha. TilemapRenderer draws layers
+    # with blending on and depth writes off, so a transparent tile has to let
+    # the layer beneath it through - and GL blends each attachment by that
+    # attachment's own alpha. Left at 1.0, a transparent tile pixel would
+    # stamp its normal over the tile below while correctly leaving its colour
+    # alone, lighting the lower tile with the upper tile's relief.
+    a: float = base.w
+
+    mapped: vec4 = NORMAL
+    normal = vec4(mapped.x, mapped.y, mapped.z, a)
+
+    glow: vec4 = EMMISIVE
+    emmisive = vec4(glow.x, glow.y, glow.z, a)

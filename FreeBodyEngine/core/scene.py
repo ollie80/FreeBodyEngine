@@ -172,9 +172,18 @@ class Scene:
         # and handed to every body: neither the list nor the bounds can change
         # during the narrow phase, and doing it per body meant a full tree walk
         # and a fresh bounding box per body per step.
+        #
+        # Colliders belonging to a RigidBody2D are left out: they are the other
+        # system's, and it already ignores everything of this one's. Including
+        # them made the separation one-way - an arcade body would collide with
+        # a rigid body's collider and shove itself out of it, while the rigid
+        # body felt nothing. A lantern swinging on a chain would walk its
+        # owner across the room, and bullets would stop dead on it.
         colliders = []
         for collider in self.root.find_nodes_with_type('Collider2D'):
             collider.apply_transform()
+            if collider.rigid_body is not None:
+                continue
             aabb_min, aabb_max = collider.collision_shape.get_aabb()
             colliders.append((collider, aabb_min, aabb_max))
 

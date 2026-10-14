@@ -1,0 +1,41 @@
+# Surface colour times the light that reached it, plus whatever glows on its
+# own. One fullscreen pass, and the only one LitePipeline runs per frame that
+# touches every pixel.
+
+@uniform
+ColourMap: texture
+LightMap: texture
+EmmisiveMap: texture
+
+@input
+uv: vec2
+
+# A fragment shader's outputs bind to colour attachments purely by
+# declaration order from location 0, while set_draw_buffers() builds a
+# full-width array where position == attachment index. So a pass that writes
+# one attachment has to declare a throwaway field per attachment before it, or
+# its single output lands at location 0 - a slot this pass has disabled - and
+# nothing is written at all. PBRPipeline's composite pads the same way.
+@output
+_pad0: vec4
+_pad1: vec4
+_pad2: vec4
+_pad3: vec4
+result: vec4
+
+def main() -> void:
+    surface: vec4 = sample(ColourMap, uv)
+
+    # Nothing was drawn here, so there is nothing to light. The surface pass
+    # writes every channel with the albedo's own alpha, which makes alpha the
+    # sentinel for "real geometry" - the same job gWorldPos.w does for
+    # PBRPipeline's composite, without needing a channel of its own.
+    if surface.w < 0.004:
+        result = vec4(0.0, 0.0, 0.0, 0.0)
+        return
+    light: vec4 = sample(LightMap, uv)
+    glow: vec4 = sample(EmmisiveMap, uv)
+
+    # Written out on one line: FBUSL's parser is line-oriented and a call
+    # split across several ends the expression at the first newline.
+    result = vec4(surface.x * light.x + glow.x, surface.y * light.y + glow.y, surface.z * light.z + glow.z, surface.w)

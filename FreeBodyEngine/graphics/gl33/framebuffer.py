@@ -1,4 +1,5 @@
 from FreeBodyEngine.graphics.framebuffer import Framebuffer, AttachmentFormat, AttachmentType
+from FreeBodyEngine.graphics.gl_depth_view import DepthView
 from FreeBodyEngine.utils import get_platform
 from OpenGL.GL import *
 import numpy as np
@@ -96,6 +97,8 @@ class GLFramebuffer(Framebuffer):
         super().__init__(width, height, attachments)
         self.fbo = glGenFramebuffers(1)
         self.textures = {}
+        # Compiled on first use - see graphics/gl_depth_view.py.
+        self._depth_view = DepthView('#version 330 core')
         self._attachments = attachments.copy()
 
         glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
@@ -184,8 +187,19 @@ class GLFramebuffer(Framebuffer):
 
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
 
-    def _draw_depth_texture(tex, size):
-        pass
+    def _draw_depth_texture(self, tex, size):
+        """Draws the depth attachment to the screen as greyscale.
+
+        Was `def _draw_depth_texture(tex, size)` - no `self` - and a bare
+        `pass`. Since draw() calls it as `self._draw_depth_texture(tex, size)`,
+        the missing parameter made every call a TypeError, and because the
+        pipeline's final present goes through draw(), selecting the depth
+        channel stopped the frame reaching the window at all. The update
+        coordinator logs and continues, so the game kept running with a frozen
+        picture - which is what a render-channel switcher looked like when it
+        "did nothing".
+        """
+        self._depth_view.draw(tex, size)
 
     def clear_color_attachment(self, name: str, value=(0.0, 0.0, 0.0, 0.0)):
         """Clears the named color attachment to `value` via

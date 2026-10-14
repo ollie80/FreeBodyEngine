@@ -1,0 +1,146 @@
+# One light, accumulated additively into the light buffer.
+#
+# This is the whole reason LitePipeline exists. PBRPipeline evaluates every
+# light at every pixel on screen, so a sconce reaching a tenth of the view
+# still costs the whole of it - which is why it needs a hard cap of eight.
+# Here a light is a quad the size of its own reach, so the cost is the lit
+# area rather than lights times screen, and there is no cap at all.
+
+@uniform
+LightPos: vec2
+LightColor: vec3
+LightIntensity: float
+LightRange: float
+NormalMap: texture
+
+# What blocks this light - a world-space mask of the tilemap's own solid
+# tiles, uploaded by LitePipeline.set_occluders(). Disabled, the march below
+# never runs and a light costs exactly what it did before.
+OccluderEnabled: bool
+OccluderMap: texture
+OccluderOrigin: vec2
+OccluderExtent: vec2
+ShadowSoftness: float
+ShadowSteps: float
+
+@input
+worldPos: vec4
+screenUV: vec2
+
+# A fragment shader's outputs bind to colour attachments purely by
+# declaration order from location 0, while set_draw_buffers() builds a
+# full-width array where position == attachment index. So a pass that writes
+# one attachment has to declare a throwaway field per attachment before it, or
+# its single output lands at location 0 - a slot this pass has disabled - and
+# nothing is written at all. PBRPipeline's composite pads the same way.
+@output
+_pad0: vec4
+_pad1: vec4
+_pad2: vec4
+result: vec4
+
+
+def occluder_at(p: vec2) -> float:
+    # The mask is world-space axis-aligned, so a point maps into it by a
+    # subtract and a divide - there is no transform to apply and nothing per
+    # light to rebuild. Red channel; above ~0.5 is solid.
+    u: float = (p.x - OccluderOrigin.x) / OccluderExtent.x
+    v: float = (p.y - OccluderOrigin.y) / OccluderExtent.y
+    return sample(OccluderMap, vec2(u, v)).x
+
+
+def light_visibility(world: vec2, ray: vec2, dist: float, atten: float) -> float:
+    # Whether this light reaches this fragment, or a wall is in the way.
+    #
+    # A march along the straight line from the surface to the light, looking
+    # for an occluder. That suits a tile world exactly: the occluders already
+    # are a grid, so a texture lookup *is* the intersection test, and there is
+    # no per-light render pass and nothing to rebuild when a light moves.
+    #
+    # Written as a real `while` rather than PBRPipeline's unrolled steps -
+    # that one lives in a Python string in pbr/shaders.py and has to be
+    # generated, 14 copies of the same six lines, because its step count is
+    # baked in. Here the count is a uniform, so quality is tunable at runtime
+    # (LitePipeline.shadow_steps) and this stays the loop it actually is.
+    if OccluderEnabled == False:
+        return 1.0
+    # The quad covers its light's whole bounding box, so its corners fall
+    # outside the disc and are already black. Marching for them is the one
+    # pure waste available here, and it is about a fifth of every light.
+    if atten <= 0.0:
+        return 1.0
+    if dist < 0.001:
+        return 1.0
+
+    # The march starts a little away from the surface and stops a little
+    # short of the light. Without the first, a wall shadows itself and every
+    # wall face in the room goes black; without the second, a light sitting
+    # inside a wall tile - a sconce mounted on one - puts out nothing.
+    # The bias is in world units, so it does not shrink with distance.
+    bias: float = clamp(10.0 / dist, 0.0, 0.4)
+    span: float = 0.9 - bias
+
+    # Softness is the light's apparent size in world units. Each step samples
+    # across a band perpendicular to the ray, and that band widens along the
+    # ray toward the light - so an occluder close to the light throws a broad,
+    # soft edge and one pressed against the surface throws a sharp one, which
+    # is how a real penumbra behaves. At zero the three taps collapse onto
+    # each other and the edge is as hard as the mask's own texel.
+    perp: vec2 = vec2(ray.y * -1.0 / dist, ray.x / dist)
+
+    steps: float = max(ShadowSteps, 2.0)
+    stride: float = span / (steps - 1.0)
+    coverage: float = 0.0
+    i: float = 0.0
+
+    # The trailing parens around (steps) are load-bearing, not style: FBUSL's
+    # parser mis-parses a condition whose last token is a bare identifier
+    # directly followed by ":" - it speculatively reads that identifier as the
+    # start of a new `name: type` declaration and then fails looking for a
+    # type annotation nobody wrote. A literal or a parenthesised identifier is
+    # fine; this is the same gap pbr/shaders.py documents at shadow_factor.
+    while i < (steps):
+        f: float = bias + stride * i
+        p: vec2 = vec2(world.x + ray.x * f, world.y + ray.y * f)
+        w: float = ShadowSoftness * f
+        o: vec2 = vec2(perp.x * w, perp.y * w)
+        m: float = occluder_at(p)
+        a: float = occluder_at(vec2(p.x + o.x, p.y + o.y))
+        b: float = occluder_at(vec2(p.x - o.x, p.y - o.y))
+        coverage = max(coverage, (m + a + b) * 0.3333333)
+        i = i + 1.0
+
+    # Mapped through a narrow ramp rather than a threshold: at zero softness
+    # the taps coincide and the mask's own linear filtering makes this a one
+    # texel transition, which reads as a hard edge.
+    return 1.0 - clamp((coverage - 0.35) / 0.3, 0.0, 1.0)
+
+
+def main() -> void:
+    to_light: vec2 = vec2(LightPos.x - worldPos.x, LightPos.y - worldPos.y)
+    dist: float = length(to_light)
+
+    # Outside the disc the quad covers its corners, which are further from the
+    # light than its radius - those contribute nothing.
+    falloff: float = clamp(1.0 - (dist / max(LightRange, 0.0001)), 0.0, 1.0)
+    atten: float = falloff * falloff
+
+    # A normal map tilts the surface toward or away from the light. The
+    # surface pass writes a zero normal where a material has none, which reads
+    # as "flat, facing the camera" - lit evenly, the way flat art should be.
+    tilt: vec4 = sample(NormalMap, screenUV)
+    facing: float = 1.0
+    strength: float = tilt.x + tilt.y + tilt.z
+    if strength > 0.0:
+        n: vec3 = normalize(vec3(tilt.x * 2.0 - 1.0, tilt.y * 2.0 - 1.0, tilt.z * 2.0 - 1.0))
+        light_dir: vec3 = normalize(vec3(to_light.x, to_light.y, LightRange * 0.35))
+        facing = clamp(dot(n, light_dir), 0.0, 1.0)
+
+    vis: float = light_visibility(vec2(worldPos.x, worldPos.y), to_light, dist, atten)
+
+    # Divided by pi, the same normalisation PBR's diffuse term carries
+    # (albedo/pi in light_contribution). Without it a light authored against
+    # PBRPipeline reads about three times too strong here, and a room lit by
+    # a dozen candles saturates to flat white.
+    energy: float = atten * LightIntensity * facing * vis * 0.31830988
+    result = vec4(LightColor.x * energy, LightColor.y * energy, LightColor.z * energy, 1.0)

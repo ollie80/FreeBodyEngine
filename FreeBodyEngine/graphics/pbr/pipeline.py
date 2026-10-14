@@ -47,8 +47,9 @@ from FreeBodyEngine.core.scene import SceneManager
 from FreeBodyEngine import get_service
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.graphics.pbr.material import PBRMaterial
-from FreeBodyEngine.graphics.pbr.lighting import Light, LightType
-from FreeBodyEngine.graphics.pbr.shaders import MAX_LIGHTS, LIGHTING_COMPOSITE_VERT, LIGHTING_COMPOSITE_FRAG
+from FreeBodyEngine.graphics.lighting import Light, LightType
+from FreeBodyEngine.graphics.pbr.shaders import (MAX_LIGHTS, LIGHTING_COMPOSITE_VERT,
+                                                 LIGHTING_COMPOSITE_FRAG, FXAA_VERT, FXAA_FRAG)
 
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
 # TilemapRenderer is deliberately not imported. Nothing here uses the
@@ -132,6 +133,17 @@ class PBRPipeline(GraphicsPipeline):
         # 'lit' and never touch the G-buffer.
         self.unlit = False
 
+        # What blocks light, as a world-space mask - see set_occluders().
+        # None until something supplies one, which is every scene that has no
+        # walls to cast with.
+        self._occluder_texture = None
+        self._occluder_origin = (0.0, 0.0)
+        self._occluder_extent = (1.0, 1.0)
+        # The light's apparent size in world units, which is what gives a
+        # shadow its penumbra. 0 is a hard edge; a few units is enough to take
+        # the harshness off without the shadow losing its shape.
+        self.shadow_softness = 0.0
+
         files = get_service('files')
         self._composite_shader = self.renderer.load_shader(LIGHTING_COMPOSITE_VERT, LIGHTING_COMPOSITE_FRAG, Injector(), None)
         self._composite_quad = generate_quad(2.0, 2.0)
@@ -145,6 +157,45 @@ class PBRPipeline(GraphicsPipeline):
         self._shadow_framebuffer = self.renderer.create_framebuffer(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, {
             'depth': (AttachmentType.DEPTH, AttachmentFormat.DEPTH32F),
         })
+
+        # Antialiasing. FXAA, as a final fullscreen pass over the finished
+        # image - see shaders.FXAA_FRAG's header for why a deferred renderer
+        # cannot simply turn MSAA on.
+        self._fxaa_shader = self.renderer.load_shader(FXAA_VERT, FXAA_FRAG, Injector(), None)
+        self.antialiasing = True
+        # How many shadow-map texels wide the PCF kernel reaches. 1.0 is
+        # just enough to antialias the edge; larger genuinely softens it,
+        # at the cost of the 16 taps spreading far enough to show their
+        # own pattern.
+        self.shadow_pcf_radius = 1.0
+
+        # Distance fog. Off by default (density 0) so existing scenes are
+        # unchanged; set `fog_color` to the scene's horizon and `fog_end` at
+        # or just inside the camera's far plane so distant geometry fades
+        # out rather than popping out of the frustum.
+        self.fog_color = Vector3(0.78, 0.86, 0.93)
+        self.fog_start = 60.0
+        self.fog_end = 380.0
+        self.fog_density = 0.0
+        # Edge sensitivity, as a fraction of the brighter side's luma. 0.166
+        # is the usual "default quality" value; lower catches more edges and
+        # softens more of the image with them.
+        self.fxaa_edge_threshold = 0.166
+        # Absolute floor, so near-black areas are not filtered on noise.
+        self.fxaa_edge_threshold_min = 0.0833
+        # How far along an edge the blur may reach, in texels.
+        self.fxaa_span_max = 8.0
+
+        # Speed lines, drawn in the same final pass as the antialiasing
+        # (they are a screen-space overlay, so the last pass before the
+        # screen is exactly where they belong and they cost nothing extra).
+        # `speed_line_strength` is meant to be driven per frame by whatever
+        # is moving - 0 is off.
+        self.speed_line_strength = 0.0
+        self.speed_line_color = Vector3(1.0, 1.0, 1.0)
+        self.speed_line_inner_radius = 0.42
+        self.speed_line_width = 0.32
+        self.speed_line_count = 90.0
 
     def draw_world_mesh(self, mesh: Mesh, material: Material, transform: Transform, camera: Camera, instances: int = 1):
         """Queues `mesh`/`material`/`transform` for drawing against `camera`
@@ -168,7 +219,12 @@ class PBRPipeline(GraphicsPipeline):
         if node.inherits_from('TilemapRenderer'):
             tilemaps.append(node)
         elif node.inherits_from('Sprite2D'):
-            sprites.append(node)
+            # `visible` was accepted by Sprite's constructor and stored, and
+            # then read by nothing at all - every sprite was drawn whatever it
+            # said. Checked at collection so an invisible sprite costs no
+            # transform, no submit and no shadow-map draw either.
+            if node._sprite.visible:
+                sprites.append(node)
         elif node.inherits_from('MeshNode2D'):
             meshes.append(node)
         elif node.inherits_from('Debug2D'):
@@ -210,37 +266,66 @@ class PBRPipeline(GraphicsPipeline):
         direction = light.direction3
         eye = target - direction * light.shadow_distance
 
-        rot = light.world_transform.rotation
-        pitch = math.radians(rot.x)
-        yaw = math.radians(rot.y)
-        roll = math.radians(rot.z)
-        cx, sx = math.cos(pitch), math.sin(pitch)
-        cy, sy = math.cos(yaw), math.sin(yaw)
-        cz, sz = math.cos(roll), math.sin(roll)
+        # Built from a look-at basis along `direction3`, not by rebuilding
+        # the light's Euler rotation the way Camera3D does.
+        #
+        # Reconstructing it from the Euler angles mixed two conventions that
+        # disagree: `eye` above comes from `direction3`, which is
+        # lighting._pitch_yaw_roll_to_forward, and that function's pitch
+        # sign is the *opposite* of the one Camera3D's view matrix uses
+        # (negative pitch points down for the light helper, up for the
+        # camera). So the shadow camera was placed correctly and then
+        # pointed the other way, and every surface came back shadowed.
+        #
+        # A basis built straight from the direction the light actually
+        # shines cannot disagree with itself. The rows are the camera's
+        # local axes in world space, which is what the row-vector world
+        # matrix below wants - local -Z is forward, matching Camera3D.
+        forward = np.array([direction.x, direction.y, direction.z], dtype=np.float32)
+        norm = np.linalg.norm(forward)
+        if norm == 0.0:
+            forward = np.array([0.0, -1.0, 0.0], dtype=np.float32)
+        else:
+            forward = forward / norm
 
-        rotation_matrix = np.array([
-            [cy * cz + sx * sy * sz, cz * sx * sy - cy * sz, cx * sy, 0.0],
-            [cx * sz, cx * cz, -sx, 0.0],
-            [cy * sx * sz - cz * sy, cy * cz * sx + sy * sz, cx * cy, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
+        # Any world up that is not parallel to `forward`; a sun directly
+        # overhead is the one case where +Y is no use.
+        world_up = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        if abs(float(np.dot(forward, world_up))) > 0.999:
+            world_up = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+        right = np.cross(forward, world_up)
+        right = right / np.linalg.norm(right)
+        up = np.cross(right, forward)
+
+        world_matrix = np.array([
+            [right[0], right[1], right[2], 0.0],
+            [up[0], up[1], up[2], 0.0],
+            [-forward[0], -forward[1], -forward[2], 0.0],
+            [eye.x, eye.y, eye.z, 1.0],
         ], dtype=np.float32)
-        translation_matrix = np.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 1, 0],
-            [eye.x, eye.y, eye.z, 1],
-        ], dtype=np.float32)
-        world_matrix = translation_matrix @ rotation_matrix
         view = np.linalg.inv(world_matrix)
 
         half = light.shadow_extent
         near = 0.1
         far = light.shadow_distance * 2.0
+        # Row-vector layout: the depth translation goes in the last ROW,
+        # not the last column.
+        #
+        # Written column-vector (translation at [2][3]) it was consumed as
+        # row-vector by both users of this matrix - the depth pass's
+        # `proj * view * model * vertex`, and the composite's
+        # `ShadowMatrix * worldPos` - because a numpy array uploaded to a
+        # GL mat4 arrives transposed. That made clip-space w equal
+        # `1 - z*(far+near)/(far-near)` instead of a constant 1, so the
+        # perspective divide shrank every fragment toward the middle of the
+        # shadow map: the whole world sampled a handful of texels around
+        # uv (0.5, 0.5) at a near-constant depth, and came back shadowed.
         proj = np.array([
             [1.0 / half, 0.0, 0.0, 0.0],
             [0.0, 1.0 / half, 0.0, 0.0],
-            [0.0, 0.0, -2.0 / (far - near), -(far + near) / (far - near)],
-            [0.0, 0.0, 0.0, 1.0],
+            [0.0, 0.0, -2.0 / (far - near), 0.0],
+            [0.0, 0.0, -(far + near) / (far - near), 1.0],
         ], dtype=np.float32)
 
         return view, proj
@@ -309,6 +394,52 @@ class PBRPipeline(GraphicsPipeline):
             'SpotCos': spot_cos,
         }
 
+    def _select_lights(self, lights: list, camera) -> list:
+        """The MAX_LIGHTS lights that matter most to what this camera sees.
+
+        There are only MAX_LIGHTS uniform slots, and what used to happen to
+        light number MAX_LIGHTS+1 was simply nothing: the slots were filled
+        from the list in tree-walk order and the rest were dropped without a
+        word. Tree order is creation order, so in a scene with more lights than
+        slots the ones that lost were always the most recently added - which is
+        to say the ones attached to the player, the thing the camera is
+        actually looking at. A lantern carried through a room of twenty wall
+        lamps lit nothing at all.
+
+        So the slots go to the lights whose reach is nearest the camera.
+        `distance - range` is negative for a light whose falloff sphere
+        contains the eye and grows with how far one falls short of it, which
+        ranks a close dim light above a distant bright one the way the shading
+        actually behaves. A directional light has neither position nor range
+        and lights everything, so it always takes a slot.
+
+        Note this is per frame and unweighted by what is on screen, so a camera
+        moving through more than MAX_LIGHTS lights will swap one for another at
+        the point the ranking crosses over. Raising MAX_LIGHTS (a shader
+        recompile - see graphics/pbr/shaders.py) is the lever if that shows.
+        """
+        eye = self._camera_view_pos(camera)
+
+        ranked = []
+        for light in lights:
+            if not light.enabled:
+                continue
+            if light.light_type == LightType.DIRECTIONAL:
+                ranked.append((-math.inf, light))
+                continue
+            position = light.world_position3
+            distance = math.sqrt((position.x - eye.x) ** 2
+                                 + (position.y - eye.y) ** 2
+                                 + (position.z - eye.z) ** 2)
+            ranked.append((distance - light.range, light))
+
+        if len(ranked) > MAX_LIGHTS:
+            # keyed, so two equally-ranked lights never get compared to each other
+            ranked.sort(key=lambda entry: entry[0])
+            del ranked[MAX_LIGHTS:]
+
+        return [light for _, light in ranked]
+
     def _apply_lighting_uniforms(self, shader, active_lights: list, shadow_light, shadow_matrix, view_pos: Vector3):
         """Sets every Light{N}_* uniform (active slots from `active_lights`,
         every remaining slot explicitly deactivated), plus Ambient/ViewPos/
@@ -328,15 +459,42 @@ class PBRPipeline(GraphicsPipeline):
         shader['Ambient'] = self.ambient
         shader['ViewPos'] = view_pos
         shader['Unlit'] = self.unlit
+        shader['FogColor'] = self.fog_color
+        shader['FogStart'] = self.fog_start
+        shader['FogEnd'] = self.fog_end
+        shader['FogDensity'] = self.fog_density
 
         if shadow_light is not None:
             shader['ShadowEnabled'] = True
+            shader['ShadowTexelSize'] = 1.0 / SHADOW_MAP_SIZE
+            shader['ShadowSoftnessRadius'] = self.shadow_pcf_radius
             shader['ShadowMap'] = self.renderer.texture_manager.wrap_external_texture(
                 self._shadow_framebuffer.get_attachment_texture('depth')
             )
             shader['ShadowMatrix'] = shadow_matrix
         else:
             shader['ShadowEnabled'] = False
+
+    def set_occluders(self, texture, origin, extent):
+        """Hands the lighting pass a world-space mask of what blocks light.
+
+        `texture` is sampled in its red channel: anything above 0.5 is solid.
+        `origin` is the world position of its bottom-left corner and `extent`
+        the world size it covers, so a fragment maps into it by a subtract and
+        a divide - the shader does no transform of its own.
+
+        A mask rather than occluder geometry because the occluders in a tile
+        game already are a grid: a texture lookup is the intersection test, so
+        there is no per-light render pass and nothing to rebuild when a light
+        moves. It only changes when the level does.
+
+        Pass `texture=None` to turn shadow casting off again. How soft the
+        resulting shadows are is `shadow_softness`, set separately - it is a
+        property of the lights, not of what blocks them.
+        """
+        self._occluder_texture = texture
+        self._occluder_origin = (float(origin[0]), float(origin[1]))
+        self._occluder_extent = (max(float(extent[0]), 1e-6), max(float(extent[1]), 1e-6))
 
     def _camera_view_pos(self, camera) -> Vector3:
         """A world-space "eye" position for the lighting math's view
@@ -375,6 +533,23 @@ class PBRPipeline(GraphicsPipeline):
             self._composite_shader[uniform_name] = texture_manager.wrap_external_texture(gl_tex)
 
         self._apply_lighting_uniforms(self._composite_shader, active_lights, shadow_light, shadow_matrix, self._camera_view_pos(camera))
+
+        # Composite-only, deliberately: the occlusion march lives in
+        # accumulate_lighting, which only this shader has. A forward-lit
+        # transparent object is shaded by its own material shader, which never
+        # declared these - so setting them there is an error about a uniform
+        # that genuinely is not in that program, not a missing feature to fix.
+        # Transparent objects therefore do not receive 2D shadows, the same way
+        # they already do not receive the directional shadow map.
+        if self._occluder_texture is not None:
+            self._composite_shader['OccluderEnabled'] = True
+            self._composite_shader['OccluderMap'] = self._occluder_texture
+            self._composite_shader['OccluderOrigin'] = self._occluder_origin
+            self._composite_shader['OccluderExtent'] = self._occluder_extent
+            self._composite_shader['ShadowSoftness'] = float(self.shadow_softness)
+        else:
+            self._composite_shader['OccluderEnabled'] = False
+
         self._composite_shader['model'] = self._identity_model
 
         self.main_framebuffer.set_draw_buffers(['lit'])
@@ -418,6 +593,8 @@ class PBRPipeline(GraphicsPipeline):
         tilemaps, sprites, debugs, models, lights, meshes = [], [], [], [], [], []
         self._collect(camera.scene.root, tilemaps, sprites, debugs, models, lights, meshes)
 
+        lights = self._select_lights(lights, camera)
+
         shadow_light = self._pick_shadow_light(lights)
         shadow_view = shadow_proj = None
         if shadow_light is not None:
@@ -425,6 +602,16 @@ class PBRPipeline(GraphicsPipeline):
             self._render_shadow_map(shadow_light, shadow_view, shadow_proj, sprites, debugs, models, meshes)
             self.main_framebuffer.bind()
             self.main_framebuffer.set_draw_buffers(self._gbuffer_attachments)
+            # _render_shadow_map ends by disabling depth testing, and the
+            # enable_depth_testing() above it ran *before* the shadow pass -
+            # so without this the entire G-buffer pass drew with GL_DEPTH_TEST
+            # off and the scene resolved by draw order alone. Every box showed
+            # its own back faces through its front, whatever was submitted
+            # last covered whatever was in front of it, and a skybox could not
+            # work at all. Only reachable with a shadow-casting light in the
+            # scene, which is why it stayed hidden for as long as nothing
+            # cast one.
+            self.renderer.enable_depth_testing()
 
         for tilemap in tilemaps:
             tilemap.draw(camera)
@@ -446,7 +633,16 @@ class PBRPipeline(GraphicsPipeline):
         # the same light-list state the composite pass uses, before
         # flush_transparent() draws them - they don't go through the
         # composite pass at all (see module docstring).
-        shadow_matrix = (shadow_proj @ shadow_view) if shadow_light is not None else None
+        # `view @ proj`, not `proj @ view`. The composite shader multiplies
+        # column-style (`ShadowMatrix * worldPos`) but a numpy array
+        # uploaded to a GL mat4 arrives transposed, so GLSL sees this
+        # matrix's transpose - which makes the shader's effective operation
+        # the row-vector `worldPos @ ShadowMatrix`, the same convention the
+        # vertex shaders' `proj * view * model * vertex` already resolves
+        # to. Composed the other way round the factors applied backwards,
+        # every fragment landed outside the shadow map's depth range, and
+        # the whole world came back shadowed.
+        shadow_matrix = (shadow_view @ shadow_proj) if shadow_light is not None else None
         transparent_shaders_seen = set()
         for call in self.renderer.calls:
             shader = call.material.shader
@@ -494,8 +690,57 @@ class PBRPipeline(GraphicsPipeline):
         self.renderer.set_blend_mode(BlendMode.OPAQUE)
         self.renderer.disable_depth_testing()
 
-        self.main_framebuffer.unbind()
-        self.main_framebuffer.draw(self.output_channel, window_size)
+        # Antialias on the way to the screen. Skipped when `output_channel`
+        # is some other G-buffer channel: those are debug views of raw
+        # surface data (world positions, normals), and running an
+        # edge-detecting blur over them would show something that is not
+        # what is in the buffer.
+        # The post pass does the AA resolve *and* the speed-line overlay, so
+        # it also runs when antialiasing is off but speed lines are not.
+        if self.output_channel == 'lit' and (self.antialiasing or self.speed_line_strength > 0.0):
+            self._draw_fxaa(window_size)
+        else:
+            self.main_framebuffer.unbind()
+            self.main_framebuffer.draw(self.output_channel, window_size)
+
+    def _draw_fxaa(self, window_size: tuple[int, int]):
+        """Resolves 'lit' to the screen through the FXAA shader.
+
+        Unlike Framebuffer.draw(), which blits an attachment straight to the
+        window, this is a real fullscreen quad draw into the default
+        framebuffer - so it binds that framebuffer and sets the viewport
+        itself (bind_window_framebuffer does both).
+
+        `InverseResolution` is one texel of the *framebuffer*, not of the
+        window: the two differ whenever the window is scaled, and FXAA's
+        taps have to land on real texel centres of the image it is
+        filtering or the edge detection reads neighbours that are not
+        neighbours.
+        """
+        self.renderer.bind_window_framebuffer(window_size)
+
+        lit_texture = self.main_framebuffer.get_attachment_texture('lit')
+        self._fxaa_shader['Screen'] = self.renderer.texture_manager.wrap_external_texture(lit_texture)
+        self._fxaa_shader['InverseResolution'] = (
+            1.0 / max(self.main_framebuffer.width, 1),
+            1.0 / max(self.main_framebuffer.height, 1),
+        )
+        self._fxaa_shader['EdgeThreshold'] = self.fxaa_edge_threshold
+        self._fxaa_shader['EdgeThresholdMin'] = self.fxaa_edge_threshold_min
+        self._fxaa_shader['SpanMax'] = self.fxaa_span_max
+
+        self._fxaa_shader['SpeedLineStrength'] = self.speed_line_strength
+        self._fxaa_shader['SpeedLineColor'] = self.speed_line_color
+        self._fxaa_shader['SpeedLineInnerRadius'] = self.speed_line_inner_radius
+        self._fxaa_shader['SpeedLineWidth'] = self.speed_line_width
+        self._fxaa_shader['SpeedLineCount'] = self.speed_line_count
+        self._fxaa_shader['ScreenAspect'] = window_size[0] / max(window_size[1], 1)
+
+        self._fxaa_shader['model'] = self._identity_model
+
+        self.renderer.disable_depth_testing()
+        self._fxaa_shader.use()
+        self._composite_quad.draw()
 
     def create_material(self, data, injector):
         """Builds a PBRMaterial from `data`, using `injector` to resolve FBUSL builtins."""

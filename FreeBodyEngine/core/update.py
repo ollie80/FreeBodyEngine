@@ -26,6 +26,13 @@ class UpdateCoordinator:
     capped update/draw updates, dispatching to callbacks registered per
     `UpdatePhase` (see `FreeBodyEngine.register_service_update`)."""
 
+    # Most physics steps one loop iteration may run to catch up. Three
+    # keeps a hitch (a level load, a window drag) from being paid back
+    # all at once, without letting a slow frame multiply itself - see
+    # update() for why an unbounded catch-up is a spiral rather than a
+    # cost.
+    MAX_PHYSICS_STEPS = 3
+
     def __init__(self, time: 'Time'):
         """Derives the physics/update timesteps from the MAX_TPS/MAX_FPS
         flags (defaulting to 69 each) and starts with no callbacks
@@ -41,6 +48,9 @@ class UpdateCoordinator:
 
         self.update_accumulator = 0
         self.physics_accumulator = 0
+        # Real time banked since the last UPDATE/DRAW ran, published to
+        # Time.frame_delta_time when one does - see update().
+        self._frame_elapsed = 0.0
 
         self.physics_timestep = 1 / get_flag(MAX_TPS, 69)
         self.update_timestep = 1 / get_flag(MAX_FPS, 69)
@@ -145,6 +155,24 @@ class UpdateCoordinator:
             self._run(callback, UpdatePhase.EARLY)
 
         self.physics_accumulator += self.time.delta_time
+
+        # Catch-up, but bounded. Unbounded, this is the spiral of death: a
+        # frame that overran the timestep runs extra physics steps to catch
+        # up, those steps make the frame longer, and the longer frame asks for
+        # more steps again. A game drawing at 90ms with a 16.7ms step was
+        # running six physics steps per frame and spending a third of its
+        # time there - not because the physics was heavy, but because the
+        # drawing was slow.
+        #
+        # Past the cap the accumulator is dropped rather than carried, so time
+        # is actually lost: below MAX_STEPS * timestep per frame the game runs
+        # in slow motion instead of running away from itself. That is the
+        # right trade - slow motion is survivable and recovers the moment the
+        # frame does, while the spiral never recovers on its own.
+        budget = self.MAX_PHYSICS_STEPS * self.physics_timestep
+        if self.physics_accumulator > budget:
+            self.physics_accumulator = budget
+
         while self.physics_accumulator >= self.physics_timestep:
             for _, callback in self._phases[UpdatePhase.PHYSICS]:
                 self._run(callback, UpdatePhase.PHYSICS)
@@ -153,8 +181,29 @@ class UpdateCoordinator:
             self.time.tick()
 
         self.update_accumulator += self.time.delta_time
+        self._frame_elapsed += self.time.delta_time
+
         did_draw = self.update_accumulator >= self.update_timestep
         if did_draw:
+            # What `delta()` reports for this frame: the time banked since the
+            # last one, not the duration of the single loop iteration that
+            # happened to tip the accumulator over.
+            #
+            # The loop iterates more often than it draws whenever it can run
+            # faster than the frame cap, and every iteration that does not draw
+            # still advances the clock. Reporting only the last iteration's
+            # delta made everything driven by `delta()` - animations, UI
+            # animations, timers, cooldowns, particles - run slow by exactly
+            # the fraction of iterations that drew, while the fixed-timestep
+            # physics above kept perfect time. At a 30fps cap on a machine that
+            # could loop faster, animations ran at 40% speed.
+            #
+            # Clamped like Time.update()'s own per-iteration delta and for the
+            # same reason: a long stall must not make one frame simulate an
+            # unbounded stretch of time.
+            self.time.frame_delta_time = min(self._frame_elapsed, 0.1)
+            self._frame_elapsed = 0.0
+
             for _, callback in self._phases[UpdatePhase.UPDATE]:
                 self._run(callback, UpdatePhase.UPDATE)
 

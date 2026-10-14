@@ -37,6 +37,16 @@ from FreeBodyEngine.math import Vector
 # across the map on frame one."
 MAX_JOINT_BIAS_SPEED = 4.0
 
+# Positional error below this is left alone, so the position solver doesn't
+# jitter bodies back and forth chasing a rounding error.
+LINEAR_SLOP = 0.005
+
+# The most a single position-solver pass will move a joint's anchors together.
+MAX_LINEAR_CORRECTION = 0.2
+
+# And the most degrees of limit violation it will take out in one pass.
+MAX_ANGULAR_CORRECTION = 8.0
+
 
 def _solve_2x2(k11: float, k12: float, k21: float, k22: float, bx: float, by: float) -> Vector:
     """Solves the 2x2 linear system `K * x = b` via Cramer's rule - the
@@ -76,6 +86,18 @@ class Joint2D(Node):
         override to precompute anchors/effective mass (anything that only
         changes once per step, not per iteration)."""
         pass
+
+    def solve_position_constraint(self) -> float:
+        """Pushes the two bodies' positions back toward satisfying this
+        joint, returning how far apart its anchor points still are.
+
+        Run after integration, separately from the velocity constraints, and
+        acting on positions directly rather than through velocity - so the
+        correction leaves no energy behind in the bodies the way a velocity
+        bias does. Joints that have no positional error to speak of can leave
+        this alone.
+        """
+        return 0.0
 
     def solve_velocity_constraint(self):
         """Called once per solver iteration (several times per physics
@@ -242,6 +264,7 @@ class RevoluteJoint2D(Joint2D):
         self._motor_impulse = 0.0
         self._lower_impulse = 0.0
         self._upper_impulse = 0.0
+        self._point_impulse = Vector(0, 0)
 
     def init_velocity_constraint(self, dt: float):
         self._dt = dt
@@ -262,6 +285,22 @@ class RevoluteJoint2D(Joint2D):
         pa = self.body_a.world_position + self._ra
         pb = self.body_b.world_position + self._rb
         self._point_error = pb - pa
+
+        # Warm start the point constraint: re-apply the impulse this joint
+        # settled on last step before solving this one, so the iterations below
+        # start from an almost-correct answer instead of from zero.
+        #
+        # Without it a chain is soft, and visibly so. Each step's eight
+        # Gauss-Seidel passes have to rediscover the whole force from nothing,
+        # and they only partly get there, so a chain dragged along at a steady
+        # speed stretches a little further every step - a three-link lantern
+        # chain pulled at walking pace settles at roughly three times its real
+        # length. The position bias cannot rescue that either; it is capped at
+        # MAX_JOINT_BIAS_SPEED so that a large error is corrected gently rather
+        # than explosively, which means it pulls in far slower than the drag
+        # pulls out.
+        self.body_a.apply_impulse(-self._point_impulse, pa)
+        self.body_b.apply_impulse(self._point_impulse, pb)
 
     def solve_velocity_constraint(self):
         if self.enable_motor and self._angular_mass > 0:
@@ -332,8 +371,69 @@ class RevoluteJoint2D(Joint2D):
         k11, k12, k21, k22 = self._k
         impulse = _solve_2x2(k11, k12, k21, k22, -(cdot.x + bias.x), -(cdot.y + bias.y))
 
+        self._point_impulse += impulse
         self.body_a.apply_impulse(-impulse, self.body_a.world_position + self._ra)
         self.body_b.apply_impulse(impulse, self.body_b.world_position + self._rb)
+
+    def solve_position_constraint(self) -> float:
+        a, b = self.body_a, self.body_b
+
+        # The angle limit gets corrected before the anchor point, and for the
+        # same reason the anchor point needs correcting at all: a limit
+        # enforced only through a velocity bias is a limit that enough energy
+        # simply passes through. A chain of these would fold back on itself and
+        # wrap over its own anchor, with the relative angle three times past a
+        # limit that was supposedly holding it.
+        angular_error = 0.0
+        angular_k = a.inv_inertia + b.inv_inertia
+        if self.enable_limit and angular_k > 0:
+            relative_angle = b.world_rotation - a.world_rotation - self.reference_angle
+
+            violation = 0.0
+            if relative_angle < self.lower_angle:
+                violation = relative_angle - self.lower_angle
+            elif relative_angle > self.upper_angle:
+                violation = relative_angle - self.upper_angle
+
+            if violation != 0.0:
+                angular_error = abs(violation)
+                violation = max(-MAX_ANGULAR_CORRECTION,
+                                min(MAX_ANGULAR_CORRECTION, violation))
+                impulse = -math.radians(violation) / angular_k
+                a.transform.rotation -= math.degrees(a.inv_inertia * impulse)
+                b.transform.rotation += math.degrees(b.inv_inertia * impulse)
+
+        ra = self.anchor_a.rotated(a.world_rotation)
+        rb = self.anchor_b.rotated(b.world_rotation)
+        error = (b.world_position + rb) - (a.world_position + ra)
+        magnitude = error.magnitude
+        # Reported together so world.step's early-out cannot call a joint
+        # settled while its limit is still being violated.
+        worst = max(magnitude, math.radians(angular_error))
+        if magnitude < LINEAR_SLOP:
+            return worst
+
+        # Clamped so one pass never teleports a badly separated joint; the
+        # remaining error is taken off by the passes and steps after it.
+        correction = error
+        if magnitude > MAX_LINEAR_CORRECTION:
+            correction = error.normalized * MAX_LINEAR_CORRECTION
+
+        ma, mb = a.inv_mass, b.inv_mass
+        ia, ib = a.inv_inertia, b.inv_inertia
+
+        k11 = ma + mb + ia * ra.y ** 2 + ib * rb.y ** 2
+        k12 = -ia * ra.x * ra.y - ib * rb.x * rb.y
+        k22 = ma + mb + ia * ra.x ** 2 + ib * rb.x ** 2
+
+        impulse = _solve_2x2(k11, k12, k12, k22, -correction.x, -correction.y)
+
+        a.transform.position -= impulse * ma
+        a.transform.rotation -= math.degrees(ia * ra.cross(impulse))
+        b.transform.position += impulse * mb
+        b.transform.rotation += math.degrees(ib * rb.cross(impulse))
+
+        return worst
 
 
 class WeldJoint2D(Joint2D):

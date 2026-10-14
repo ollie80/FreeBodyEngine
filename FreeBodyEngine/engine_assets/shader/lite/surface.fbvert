@@ -1,0 +1,35 @@
+# The surface pass's vertex stage - see graphics/lite/pipeline.py.
+#
+# Carries world position through to the fragment stage because the light pass
+# needs it, and LitePipeline keeps no world-position attachment: a 2D scene's
+# geometry is flat, so position is cheaper to interpolate than to store.
+
+@uniform
+view: mat4
+proj: mat4
+model: mat4
+zOffset: float
+
+@input
+vertex: vec3
+uvs: vec2
+normal: vec3
+
+@output
+uv: vec2
+worldPos: vec4
+worldNormal: vec4
+
+def main():
+    uv = uvs
+
+    world: vec4 = model * vec4(vertex.x, vertex.y, vertex.z, 1.0)
+    worldPos = vec4(world.x, world.y, world.z, 1.0)
+
+    world_normal: vec4 = model * vec4(normal.x, normal.y, normal.z, 0.0)
+    worldNormal = vec4(world_normal.x, world_normal.y, world_normal.z, 1.0)
+
+    # See default_shader.fbvert: the offset is applied after projection so it
+    # stays a pure depth nudge and cannot move the sprite on screen.
+    clip: vec4 = proj * view * world
+    VERTEX_POSITION = vec4(clip.x, clip.y, clip.z + (zOffset * clip.w), clip.w)

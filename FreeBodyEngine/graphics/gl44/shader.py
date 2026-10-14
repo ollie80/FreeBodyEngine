@@ -85,62 +85,118 @@ def compile_shader(source, shader_type):
     return shader
 
 
+def _value_signature(val):
+    """What check_val_type would actually look at: type, and element count.
+
+    Two values with the same signature validate identically, which is what
+    lets set_uniform() skip re-validating a uniform whose value changed but
+    whose shape did not - the common case for anything animated.
+    """
+    kind = type(val)
+    if kind is np.ndarray:
+        return (kind, val.shape)
+    if kind is tuple or kind is list:
+        return (kind, len(val))
+    return kind
+
+
+def _set_int(loc, val):
+    glUniform1i(loc, val)
+
+
+def _set_bool(loc, val):
+    glUniform1i(loc, int(val))
+
+
+def _set_float(loc, val):
+    glUniform1f(loc, float(val))
+
+
+def _set_ivec2(loc, val):
+    glUniform2iv(loc, 1, val)
+
+
+def _set_ivec3(loc, val):
+    glUniform3iv(loc, 1, val)
+
+
+def _set_ivec4(loc, val):
+    glUniform4iv(loc, 1, val)
+
+
+def _set_vec2(loc, val):
+    glUniform2f(loc, val[0], val[1])
+
+
+def _set_vec3(loc, val):
+    if isinstance(val, Color):
+        fn = val.float_normalized
+        glUniform3f(loc, fn[0], fn[1], fn[2])
+    else:
+        glUniform3f(loc, val[0], val[1], val[2])
+
+
+def _set_vec4(loc, val):
+    if isinstance(val, Color):
+        fn = val.float_normalized_a
+        glUniform4f(loc, fn[0], fn[1], fn[2], fn[3])
+    else:
+        glUniform4f(loc, val[0], val[1], val[2], val[3])
+
+
+def _set_mat2(loc, val):
+    glUniformMatrix2fv(loc, 1, GL_FALSE, val)
+
+
+def _set_mat3(loc, val):
+    glUniformMatrix3fv(loc, 1, GL_FALSE, val)
+
+
+def _set_mat4(loc, val):
+    glUniformMatrix4fv(loc, 1, GL_FALSE, val)
+
+
+def _set_sampler(loc, val):
+    if isinstance(val, int):
+        glUniform1i(loc, val)
+
+
+# A uniform's GL type is fixed when the program links, so choosing what to
+# call for it is a lookup rather than a search. This was an if/elif chain of
+# fourteen comparisons walked on every upload, and the two types a 2D game
+# sets most - mat4 for every object's model matrix, sampler2D for its texture
+# - sat twelfth and fourteenth in it.
+_UNIFORM_SETTERS = {
+    GL_INT: _set_int,
+    GL_BOOL: _set_bool,
+    GL_FLOAT: _set_float,
+    GL_INT_VEC2: _set_ivec2,
+    GL_INT_VEC3: _set_ivec3,
+    GL_INT_VEC4: _set_ivec4,
+    GL_FLOAT_VEC2: _set_vec2,
+    GL_FLOAT_VEC3: _set_vec3,
+    GL_FLOAT_VEC4: _set_vec4,
+    GL_FLOAT_MAT2: _set_mat2,
+    GL_FLOAT_MAT3: _set_mat3,
+    GL_FLOAT_MAT4: _set_mat4,
+    GL_SAMPLER_2D: _set_sampler,
+    GL_SAMPLER_2D_ARRAY: _set_sampler,
+}
+
+
 def set_gl_uniform(loc, gl_type, val):
     """The actual glUniform*/glUniformMatrix* dispatch, factored out of
     GL44Shader.set_uniform so GL44ComputeShader (graphics/gl44/compute.py)
     can reuse it instead of duplicating this same type-dispatch table. Assumes
-    the target program is already current (glUseProgram)."""
-    if gl_type == GL_INT:
-        glUniform1i(loc, val)
+    the target program is already current (glUseProgram).
 
-    elif gl_type == GL_BOOL:
-        glUniform1i(loc, int(val))
+    A GL type with no entry in _UNIFORM_SETTERS is ignored, which is what the
+    chain this replaced did by falling off its last branch.
+    """
+    setter = _UNIFORM_SETTERS.get(gl_type)
+    if setter is not None:
+        setter(loc, val)
 
-    elif gl_type == GL_FLOAT:
-        glUniform1f(loc, float(val))
-
-    elif gl_type == GL_INT_VEC2:
-        glUniform2iv(loc, 1, val)
-
-    elif gl_type == GL_INT_VEC3:
-        glUniform3iv(loc, 1, val)
-
-    elif gl_type == GL_INT_VEC4:
-        glUniform4iv(loc, 1, val)
-
-    elif gl_type == GL_FLOAT_VEC2:
-        glUniform2f(loc, val[0], val[1])
-
-    elif gl_type == GL_FLOAT_VEC3:
-        if isinstance(val, Color):
-            fn = val.float_normalized
-            v0, v1, v2 = fn[0], fn[1], fn[2]
-        else:
-            v0, v1, v2 = val[0], val[1], val[2]
-
-        glUniform3f(loc, v0, v1, v2)
-
-    elif gl_type == GL_FLOAT_VEC4:
-        if isinstance(val, Color):
-            fn = val.float_normalized_a
-            v0, v1, v2, v3 = fn[0], fn[1], fn[2], fn[3]
-        else:
-            v0, v1, v2, v3 = val[0], val[1], val[2], val[3]
-
-        glUniform4f(loc, v0, v1, v2, v3)
-
-    elif gl_type == GL_FLOAT_MAT2:
-        glUniformMatrix2fv(loc, 1, GL_FALSE, val)
-
-    elif gl_type == GL_FLOAT_MAT3:
-        glUniformMatrix3fv(loc, 1, GL_FALSE, val)
-
-    elif gl_type == GL_FLOAT_MAT4:
-        glUniformMatrix4fv(loc, 1, GL_FALSE, val)
-
-    elif gl_type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY):
-        if isinstance(val, int):
-            glUniform1i(loc, val)
 
 class GL44Shader(Shader):
     """The GL 4.4 implementation of Shader: compiles FBUSL source via
@@ -160,6 +216,8 @@ class GL44Shader(Shader):
         self.setup_uniforms()
 
         self.uniform_cache: dict[str, any] = {}
+        # Signatures already validated per uniform - see set_uniform().
+        self._validated: dict[str, any] = {}
 
         for name in self.uniforms:
             self.uniform_cache[name] = None
@@ -181,6 +239,7 @@ class GL44Shader(Shader):
         self.uniforms = {}
         self.setup_uniforms()
         self.uniform_cache = {name: None for name in self.uniforms}
+        self._validated = {}
 
     def setup_uniforms(self):
         """Populates `self.uniforms` from the program's active uniforms
@@ -218,6 +277,18 @@ class GL44Shader(Shader):
             name for name, uniform in self.uniforms.items()
             if uniform.type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY)
         ]
+
+        # Each sampler's companion uv_rect uniform, resolved to a location
+        # once. _bind_textures() runs on every use() - every draw call, and
+        # for text every glyph of every string - and was building the name
+        # `_ENGINE_<sampler>_uv_rect` with an f-string and looking it up twice
+        # on each of those. The name cannot change after linking, so neither
+        # can the answer.
+        self._uv_rect_locations = {}
+        for name in self._sampler_uniforms:
+            companion = self.uniforms.get(f"_ENGINE_{name}_uv_rect")
+            self._uv_rect_locations[name] = (
+                companion.location if companion is not None else None)
 
     def check_val_type(self, val: any, gl_type: int, name: str) -> bool:
         """Validates that `val` is an acceptable Python value for a uniform
@@ -340,8 +411,23 @@ class GL44Shader(Shader):
                 if np.array_equal(val, cached_val):
                     return
 
-        if not self.check_val_type(val, uniform.type, name):
-            return
+        # Validation is memoised on the *shape* of the value, not the value.
+        # The cache above only skips uniforms whose value is unchanged, so
+        # everything that genuinely moves - every object's `model` matrix,
+        # every glyph's rect - still landed here and re-ran the full
+        # type-and-length walk every frame. A profile of a floor showed 47,887
+        # of these across 60 frames, 0.85 seconds, all of it re-deciding that
+        # a 4x4 float array is still a 4x4 float array.
+        #
+        # What check_val_type actually inspects is the type and the element
+        # count, so a value matching the last signature that passed cannot
+        # fail now. A tuple that changes length, or a value that changes type,
+        # has a different signature and is validated again.
+        signature = _value_signature(val)
+        if self._validated.get(name) != signature:
+            if not self.check_val_type(val, uniform.type, name):
+                return
+            self._validated[name] = signature
 
         self.uniform_cache[name] = val
 
@@ -397,17 +483,10 @@ class GL44Shader(Shader):
 
                     glUniform1i(uniform.location, slot)
 
-                    rect = texture.uv_rect
-                    uv_rect = f"_ENGINE_{name}_uv_rect"
-
-                    if uv_rect in self.uniforms:
-                        glUniform4f(
-                            self.uniforms[uv_rect].location,
-                            rect[0],
-                            rect[1],
-                            rect[2],
-                            rect[3]
-                        )
+                    rect_location = self._uv_rect_locations.get(name)
+                    if rect_location is not None:
+                        rect = texture.uv_rect
+                        glUniform4f(rect_location, rect[0], rect[1], rect[2], rect[3])
 
                 else:
                     textures = self.uniform_cache[name]

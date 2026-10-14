@@ -1,0 +1,34 @@
+# The surface pass: what a sprite or tile looks like, before any light.
+#
+# Three channels, against PBRPipeline's seven. There is no roughness, metallic
+# or world-position channel because flat art has no use for the first two and
+# the light pass interpolates the third (see lite/light.fbfrag).
+#
+# ALBEDO, NORMAL and EMMISIVE are material properties, not uniforms declared
+# here - MaterialInjector rewrites each into that property's texture-or-colour
+# branch (see graphics/material.py).
+
+@output
+colour: vec4
+normal: vec4
+emmisive: vec4
+
+@input
+uv: vec2
+worldPos: vec4
+worldNormal: vec4
+
+def main() -> void:
+    base: vec4 = ALBEDO
+    colour = base
+
+    # Every channel carries the albedo's alpha so a transparent pixel leaves
+    # the channels under it untouched, rather than stamping its own normal
+    # over whatever it is drawn on top of.
+    a: float = base.w
+
+    mapped: vec4 = NORMAL
+    normal = vec4(mapped.x, mapped.y, mapped.z, a)
+
+    glow: vec4 = EMMISIVE
+    emmisive = vec4(glow.x, glow.y, glow.z, a)

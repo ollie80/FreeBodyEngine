@@ -15,7 +15,7 @@ class Sprite:
     """A drawable unit combining a texture, material, and generated quad
     mesh, independent of the node tree - Sprite2D/Sprite3D each wrap one to
     give it a scene position via a Transform."""
-    def __init__(self, texture: 'Texture', material: 'Material', renderer: 'Renderer', visisble: bool = True, z: float = 0, normal: 'Texture' = None):
+    def __init__(self, texture: 'Texture', material: 'Material', renderer: 'Renderer', visible: bool = True, z: float = 0, normal: 'Texture' = None):
         """Stores `texture`/`material`/`renderer`, assigns `texture` onto
         the material's `albedo` property, and generates the flat quad mesh
         this sprite is drawn with. `z` is a world-space depth nudge applied
@@ -50,8 +50,36 @@ class Sprite:
         if normal is not None:
             self.material.properties['normal'] = normal
         self.quad = generate_quad()
-        self.visisble = visisble
-    
+        self.visible = visible
+
+    def instance(self) -> 'Sprite':
+        """Returns a per-object copy of this Sprite: its own `visible`, `z`
+        and material, sharing the same texture.
+
+        Exactly the problem `Material.instance()` solves, one level up. An
+        `.fbspr` is cached per path while hot reload is on (see
+        core/files/loaders/sprite.py), so every node loaded from one sprite
+        file was handed the *same* Sprite - and `visible` lives on the Sprite,
+        with Sprite2D.visible being a straight proxy to it. Two nodes from one
+        file could not then be shown and hidden independently: hiding one hid
+        every one of them, and showing one showed them all.
+
+        That is a trap rather than a quirk, because of how it presents. The
+        obvious way to build a set of identical things - a row of candles, all
+        loading `flame.fbspr` - gives each its own light, its own position and
+        its own everything *except* the one piece of state the game actually
+        toggles. Lighting a single candle lit every flame in the level while
+        only one of them emitted any light.
+
+        Worse, it only happened in dev: the cache is gated on DEVMODE, so a
+        release build constructed a fresh Sprite per load and behaved
+        correctly. Returning an instance here makes the two agree, and makes
+        the dev path the one that is correct rather than the one that is fast.
+        """
+        return Sprite(self.texture, self.material, self.renderer,
+                      self.visible, self.z, self.normal)
+
+
 
 class Sprite2D(Node2D):
     """Positions a Sprite in 2D space by wrapping it in a Node2D, so it can
@@ -73,6 +101,18 @@ class Sprite2D(Node2D):
         self._sprite = sprite
         if z is not None:
             self._sprite.z = z
+
+    @property
+    def visible(self) -> bool:
+        """Whether this sprite is drawn at all. The pipeline skips it entirely
+        when False, so hiding something costs nothing and - unlike scaling it
+        to zero - does not leave a transform whose rotation cannot be
+        recovered."""
+        return self._sprite.visible
+
+    @visible.setter
+    def visible(self, value: bool):
+        self._sprite.visible = value
 
     def on_draw(self):
         """Draws the wrapped sprite. Mirrors the `Node.on_draw` hook

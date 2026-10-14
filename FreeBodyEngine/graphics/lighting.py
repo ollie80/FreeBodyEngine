@@ -1,27 +1,28 @@
-"""Light node types for PBRPipeline's deferred lighting composite pass (see
-graphics/pbr/pipeline.py). These are PBRPipeline-specific, not a core engine
-concept - a different GraphicsPipeline is free to have no lighting model at
-all, or a completely different one, so this deliberately lives under
-graphics/pbr rather than core.
+"""Light nodes, shared by every pipeline.
+
+A light is data on a node - a position, a colour, an intensity, a range - and
+what to do with it is each pipeline's own business: PBRPipeline evaluates it
+through a physically based BRDF, LitePipeline draws it as an additive volume.
+So these live here rather than inside either one, and neither has to import
+from the other to see a light somebody placed.
 
 A `Light` is always paired with a `Node2D` or `Node3D` base, the same mixin
 pattern `core/camera.py`'s `Camera` uses -
 `PointLight2D`/`DirectionalLight2D`/`SpotLight2D` for 2D scenes,
-`PointLight3D`/`DirectionalLight3D`/`SpotLight3D` for 3D ones. Both flavors
-feed the same per-pixel lighting math in the composite shader (see
-engine_assets/shader/lighting_composite.fbfrag) - a 2D light is just a 3D
+`PointLight3D`/`DirectionalLight3D`/`SpotLight3D` for 3D ones. A 2D light is a 3D
 light whose node happens to live in a `Node2D` tree, placed at a nominal
-world-space Z height so falloff/direction math isn't degenerate at z=0.
+world-space Z height so falloff/direction math isn't degenerate at z=0 - which
+is what lets one pipeline light a 2D scene with the same math it uses for a 3D
+one, and another treat the 2D case completely differently.
 
-Shadows: `cast_shadows` is honored today only for `DirectionalLight3D` (a
-real orthographic shadow map - see PBRPipeline._render_shadow_maps()). It's
-accepted on every other light type but is currently a no-op there - 2D
-shadow casting needs its own visibility/radial-map technique rather than a
-repurposed 3D depth map (sprites are coplanar with the camera's view plane,
-so there's no "above" for a light to look down from the way a 3D directional
-light can); that's tracked as separate follow-up work, not implemented here.
-Point/spot shadow maps (3D) are also left for follow-up - they need a
-cubemap or paraboloid map rather than DirectionalLight3D's single ortho map.
+Shadows are the pipeline's business too, and the two do it differently.
+`cast_shadows` drives a real orthographic shadow map for `DirectionalLight3D`
+(see PBRPipeline._render_shadow_maps()); 2D shadowing instead marches an
+occluder mask built from the tilemap's own solid tiles, which needs no flag on
+the light at all (see either pipeline's set_occluders - PBRPipeline marches it
+fullscreen, LitePipeline inside each light's own quad). Point and spot shadow maps in
+3D are still follow-up work - they need a cubemap or paraboloid map rather than
+DirectionalLight3D's single ortho map.
 """
 import math
 from enum import Enum, auto

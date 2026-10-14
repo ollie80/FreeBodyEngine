@@ -5,7 +5,7 @@ from FreeBodyEngine.core.tilemap.chunk import Chunk
 from FreeBodyEngine.core.tilemap.tile import Tile
 from FreeBodyEngine.core.tilemap.collision import merge_solid_rects, rect_to_collider, TilemapCollider2D
 from FreeBodyEngine.core.node import Node2D
-from FreeBodyEngine import warning, error
+from FreeBodyEngine import warning, error, get_service
 from FreeBodyEngine.utils import fbnjit
 from FreeBodyEngine.math import Vector
 
@@ -72,6 +72,14 @@ class Tilemap(Node2D):
         # one at a time and would otherwise re-merge the whole map for each.
         self._collision_dirty = False
         self._collision_colliders: list = []
+
+        # Shadow casting, off until cast_shadows() turns it on. The mask is
+        # built from the same solid tiles the colliders are, so it is
+        # invalidated by the same edits.
+        self._cast_shadows = False
+        self._shadow_mask_dirty = False
+        self._shadow_mask = None
+        self._shadow_mask_size = None
         # A chunk stores a tile's spritesheet as a one-byte index, not a
         # name, so a name <-> index registry is what makes the two halves of
         # the API meet. There was none: add_spritesheet keyed spritesheets by
@@ -379,11 +387,85 @@ class Tilemap(Node2D):
 
         self._collision_dirty = False
 
+    def cast_shadows(self, enabled: bool = True, softness: float = None):
+        """Makes this tilemap's solid tiles block light.
+
+        The same tiles that stop the player stop the light - there is no
+        separate occluder to author and no way for the two to disagree. The
+        lighting pass takes them as a world-space mask and marches it (see
+        set_occluders on PBRPipeline or LitePipeline - this does not care
+        which is registered, only that it has the method), so this only has to
+        be rebuilt when the level changes, not when a light moves.
+        """
+        self._cast_shadows = enabled
+        pipeline = get_service('graphics')
+        if softness is not None and pipeline is not None:
+            # Convenience only - softness belongs to the lights, not to what
+            # blocks them, and lives on the pipeline (see set_occluders).
+            pipeline.shadow_softness = softness
+        if enabled:
+            self._shadow_mask_dirty = True
+        else:
+            if pipeline is not None and hasattr(pipeline, 'set_occluders'):
+                pipeline.set_occluders(None, (0, 0), (1, 1))
+
+    def _rebuild_shadow_mask(self):
+        """Uploads the solid tiles as the lighting pass's occluder mask.
+
+        One texel per tile: the occluders in a tile game already are a grid,
+        so the mask is the grid and a texture lookup is the intersection test.
+        """
+        pipeline = get_service('graphics')
+        if pipeline is None or not hasattr(pipeline, 'set_occluders'):
+            return
+        self._shadow_mask_dirty = False
+
+        solid = self.solid_tiles()
+        if not solid:
+            pipeline.set_occluders(None, (0, 0), (1, 1))
+            return
+
+        xs = [x for x, _ in solid]
+        ys = [y for _, y in solid]
+        # A tile of padding all round, so a wall on the very edge still has an
+        # empty texel beyond it to sample - clamped edges would otherwise
+        # smear the border tile outward forever.
+        x0, x1 = min(xs) - 1, max(xs) + 1
+        y0, y1 = min(ys) - 1, max(ys) + 1
+        width, height = x1 - x0 + 1, y1 - y0 + 1
+
+        manager = get_service('renderer').texture_manager
+        if self._shadow_mask_size != (width, height):
+            if self._shadow_mask is not None:
+                manager.delete_stream_texture(self._shadow_mask.id)
+            self._shadow_mask = manager.create_stream_texture(width, height, 3)
+            self._shadow_mask_size = (width, height)
+
+        # Rows bottom-up, which is GL's own order: row 0 is the lowest world
+        # y, and world y runs opposite to tile rows.
+        pixels = np.zeros((height, width, 3), dtype=np.uint8)
+        for x, y in solid:
+            pixels[y1 - y, x - x0] = 255
+        manager.update_stream_texture(self._shadow_mask.id, pixels.tobytes())
+
+        size = self.tile_size
+        pipeline.set_occluders(
+            self._shadow_mask,
+            (x0 * size, -(y1 + 1) * size),
+            (width * size, height * size))
+
     def on_update(self):
         """Rebuilds collision geometry if a `collision` layer changed since
         the last frame."""
         if self._collision_dirty:
             self.build_collision()
+            # The shadow mask is built from the same tiles, so whatever
+            # invalidated one invalidated the other.
+            if self._cast_shadows:
+                self._shadow_mask_dirty = True
+
+        if self._cast_shadows and self._shadow_mask_dirty:
+            self._rebuild_shadow_mask()
 
     def tilemap_pos(self, position: Vector) -> Vector:
         '''Converts a world position into a position in the tilemap.'''

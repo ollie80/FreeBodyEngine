@@ -325,6 +325,18 @@ class Transform:
         if sx == 0 or sy == 0:
             raise ValueError("Cannot extract rotation from zero scale")
 
+        # hypot is never negative, so a mirrored transform - a negative scale
+        # on one axis, which is how you flip a sprite - used to come back out
+        # of here unmirrored. Setting one worked right up until the transform
+        # was composed with its parent's, which is to say it worked everywhere
+        # except on screen. The determinant is what carries the reflection:
+        # for this matrix it is exactly sx*sy, so it is negative precisely
+        # when one scale is. Which axis to hand the sign to is a free choice,
+        # since a flip in x is a flip in y plus a half turn; y is the one the
+        # sign is put back on.
+        if mat[0, 0] * mat[1, 1] - mat[0, 1] * mat[1, 0] < 0:
+            sy = -sy
+
         # Extract rotation (in radians)
         rot_rad = math.atan2(mat[1, 0] / sx, mat[0, 0] / sx)
         rotation = math.degrees(rot_rad)
@@ -408,6 +420,83 @@ class Transform3:
         # translation`.
         return scale @ rotation @ translation
 
+    def to_matrix(self) -> numpy.ndarray:
+        """This transform's 4x4 matrix - the same matrix as `model`, under
+        the name `Transform`'s 2D equivalent uses, so code that composes
+        transforms can read either dimension the same way."""
+        return self.model
+
+    def compose_with(self, parent_transform: 'Transform3') -> 'Transform3':
+        """Combines this (local) transform with `parent_transform` to get
+        the equivalent world transform - what `Node3D.world_transform`
+        calls to account for a rotated or scaled parent.
+
+        `model` is a row-vector matrix (v' = v @ M, translation in the last
+        row), so the local factor goes on the *left*: a child-local point
+        runs through the child's matrix first and the parent's second.
+        That is the opposite order from `Transform.compose_with`, whose 2D
+        `to_matrix` is column-vector.
+        """
+        return Transform3.from_matrix(self.model @ parent_transform.model)
+
+    @classmethod
+    def from_matrix(cls, mat: numpy.ndarray) -> 'Transform3':
+        """Decomposes a 4x4 row-vector TRS matrix (as produced by `model`)
+        back into a `Transform3`'s position/rotation/scale.
+
+        The linear part is `diag(scale) @ rotation`, so each of its rows is
+        one scaled basis vector and `scale` is just those rows' lengths.
+        Euler angles then come out of the normalized remainder in the same
+        Z-then-Y-then-X convention `model` builds it with.
+
+        A composed matrix that isn't a similarity transform (a non-uniform
+        scale underneath a rotation shears, and shear can't be represented
+        as position/rotation/scale at all) comes back as the nearest
+        transform that is, rather than raising - the same lossy-but-usable
+        decomposition `Transform.from_matrix` does in 2D.
+
+        Raises:
+            ValueError: If any axis' extracted scale is zero, since
+                rotation can't be recovered from it then.
+        """
+        assert mat.shape == (4, 4), "Matrix must be 4x4 for 3D transforms"
+
+        position = Vector3(float(mat[3, 0]), float(mat[3, 1]), float(mat[3, 2]))
+
+        linear = numpy.array(mat[:3, :3], dtype=float)
+        sx = float(numpy.linalg.norm(linear[0]))
+        sy = float(numpy.linalg.norm(linear[1]))
+        sz = float(numpy.linalg.norm(linear[2]))
+
+        if sx == 0 or sy == 0 or sz == 0:
+            raise ValueError("Cannot extract rotation from zero scale")
+
+        # A reflection (an odd number of negative scales) leaves the
+        # rotation part with a negative determinant, which no Euler triple
+        # can express. Hand the sign to X, as 2D does - see
+        # Transform.from_matrix on why the choice of axis is free.
+        if numpy.linalg.det(linear) < 0:
+            sx = -sx
+
+        rot = linear / numpy.array([[sx], [sy], [sz]])
+
+        # rot is (rot_z @ rot_y @ rot_x)[:3, :3] from `model`, so:
+        #   rot[2, 0] == -sin(ry)
+        # and the X/Z angles fall out of the surrounding entries - except
+        # when cos(ry) is 0, where X and Z rotate about the same axis and
+        # only their sum is recoverable (gimbal lock); there, Z is pinned
+        # to 0 and all of it is given to X.
+        sin_ry = -float(numpy.clip(rot[2, 0], -1.0, 1.0))
+        ry = math.asin(sin_ry)
+        if abs(rot[2, 0]) < 0.9999999:
+            rx = math.atan2(rot[2, 1], rot[2, 2])
+            rz = math.atan2(rot[1, 0], rot[0, 0])
+        else:
+            rx = math.atan2(-rot[1, 2], rot[1, 1])
+            rz = 0.0
+
+        rotation = Vector3(math.degrees(rx), math.degrees(ry), math.degrees(rz))
+        return cls(position, rotation, Vector3(sx, sy, sz))
 
     def __eq__(self, other):
         return (isinstance(other, Transform3) and

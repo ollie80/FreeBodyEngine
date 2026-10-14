@@ -1,0 +1,26 @@
+# Fullscreen pass for the combine stage.
+
+@input
+vertex: vec3
+uvs: vec2
+normal: vec3
+
+@output
+uv: vec2
+
+def main():
+    # Derived from the clip-space position, not taken from the quad's own
+    # `uvs` attribute. generate_quad()'s UVs are authored for the engine's
+    # *standalone* textures, which are uploaded rotated 180 degrees - so u
+    # runs 1 -> 0 across the quad to compensate. A framebuffer attachment is
+    # not rotated: it was rendered in normal screen orientation. Sampling one
+    # through that attribute flips the whole composited frame, while the raw
+    # attachments - blitted straight to the window, never resampled - stay
+    # correct, which is what makes it look like a per-sprite problem rather
+    # than one in this pass. PBRPipeline's composite derives its UV for the
+    # same reason.
+    #
+    # The quad is already in NDC, so this is the plain NDC -> [0,1] remap, and
+    # v runs with +y to match GL's bottom-origin framebuffer textures.
+    uv = vec2(vertex.x * 0.5 + 0.5, vertex.y * 0.5 + 0.5)
+    VERTEX_POSITION = vec4(vertex.x, vertex.y, 0.0, 1.0)

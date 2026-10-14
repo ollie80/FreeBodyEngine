@@ -240,16 +240,53 @@ class Node2D(Node):
 
         self.transform = Transform(position, rotation, scale)
 
+        # Last composed world transform, and the inputs it was built from -
+        # see world_transform.
+        self._world_key = None
+        self._world_value = None
+
     @property
     def world_transform(self):
         """This node's transform composed with its ancestors', giving its
         transform in world space rather than parent-local space. Falls
         back to the local transform unchanged if the parent isn't a
-        `Node2D` (e.g. it's the scene's `RootNode`)."""
-        if self.parent.inherits_from('Node2D'):
-            return self.transform.compose_with(self.parent.world_transform)
-        else:
+        `Node2D` (e.g. it's the scene's `RootNode`).
+
+        Memoised on the values it is composed from. Composition is not cheap -
+        two `to_matrix` calls (trigonometry plus a numpy allocation each), a
+        matrix multiply, and a `from_matrix` decomposition (square roots and
+        an atan2) - and this is read several times per node per frame, by the
+        renderer, the physics step and anything asking where something is. A
+        profile of a floor showed 365,920 compositions across 60 frames,
+        2.66 seconds of cumulative time: the single largest cost in the frame.
+
+        Keyed on the inputs rather than invalidated by a dirty flag. A flag
+        would have to be set by every mutation of a transform, and a transform
+        is mutable all the way down - `node.transform.position.x += 1` reaches
+        past the Transform into a Vector's own attribute, so nothing short of
+        wrapping both types could catch every write. Comparing the ten floats
+        that actually determine the result cannot miss a change, however it was
+        made, and is still a fraction of the cost of recomputing.
+        """
+        parent = self.parent
+        if parent is None or not parent.inherits_from('Node2D'):
             return self.transform
+
+        parent_world = parent.world_transform
+        local = self.transform
+        key = (local.position.x, local.position.y, local.rotation,
+               local.scale.x, local.scale.y,
+               parent_world.position.x, parent_world.position.y,
+               parent_world.rotation,
+               parent_world.scale.x, parent_world.scale.y)
+
+        if key == self._world_key:
+            return self._world_value
+
+        value = local.compose_with(parent_world)
+        self._world_key = key
+        self._world_value = value
+        return value
 
     @property
     def world_position(self) -> Vector:
