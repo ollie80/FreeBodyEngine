@@ -34,5 +34,14 @@ class Model3D(Node3D):
     def __init__(self, model: Model, position: Vector3 = Vector3(), rotation: Vector3 = Vector3(), scale: Vector3 = Vector3(1, 1, 1)):
         """Wraps `model` at the given transform."""
         super().__init__(position, rotation, scale)
+        # Whether the shadow pass draws this model. Off for things the
+        # light should pass through - particles, glass - which would
+        # otherwise stamp their quads' outlines into the shadow map.
+        self.cast_shadows = True
+        # The shader the shadow pass draws this model with, if not the
+        # engine's plain depth shader - for meshes a geometry shader expands,
+        # which need the same vertex/geometry stages to shadow correctly.
+        # Gets `view`, `proj` and `model` set like the plain one.
+        self.shadow_shader = None
 
         self._model = model

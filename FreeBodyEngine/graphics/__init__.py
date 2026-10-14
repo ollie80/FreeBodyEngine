@@ -27,11 +27,44 @@ import sys
 if get_platform() != "web":
     from FreeBodyEngine.graphics import gl33
 
-def get_renderer() -> type[renderer.Renderer]:
-    """Get the correct renderer for the platform.
+_vulkan_probe = ...  # use_vulkan()'s cached probe() result - Ellipsis until it's run
 
-    `fb.set_flag(fb.FORCE_RENDERER, "gl33")` (or `"gl44"`) overrides
-    auto-detection entirely - the main reason to: comparing backends
+
+def use_vulkan() -> bool:
+    """Whether this session renders with Vulkan: `FORCE_RENDERER` decides if
+    it's set ("vulkan" yes, anything else no); otherwise yes on Windows and
+    Linux whenever there's a Vulkan 1.3 GPU and driver, unless a flag asks
+    for one of the GL-only windows (headless, test, terminal, native win32).
+    Every GL backend stays as the fallback.
+
+    Decided before the window exists - the window depends on it (a Vulkan
+    window gets no GL context) - so it probes for a device without one.
+    The probe runs once per process."""
+    global _vulkan_probe
+    from FreeBodyEngine import get_flag, FORCE_RENDERER, HEADLESS, TEST_WINDOW, TERMINAL_WINDOW
+
+    forced = get_flag(FORCE_RENDERER, None)
+    if forced is not None:
+        return forced == "vulkan"
+    if get_platform() not in ("win32", "linux"):
+        return False  # macOS would need MoltenVK; web and Android have their own backends
+    if any(get_flag(flag, False) for flag in (HEADLESS, TEST_WINDOW, TERMINAL_WINDOW, "WIN32_WINDOW")):
+        return False
+    if _vulkan_probe is ...:
+        try:
+            from FreeBodyEngine.graphics.vulkan.context import probe
+            _vulkan_probe = probe()
+        except Exception:  # the `vulkan` package or the loader isn't installed
+            _vulkan_probe = None
+    return _vulkan_probe is not None
+
+
+def get_renderer() -> type[renderer.Renderer]:
+    """Get the correct renderer for the platform - VulkanRenderer whenever
+    use_vulkan() says so, otherwise the best GL backend the platform has.
+
+    `fb.set_flag(fb.FORCE_RENDERER, "gl33")` (or `"gl44"`, `"vulkan"`)
+    overrides auto-detection entirely - the main reason to: comparing backends
     against each other (e.g. ComputeStressTest) needs the ability to pick
     GL33 deliberately even on hardware that's perfectly capable of GL44,
     which auto-detection alone could never do (it would always prefer the
@@ -45,6 +78,9 @@ def get_renderer() -> type[renderer.Renderer]:
     if forced == "gl44":
         from FreeBodyEngine.graphics.gl44.renderer import GL44Renderer
         return GL44Renderer
+    if use_vulkan():
+        from FreeBodyEngine.graphics.vulkan.renderer import VulkanRenderer
+        return VulkanRenderer
 
     platform = get_platform()
 
@@ -120,6 +156,8 @@ def ensure_gpu_context():
         # (unusual - normally get_renderer() already ran as part of
         # registering the window) - nothing to create, just pick a backend
         # for its existing context below.
+    elif _is_vulkan():
+        pass  # VulkanRenderer makes its own headless device when there's no window
     else:
         # No window service at all, by design - see the docstring. Always
         # GLFW here regardless of platform/FORCE_X11/etc, which exist to
@@ -131,6 +169,10 @@ def ensure_gpu_context():
         create_raw_offscreen_context()
 
     register_service(get_renderer()())
+
+
+def _is_vulkan() -> bool:
+    return use_vulkan()
 
 
 def _is_gl44() -> bool:
@@ -152,6 +194,9 @@ def create_compute_shader(source, injector=None, **kwargs):
     if get_platform() == "web":
         from FreeBodyEngine.graphics.webgl.compute import WebGL2ComputeShader
         return WebGL2ComputeShader(source, injector, **kwargs)
+    if _is_vulkan():
+        from FreeBodyEngine.graphics.vulkan.compute import VulkanComputeShader
+        return VulkanComputeShader(source, injector, **kwargs)
     if _is_gl44():
         from FreeBodyEngine.graphics.gl44.compute import GL44ComputeShader
         return GL44ComputeShader(source, injector, **kwargs)
@@ -162,15 +207,23 @@ def create_compute_shader(source, injector=None, **kwargs):
 def create_raytrace_shader(source, injector=None):
     """Creates a raytrace ('@raytrace') kernel using whichever backend this
     session is (or will be) running under. Unlike create_compute_shader(),
-    there's no GL44 branch yet - raytracing here is always the same
+    there's no GL44 branch yet - on OpenGL, raytracing is always the same
     software-BVH-over-a-fullscreen-pass emulation (see graphics/gl33/
     compute.py's GLRaytraceShader / graphics/webgl/compute.py's
-    WebGL2RaytraceShader), just against a samplerBuffer-backed scene on
-    desktop or a 2D-data-texture-backed one on web."""
+    WebGL2RaytraceShader), against a samplerBuffer-backed scene on desktop
+    or a 2D-data-texture-backed one on web. Under FORCE_RENDERER="vulkan"
+    it's hardware ray tracing instead (graphics/vulkan/compute.py's
+    VulkanRaytraceShader), with the same upload_scene() interface."""
     ensure_gpu_context()
     if get_platform() == "web":
         from FreeBodyEngine.graphics.webgl.compute import WebGL2RaytraceShader
         return WebGL2RaytraceShader(source, injector)
+    if _is_vulkan():
+        # Real hardware ray tracing - trace_ray()/trace_shadow() become ray
+        # queries against an acceleration structure built from the scene's
+        # triangles. See graphics/vulkan/compute.py.
+        from FreeBodyEngine.graphics.vulkan.compute import VulkanRaytraceShader
+        return VulkanRaytraceShader(source, injector)
     from FreeBodyEngine.graphics.gl33.compute import GLRaytraceShader
     return GLRaytraceShader(source, injector)
 
@@ -186,6 +239,9 @@ def create_compute_buffer(data):
     if get_platform() == "web":
         from FreeBodyEngine.graphics.webgl.buffer import WebGL2TextureBuffer
         return WebGL2TextureBuffer(data)
+    if _is_vulkan():
+        from FreeBodyEngine.graphics.vulkan.compute import VulkanComputeBuffer
+        return VulkanComputeBuffer(data)
     if _is_gl44():
         from FreeBodyEngine.graphics.gl44.buffer import SSBOBuffer
         return SSBOBuffer(data)

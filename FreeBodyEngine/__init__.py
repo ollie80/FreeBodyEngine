@@ -38,7 +38,8 @@ PROJECT_PATH = "PROJECT_PATH"
 PROFILER = "PROFILER"
 NAME = "NAME"
 FULLSCREEN = "FULLSCREEN"  # fb.set_flag(fb.FULLSCREEN, False) before init() to keep Android's status/navigation bars on screen - see core.window.android.AndroidWindow. Defaults True (a game's expectation); an app wants False. Set for you from [android] fullscreen in fbproject.toml - see build/builder.py.
-FORCE_RENDERER = "FORCE_RENDERER"  # e.g. fb.set_flag(fb.FORCE_RENDERER, "gl33") to override graphics.get_renderer()'s auto-detection
+FORCE_RENDERER = "FORCE_RENDERER"  # e.g. fb.set_flag(fb.FORCE_RENDERER, "gl33") to override graphics.get_renderer()'s auto-detection; "vulkan" forces Vulkan (otherwise chosen automatically when a Vulkan 1.3 GPU is present - see graphics.use_vulkan())
+FORCE_GEOMETRY_MODE = "FORCE_GEOMETRY_MODE"  # "native", "pull" or "compute": pins how a geometry shader runs where the backend could choose (Vulkan picks native when the GPU has geometry shaders, else an emulation - see fbusl/geometry.py)
 
 MAX_FPS = "MAX_FPS"
 MAX_TPS = "MAX_TPS"

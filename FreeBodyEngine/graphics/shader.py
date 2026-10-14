@@ -22,15 +22,23 @@ class Shader:
         if injector == None:
             injector = Injector()
 
-        # Through the on-disk cache (see graphics/shader_cache.py), which
-        # falls back to compiling normally whenever it cannot be sure the
-        # stored result belongs to these exact inputs.
-        self.fbusl_vertex_source = compile_cached(vertex_source, ShaderType.VERTEX, generator, injector)
-        self.fbusl_fragment_source = compile_cached(fragment_source, ShaderType.FRAGMENT, generator, injector)
-
+        # A geometry stage the generator can't express becomes part of the
+        # vertex shader instead - see graphics/geometry_emulation.py. The
+        # rest goes through the on-disk cache (see graphics/shader_cache.py),
+        # which falls back to compiling normally whenever it cannot be sure
+        # the stored result belongs to these exact inputs.
+        self.emulation = None
         self.fbusl_geometry_source = None
         if geometry_source is not None:
-            self.fbusl_geometry_source = compile_cached(geometry_source, ShaderType.GEOMETRY, generator, injector)
+            from FreeBodyEngine.graphics import geometry_emulation
+            if geometry_emulation.needs_emulation(generator):
+                self.fbusl_vertex_source, self.emulation = geometry_emulation.compile_pulled_vertex(
+                    vertex_source, geometry_source, generator, injector)
+            else:
+                self.fbusl_geometry_source = compile_cached(geometry_source, ShaderType.GEOMETRY, generator, injector)
+        if self.emulation is None:
+            self.fbusl_vertex_source = compile_cached(vertex_source, ShaderType.VERTEX, generator, injector)
+        self.fbusl_fragment_source = compile_cached(fragment_source, ShaderType.FRAGMENT, generator, injector)
 
         self.fragment_source = fragment_source
         self.vertex_source = vertex_source
@@ -75,4 +83,4 @@ class Shader:
         return self.get_uniform(name)
 
     def __setitem__(self, name, value):
-        self.set_uniform(name, value)
+        self.set_uniform(name, value)

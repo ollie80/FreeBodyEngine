@@ -1,6 +1,7 @@
 from OpenGL.GL import *
 from FreeBodyEngine.graphics.mesh import Mesh, BufferUsage, IndexType, AttributeType, PrimitiveType
 import numpy as np
+from FreeBodyEngine import get_service
 
 
 class GLMesh(Mesh):
@@ -24,7 +25,10 @@ class GLMesh(Mesh):
         self._render_mode = {
             PrimitiveType.TRIANGLES: GL_TRIANGLES,
             PrimitiveType.TRIANGLE_STRIP: GL_TRIANGLE_STRIP,
-            PrimitiveType.TRIANGLE_FAN: GL_TRIANGLE_FAN
+            PrimitiveType.TRIANGLE_FAN: GL_TRIANGLE_FAN,
+            PrimitiveType.POINTS: GL_POINTS,
+            PrimitiveType.LINES: GL_LINES,
+            PrimitiveType.LINE_STRIP: GL_LINE_STRIP,
         }.get(self.primitive, GL_TRIANGLES)
 
 
@@ -85,7 +89,12 @@ class GLMesh(Mesh):
                 raise ValueError(f"Unsupported AttributeType: {attr_type}")
 
             glEnableVertexAttribArray(location)
-            glVertexAttribPointer(location, size, gl_type, GL_FALSE, 0, None)
+            if gl_type == GL_INT:
+                # Integer attributes stay integers - the plain pointer would hand
+                # an `int` vertex input float-converted values (WebGL2Mesh does the same).
+                glVertexAttribIPointer(location, size, gl_type, 0, None)
+            else:
+                glVertexAttribPointer(location, size, gl_type, GL_FALSE, 0, None)
             location += 1
 
         if self.indices is not None:
@@ -101,6 +110,12 @@ class GLMesh(Mesh):
         glBindVertexArray(0)
 
     def draw(self):
+        shader = getattr(get_service('renderer'), 'current_shader', None)
+        if shader is not None and shader.draws_emulated_geometry():
+            return shader.draw_emulated(self)  # see graphics/geometry_emulation.py
+        self._draw()
+
+    def _draw(self):
         """Issues the draw call: `glDrawElements` against the EBO if this
         mesh has indices, else `glDrawArrays` over a vertex count derived
         from the first attribute's raw array length divided by 3 (i.e. this

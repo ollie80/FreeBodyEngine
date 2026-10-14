@@ -76,12 +76,9 @@ class WebGL2Shader(Shader):
     def __init__(self, vertex_source, fragment_source, injector, geometry_source=None):
         """Compiles `vertex_source`/`fragment_source` into a linked WebGL2
         program (via WebGL2Generator) and introspects its active uniforms
-        into `self.uniforms`. `geometry_source` is accepted only for
-        interface parity with GLShader/the abstract Shader signature -
-        WebGL2 has no geometry shader stage at all, so a non-None value
-        here would already have failed inside WebGL2Generator's
-        (deliberately empty) CAPABILITIES before ever reaching this
-        constructor."""
+        into `self.uniforms`. WebGL2 has no geometry shader stage, so a
+        `geometry_source` is compiled into the vertex shader instead (see
+        graphics/geometry_emulation.py) and drawn by draw_emulated()."""
         super().__init__(vertex_source, fragment_source, WebGL2Generator, injector, geometry_source)
         self.gl = get_service('renderer').gl
         self._program = create_shader_program(self.gl, self.fbusl_vertex_source, self.fbusl_fragment_source)
@@ -248,6 +245,60 @@ class WebGL2Shader(Shader):
             if uv_rect_name in self.uniforms:
                 gl.uniform4f(self.uniforms[uv_rect_name].location, rect[0], rect[1], rect[2], rect[3])
 
+    def draws_emulated_geometry(self) -> bool:
+        """Whether a mesh drawn now goes through this shader's emulated
+        geometry stage: it has one, and its program is the current one."""
+        if self.emulation is None:
+            return False
+        return self.gl.getParameter(self.gl.CURRENT_PROGRAM) == self._program
+
+    def draw_emulated(self, mesh):
+        """Draws `mesh` through the vertex shader a geometry stage was
+        compiled into (graphics/geometry_emulation.py) - WebGL2 has no
+        geometry stage. The mesh's data goes up as WebGL2TextureBuffers,
+        cached on the mesh until it changes, and `primitives * slots`
+        vertices are drawn with no vertex buffers."""
+        from FreeBodyEngine.graphics import geometry_emulation as ge
+        from FreeBodyEngine.graphics.webgl.buffer import WebGL2TextureBuffer
+        gl = self.gl
+        em = self.emulation
+        cache = mesh.__dict__.setdefault("_gs_data_textures", {})
+        key = tuple(name for name, *_ in em.attributes)
+        version = ge.mesh_version(mesh)
+        entry = cache.get(key)
+        if entry is None or entry[0] != version:
+            prims, mode, arrays = ge.mesh_arrays(mesh, em)
+            if arrays is None:
+                return
+            if entry is not None:
+                for buffer in entry[3].values():
+                    buffer.destroy()
+            entry = cache[key] = (version, prims, mode,
+                                  {block: WebGL2TextureBuffer(data) for block, data in arrays.items()})
+        _, prims, mode, buffers = entry
+        if prims <= 0:
+            return
+
+        for name, value in (("_gs_prim_count", prims), ("_gs_index_mode", mode)):
+            if name in self.uniforms:
+                gl.uniform1i(self.uniforms[name].location, value)
+        # Texture units from the top down, clear of the texture manager's.
+        unit = gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS) - 1
+        for block, buffer in buffers.items():
+            uniform = self.uniforms.get(ge.sampler_name(block))
+            if uniform is None:
+                continue  # optimized out
+            buffer.bind(unit)
+            gl.uniform1i(uniform.location, unit)
+            unit -= 1
+        gl.activeTexture(gl.TEXTURE0)
+        if getattr(self, "_gs_vao", None) is None:
+            self._gs_vao = gl.createVertexArray()  # no attributes: everything's fetched
+        gl.bindVertexArray(self._gs_vao)
+        primitive = {"triangles": gl.TRIANGLES, "lines": gl.LINES, "points": gl.POINTS}[em.output_primitive]
+        gl.drawArrays(primitive, 0, prims * em.slots)
+        gl.bindVertexArray(None)
+
     def use(self):
         """Activates this shader's program, updates the `TIME` builtin
         uniform if declared, and binds every cached texture uniform.
@@ -268,6 +319,10 @@ class WebGL2Shader(Shader):
             gl.uniform1f(self.uniforms['TIME'].location, get_time())
 
         get_service('renderer').texture_manager.begin_draw()
+        if self.emulation is not None:
+            # WebGL2Mesh.draw() hands the draw to draw_emulated() while this
+            # program is current.
+            get_service('renderer').current_shader = self
         self._bind_textures()
 
 

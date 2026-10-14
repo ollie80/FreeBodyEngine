@@ -25,6 +25,41 @@ from FreeBodyEngine.cli.cpp.compile import compile_cpp_scripts, SCRIPTS_DIR_NAME
 
 SUPPORTED_PLATFORMS = ["windows", "darwin", "linux"]
 
+
+def _rmtree(path):
+    """shutil.rmtree that copes with what Windows - and OneDrive in
+    particular - puts in the way of clearing a build directory.
+
+    OneDrive marks the folders it syncs read-only (alongside a reparse
+    point), and Windows won't remove a read-only directory: plain rmtree
+    emptied build/temp and then failed on the folder itself with
+    "[WinError 5] Access is denied". Each failure here clears the flag
+    and tries again. OneDrive (and antivirus) also briefly hold files it
+    has just seen change, so a whole pass that still fails is retried a
+    few times before giving up."""
+    import stat
+    import time
+
+    def clear_readonly_and_retry(func, target, _exc):
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+
+    # `onexc` is 3.12+; `onerror` takes the same callback (an exc_info
+    # tuple instead of the exception, which this ignores either way).
+    handler = ({"onexc": clear_readonly_and_retry} if sys.version_info >= (3, 12)
+               else {"onerror": clear_readonly_and_retry})
+
+    for attempt in range(5):
+        try:
+            shutil.rmtree(path, **handler)
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+
 # A pinned, verified-complete Pyodide "full" distribution on jsdelivr's CDN
 # - see build_for_dev_web()'s own docstring for why this engine's bundled
 # lib/pyodide/ files aren't used instead (they're missing several files
@@ -79,7 +114,22 @@ class Builder:
         # empty string) - passed straight through, that becomes `pip install
         # ''`, which fails. Drop falsy entries before they ever reach pip.
         user_dependencies = [d for d in self.get_user_setting('dependencies') if d]
-        self.dependencies: list[str] = user_dependencies + self.get_platform_dependencies(self.platform)
+        # `[android] dependencies` - things only an Android build can
+        # resolve, chiefly python-for-android *recipe* names (ffmpeg,
+        # libogg, libvorbis, ...). Those aren't PyPI packages: listed in
+        # the shared `dependencies` above, every desktop build handed them
+        # to pip and died on "No matching distribution found" - or worse,
+        # installed whatever unrelated package happens to own the name on
+        # PyPI (there is one called "ffmpeg").
+        if self.platform == "android":
+            android_settings = self.get_user_setting('android', {}) or {}
+            user_dependencies += [d for d in android_settings.get('dependencies', []) if d]
+        # De-duplicated, keeping first-seen order: a project naming a recipe
+        # the engine's own platform list already has (libogg/libvorbis are
+        # in requirements.ANDROID) shouldn't put it on buildozer's
+        # requirements line twice.
+        self.dependencies: list[str] = list(dict.fromkeys(
+            user_dependencies + self.get_platform_dependencies(self.platform)))
         self.dependencies.append("pyinstaller")
 
         # If a local FBUSL source checkout sits next to this FreeBodyEngine
@@ -308,11 +358,11 @@ class Builder:
         # false on a project's very first build, which crashed here before
         # ever reaching a real build error.
         if os.path.exists(self.temp_path):
-            shutil.rmtree(self.temp_path)
+            _rmtree(self.temp_path)
         os.mkdir(self.temp_path)
 
         if os.path.exists(self.output_path):
-            shutil.rmtree(self.output_path)
+            _rmtree(self.output_path)
         os.mkdir(self.output_path)
         os.mkdir(self.asset_out_path)
 
@@ -843,7 +893,7 @@ class Builder:
         self.build_fonts(fonts, self.asset_path)
 
         if os.path.exists(self.web_output_path):
-            shutil.rmtree(self.web_output_path)
+            _rmtree(self.web_output_path)
         os.makedirs(self.web_output_path)
 
         self.progress.stage("Packaging engine source for the browser")
@@ -1128,7 +1178,7 @@ await run()
                     continue
                 full = os.path.join(self.android_output_path, entry)
                 if os.path.isdir(full):
-                    shutil.rmtree(full)
+                    _rmtree(full)
                 else:
                     os.remove(full)
         else:
@@ -1210,7 +1260,7 @@ await run()
         recipes_src = os.path.join(os.path.dirname(__file__), "android_recipes")
         recipes_dest = os.path.join(self.android_output_path, "p4a-recipes")
         if os.path.exists(recipes_dest):
-            shutil.rmtree(recipes_dest)
+            _rmtree(recipes_dest)
         shutil.copytree(recipes_src, recipes_dest, ignore=shutil.ignore_patterns("__pycache__"))
 
     def _write_android_main_py(self):

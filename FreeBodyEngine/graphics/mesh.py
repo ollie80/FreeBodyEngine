@@ -32,6 +32,10 @@ class PrimitiveType(Enum):
     TRIANGLES = auto()
     TRIANGLE_STRIP = auto()
     TRIANGLE_FAN = auto()
+    # What a geometry shader with `input=points` / `input=lines` draws.
+    POINTS = auto()
+    LINES = auto()
+    LINE_STRIP = auto()
 
 
 class IndexType(Enum):
@@ -88,7 +92,11 @@ class Mesh:
         if self.usage == BufferUsage.STATIC:
             warning("Cannot set data of a static Mesh.")
             return
+        # The CPU copy stays current too: emulated geometry shaders upload
+        # from it (graphics/geometry_emulation.py).
+        self.attributes[attribute_name] = (self.attributes[attribute_name][0], data)
         self._set_attribute_data(attribute_name, data)
+        self._version = getattr(self, "_version", 0) + 1  # see geometry_emulation.mesh_version()
 
     @abstractmethod
     def draw(self):

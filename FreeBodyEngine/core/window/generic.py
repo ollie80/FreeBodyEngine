@@ -49,13 +49,38 @@ class Window(Service):
     def on_initialize(self):
         """Hooks window update/draw into the engine's per-frame update phases and registers the window resize events."""
         register_service_update(UpdatePhase.EARLY, self.update)
-        register_service_update(UpdatePhase.LATE, self.draw)
+        register_service_update(UpdatePhase.LATE, self._present)
 
         register_event_category('window')
         register_event(WINDOW_RESIZE, 'window')
         register_event(FRAMEBUFFER_RESIZE, 'window')
 
         self._apply_project_icon()
+
+    def _present(self):
+        """LATE-phase hook: calls draw() - the buffer swap - only when
+        this loop iteration actually drew a frame.
+
+        LATE runs every iteration, but UPDATE/DRAW only run once a full
+        update_timestep has built up (see UpdateCoordinator.update()), and
+        Main.run()'s sleep between frames routinely wakes a little early -
+        on Windows, whose sleep granularity is ~15ms, most of the time.
+        Each of those iterations used to swap anyway, presenting a back
+        buffer nothing had drawn into: last frame but one at best, and
+        undefined contents at worst (many drivers don't preserve the back
+        buffer across a swap). Static screens hid it, because every frame
+        was the same; anything changing - a text field being typed in,
+        the visualizer - visibly flickered between its current and a
+        stale or garbage frame.
+
+        Not Time.frame_count - despite the name, that counts loop
+        iterations (Time.update() bumps it), drawn or not."""
+        from FreeBodyEngine import get_main
+
+        main = get_main(throw_error=False)
+        if main is not None and not main.updater.did_draw:
+            return
+        self.draw()
 
     def _apply_project_icon(self):
         """Applies `[icons] app` from the project, if there is one.
@@ -88,7 +113,7 @@ class Window(Service):
     def on_destroy(self):
         """Undoes on_initialize() - unhooks the per-frame update/draw calls and unregisters the window events."""
         unregister_service_update(UpdatePhase.EARLY, self.update)
-        unregister_service_update(UpdatePhase.LATE, self.draw)
+        unregister_service_update(UpdatePhase.LATE, self._present)
 
 
         unregister_event_category('window')

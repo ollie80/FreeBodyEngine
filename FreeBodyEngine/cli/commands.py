@@ -205,7 +205,9 @@ def get_current_project(env):
     cwd = env.path
     project_file = os.path.join(cwd, "fbproject.toml")
     if os.path.exists(project_file):
-        project_name = tomllib.loads(open(project_file, "rb").read()).get("name", None)
+        # tomllib.load() for a binary file; loads() only takes str.
+        with open(project_file, "rb") as f:
+            project_name = tomllib.load(f).get("name", None)
         project_id = env.project_registry.get_project_id(project_name)
         if project_id is None:
             print('No FreeBody project found in the current directory. Did you initialize the project using `freebody init`?')

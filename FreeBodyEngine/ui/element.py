@@ -817,6 +817,14 @@ class UIElement(GenericElement):
         accumulating a duplicate callback on it every time."""
         self._event_callbacks.pop(event, None)
 
+    def clear_event(self, event: str) -> None:
+        """Same as clear(event), under the name the native backend
+        (ui/native_element.py) uses - it has no clear(). Projects written
+        against the native API called this and crashed with an
+        AttributeError whenever _fbcpp wasn't built and the engine fell
+        back to this class."""
+        self.clear(event)
+
     def _emit(self, event: str, *args) -> None:
         """Calls every callback registered for `event` via `on()`, in
         registration order. Copies the callback list first so a callback

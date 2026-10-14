@@ -188,14 +188,24 @@ class GLFWWindow(Window):
         if not glfw.init():
             raise RuntimeError("GLFW failed to initialize")
         glfw.init_hint(glfw.PLATFORM, glfw.PLATFORM_X11)
+
+        # Vulkan owns presentation itself (graphics/vulkan/swapchain.py), so
+        # the window gets no GL context at all - GLFW refuses to make a
+        # Vulkan surface for a window that has one.
+        from FreeBodyEngine.graphics import use_vulkan
+        self.vulkan = use_vulkan()
+
         glfw.window_hint(glfw.SCALE_FRAMEBUFFER, glfw.TRUE)
-        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
         glfw.window_hint(glfw.POSITION_X, 200)
         glfw.window_hint(glfw.POSITION_Y, 200)
-        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
-        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
-        glfw.window_hint(glfw.OPENGL_DEBUG_CONTEXT, get_flag(DEVMODE, False))
-        glfw.window_hint(glfw.DEPTH_BITS, 24)
+        if self.vulkan:
+            glfw.window_hint(glfw.CLIENT_API, glfw.NO_API)
+        else:
+            glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 4)
+            glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+            glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+            glfw.window_hint(glfw.OPENGL_DEBUG_CONTEXT, get_flag(DEVMODE, False))
+            glfw.window_hint(glfw.DEPTH_BITS, 24)
         glfw.window_hint(glfw.VISIBLE, glfw.TRUE if visible else glfw.FALSE)
 
         self._window = glfw.create_window(size[0], size[1], title, None, None)
@@ -203,7 +213,8 @@ class GLFWWindow(Window):
             glfw.terminate()
             error("Failed to create GLFW window")
 
-        glfw.make_context_current(self._window)
+        if not self.vulkan:
+            glfw.make_context_current(self._window)
         glfw.set_window_size_callback(self._window, self.resize)
 
         # Neither of these was ever wired up before - _key_callback existed
@@ -268,7 +279,13 @@ class GLFWWindow(Window):
         return not glfw.window_should_close(self._window)
 
     def _get_key_down(self, key: Key):
-        return 0.0 if glfw.get_key(self._window, GLFW_CHARACTER_MAP[key]) == glfw.RELEASE else 1.0
+        # Keys like AC_BACK are Android-only (see Key.AC_BACK's docstring) and
+        # have no GLFW code at all - no desktop keyboard can produce them, so
+        # they just read as never-down here rather than raising a KeyError.
+        code = GLFW_CHARACTER_MAP.get(key)
+        if code is None:
+            return 0.0
+        return 0.0 if glfw.get_key(self._window, code) == glfw.RELEASE else 1.0
 
     def _get_gamepad_state(self, gamepad: int):
         if not glfw.joystick_is_gamepad(gamepad):
@@ -398,8 +415,11 @@ class GLFWWindow(Window):
         emit_event(QUIT)
 
     def draw(self):
-        """Swaps the GLFW window's front/back buffers to present the frame."""
-        glfw.swap_buffers(self._window)
+        """Swaps the GLFW window's front/back buffers to present the frame.
+        Nothing to do under Vulkan, whose renderer presents its own
+        swapchain images."""
+        if not self.vulkan:
+            glfw.swap_buffers(self._window)
 
     def update(self):
         """Polls GLFW events for this frame and quits the engine once the window is told to close."""

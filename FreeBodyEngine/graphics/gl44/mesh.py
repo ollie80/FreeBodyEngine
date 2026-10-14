@@ -23,7 +23,10 @@ class GL44Mesh(Mesh):
         self._render_mode = {
             PrimitiveType.TRIANGLES: GL_TRIANGLES,
             PrimitiveType.TRIANGLE_STRIP: GL_TRIANGLE_STRIP,
-            PrimitiveType.TRIANGLE_FAN: GL_TRIANGLE_FAN
+            PrimitiveType.TRIANGLE_FAN: GL_TRIANGLE_FAN,
+            PrimitiveType.POINTS: GL_POINTS,
+            PrimitiveType.LINES: GL_LINES,
+            PrimitiveType.LINE_STRIP: GL_LINE_STRIP,
         }.get(self.primitive, GL_TRIANGLES)
 
 
@@ -83,7 +86,12 @@ class GL44Mesh(Mesh):
                 raise ValueError(f"Unsupported AttributeType: {attr_type}")
 
             glEnableVertexAttribArray(location)
-            glVertexAttribPointer(location, size, gl_type, GL_FALSE, 0, None)
+            if gl_type == GL_INT:
+                # Integer attributes stay integers - the plain pointer would hand
+                # an `int` vertex input float-converted values (WebGL2Mesh does the same).
+                glVertexAttribIPointer(location, size, gl_type, 0, None)
+            else:
+                glVertexAttribPointer(location, size, gl_type, GL_FALSE, 0, None)
             location += 1
 
         if self.indices is not None:

@@ -24,6 +24,9 @@ class WebGL2Mesh(Mesh):
             PrimitiveType.TRIANGLES: gl.TRIANGLES,
             PrimitiveType.TRIANGLE_STRIP: gl.TRIANGLE_STRIP,
             PrimitiveType.TRIANGLE_FAN: gl.TRIANGLE_FAN,
+            PrimitiveType.POINTS: gl.POINTS,
+            PrimitiveType.LINES: gl.LINES,
+            PrimitiveType.LINE_STRIP: gl.LINE_STRIP,
         }.get(self.primitive, gl.TRIANGLES)
 
         self.upload()
@@ -98,6 +101,12 @@ class WebGL2Mesh(Mesh):
         gl.bindVertexArray(None)
 
     def draw(self):
+        shader = getattr(get_service('renderer'), 'current_shader', None)
+        if shader is not None and shader.draws_emulated_geometry():
+            return shader.draw_emulated(self)  # see graphics/geometry_emulation.py
+        self._draw()
+
+    def _draw(self):
         """Issues the draw call - `drawElements` against the EBO if this
         mesh has indices, else `drawArrays` (same non-indexed vertex-count
         assumption GLMesh.draw() makes: the first attribute is a 3-wide

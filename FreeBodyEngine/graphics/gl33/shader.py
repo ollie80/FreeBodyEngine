@@ -443,3 +443,84 @@ class GLShader(Shader):
             glUniform1f(self.uniforms['TIME'].location, get_time())
 
         self._bind_textures()
+        if self.emulation is not None:
+            # GLMesh.draw() hands the draw to draw_emulated() while this
+            # program is current.
+            get_service('renderer').current_shader = self
+
+    _GS_PRIMITIVES = {"triangles": GL_TRIANGLES, "lines": GL_LINES, "points": GL_POINTS}
+
+    def draws_emulated_geometry(self) -> bool:
+        """Whether a mesh drawn now goes through this shader's emulated
+        geometry stage: it has one, and its program is the current one
+        (a compute dispatch, say, may have switched programs since)."""
+        return self.emulation is not None and glGetIntegerv(GL_CURRENT_PROGRAM) == self._shader
+
+    def draw_emulated(self, mesh):
+        """Draws `mesh` through the vertex shader a geometry stage was
+        compiled into (graphics/geometry_emulation.py): its data goes up as
+        float data textures - cached on the mesh until it changes - and
+        `primitives * slots` vertices are drawn with no vertex buffers."""
+        from FreeBodyEngine.graphics import geometry_emulation as ge
+        em = self.emulation
+        cache = mesh.__dict__.setdefault("_gs_data_textures", {})
+        key = (self.generator.__name__, tuple(name for name, *_ in em.attributes))
+        version = ge.mesh_version(mesh)
+        entry = cache.get(key)
+        if entry is None or entry[0] != version:
+            prims, mode, arrays = ge.mesh_arrays(mesh, em)
+            if arrays is None:
+                return
+            if entry is not None:
+                for _, texture in entry[3].values():
+                    glDeleteTextures([texture])
+            entry = cache[key] = (version, prims, mode,
+                                  {block: self._data_texture(data) for block, data in arrays.items()})
+        _, prims, mode, textures = entry
+        if prims <= 0:
+            return
+
+        for name, value in (("_gs_prim_count", prims), ("_gs_index_mode", mode)):
+            if name in self.uniforms:
+                glUniform1i(self.uniforms[name].location, value)
+        # Texture units from the top down, clear of the texture manager's.
+        unit = glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS) - 1
+        for block, (target, texture) in textures.items():
+            uniform = self.uniforms.get(ge.sampler_name(block))
+            if uniform is None:
+                continue  # optimized out
+            glActiveTexture(GL_TEXTURE0 + unit)
+            glBindTexture(target, texture)
+            glUniform1i(uniform.location, unit)
+            unit -= 1
+        glActiveTexture(GL_TEXTURE0)
+        if getattr(self, "_gs_vao", None) is None:
+            self._gs_vao = glGenVertexArrays(1)  # no attributes: everything's fetched
+        glBindVertexArray(self._gs_vao)
+        glDrawArrays(self._GS_PRIMITIVES[em.output_primitive], 0, prims * em.slots)
+        glBindVertexArray(0)
+
+    def _data_texture(self, data):
+        """(target, texture) holding `data` (float32) the way this shader's
+        generator reads buffers: a buffer texture for desktop GLSL, a 2D
+        data texture for GLSL ES (see WebGL2Generator)."""
+        from FreeBodyEngine.graphics import geometry_emulation as ge
+        texture = glGenTextures(1)
+        if self.generator.__name__ == "GL33Generator":
+            buffer = glGenBuffers(1)
+            glBindBuffer(GL_TEXTURE_BUFFER, buffer)
+            glBufferData(GL_TEXTURE_BUFFER, data.nbytes, data, GL_STATIC_DRAW)
+            glBindTexture(GL_TEXTURE_BUFFER, texture)
+            glTexBuffer(GL_TEXTURE_BUFFER, GL_R32F, buffer)
+            glBindTexture(GL_TEXTURE_BUFFER, 0)
+            return GL_TEXTURE_BUFFER, texture
+        width, height = ge.data_texture_shape(len(data), glGetIntegerv(GL_MAX_TEXTURE_SIZE))
+        padded = np.zeros(width * height, dtype=np.float32)
+        padded[:len(data)] = data
+        glBindTexture(GL_TEXTURE_2D, texture)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R32F, width, height, 0, GL_RED, GL_FLOAT, padded)
+        for param in (GL_TEXTURE_MIN_FILTER, GL_TEXTURE_MAG_FILTER):
+            glTexParameteri(GL_TEXTURE_2D, param, GL_NEAREST)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        return GL_TEXTURE_2D, texture

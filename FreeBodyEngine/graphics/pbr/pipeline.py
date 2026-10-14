@@ -358,8 +358,19 @@ class PBRPipeline(GraphicsPipeline):
             debug.mesh.draw()
 
         for model in models:
+            if not getattr(model, 'cast_shadows', True):
+                continue  # see Model3D.cast_shadows
+            # A model whose mesh isn't its final geometry - points a geometry
+            # shader builds the real thing from - brings a depth shader that
+            # runs the same stages (Model3D.shadow_shader).
+            shader = getattr(model, 'shadow_shader', None)
+            if shader is not None:
+                shader['view'] = view
+                shader['proj'] = proj
+            else:
+                shader = self._shadow_shader
             for mesh_name in model._model.meshes:
-                self._shadow_shader['model'] = model.world_transform.model
+                shader['model'] = model.world_transform.model
                 model._model.meshes[mesh_name].draw()
 
         self.renderer.disable_depth_testing()

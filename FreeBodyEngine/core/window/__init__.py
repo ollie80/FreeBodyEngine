@@ -34,6 +34,14 @@ def get_window() -> type[Window]:
         from FreeBodyEngine.core.window.android import AndroidWindow
         return AndroidWindow
 
+    # The Vulkan renderer presents through a GLFW window - GLFW is what
+    # hands it a VkSurfaceKHR on every desktop platform - so choosing it
+    # overrides the native-window choices below.
+    from FreeBodyEngine.graphics import use_vulkan
+    if use_vulkan():
+        from FreeBodyEngine.core.window.glfw import GLFWWindow
+        return GLFWWindow
+
     if get_flag("GLFW_WINDOW", False):
         from FreeBodyEngine.core.window.glfw import GLFWWindow
 

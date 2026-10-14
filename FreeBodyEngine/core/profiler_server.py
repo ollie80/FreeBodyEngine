@@ -42,6 +42,36 @@ except ImportError:
 DEFAULT_PORT = 47821
 
 
+def _windows_working_set_mb():
+    """Peak working set of this process, in MB - Windows has no `resource`
+    module, so ru_maxrss's equivalent comes from GetProcessMemoryInfo."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    try:
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = ctypes.sizeof(counters)
+        # Declared, not left to ctypes' defaults: a HANDLE is pointer-sized,
+        # and passed as a default C int it's truncated on 64-bit Windows.
+        get_process = ctypes.windll.kernel32.GetCurrentProcess
+        get_process.restype = wintypes.HANDLE
+        get_info = ctypes.windll.psapi.GetProcessMemoryInfo
+        get_info.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+        get_info.restype = wintypes.BOOL
+        if not get_info(get_process(), ctypes.byref(counters), counters.cb):
+            return None
+        return counters.PeakWorkingSetSize / (1024.0 * 1024.0)
+    except (AttributeError, OSError):
+        return None
+
+
 class ProfilerServer(Service):
     """See this module's own docstring. Depends on nothing by name (CPU
     timing needs only the always-present updater; GPU/draw-call timing
@@ -130,6 +160,8 @@ class ProfilerServer(Service):
     @staticmethod
     def _memory_mb():
         if resource is None:
+            if sys.platform == "win32":
+                return _windows_working_set_mb()
             return None
         # ru_maxrss is KB on Linux, bytes on macOS - the same platform
         # quirk core/perf_profiler-adjacent code elsewhere in this engine

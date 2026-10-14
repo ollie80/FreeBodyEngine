@@ -179,7 +179,7 @@ class GL33Generator(fbusl.generator.Generator):
 
         return f"""
 struct Ray {{ vec3 origin; vec3 direction; }};
-struct RayHit {{ float t; int prim; float u; float v; bool hit; }};
+struct RayHit {{ float t; int prim; float u; float v; bool hit; int instance; }};
 
 uniform samplerBuffer _ENGINE_bvh_aabb;
 uniform isamplerBuffer _ENGINE_bvh_meta;
@@ -230,6 +230,7 @@ RayHit trace_ray(Ray ray) {{
     RayHit result;
     result.hit = false;
     result.t = 1e30;
+    result.instance = 0;
 
     int stack[{max_stack}];
     int sp = 0;
@@ -285,6 +286,13 @@ RayHit trace_ray(Ray ray) {{
     }}
 
     return result;
+}}
+
+// No early-out traversal here - the software BVH walk above has no notion
+// of "any hit will do" - so a shadow test is just a closest-hit test.
+bool trace_shadow(Ray ray, float max_t) {{
+    RayHit h = trace_ray(ray);
+    return h.hit && h.t < max_t;
 }}
 """
 
@@ -516,7 +524,8 @@ RayHit trace_ray(Ray ray) {{
         operand = self.generate_node(node.operand)
         if isinstance(node.operand, fbusl.node.BinOp):
             operand = f"({operand})"
-        return f'{node.op}{operand}'
+        op = "!" if node.op == "not" else node.op
+        return f'{op}{operand}'
 
     def generate_inline_if(self, node):
         """Generates a ternary expression `cond ? then : else` - GLSL's
@@ -525,12 +534,16 @@ RayHit trace_ray(Ray ray) {{
         return f'{self.generate_node(node.condition)} ? {self.generate_node(node.then_expr)} : {self.generate_node(node.else_expr)}'
 
     def generate_vardecl(self, node):
-        """Generates a local variable declaration with its initializer,
-        e.g. `vec3 foo = ...;`."""
+        """Generates a variable declaration, e.g. `vec3 foo = ...;` - with
+        no initializer when it has none (`vec3 foo;`), and with the array
+        suffix after the name where GLSL wants it (`vec4 window[3];`).
+        Also used for top-level (global) declarations."""
         name = self.generate_node(node.name)
-        node_type = self.get_glsl_type(node.type)
+        base_type, array_suffix = self.resolve_type(node.type)
+        if node.value is None:
+            return f"{base_type} {name}{array_suffix};\n"
         value = self.generate_node(node.value)
-        return f"{node_type} {name} = {value};"
+        return f"{base_type} {name}{array_suffix} = {value};"
 
     def generate_setter(self, node):
         """Generates a plain assignment `left = right` (no trailing
@@ -634,7 +647,19 @@ RayHit trace_ray(Ray ray) {{
             elif type_name == "textureStack":
                 text += f"uniform vec4 _ENGINE_{node.name}_uv_rect[{MAX_TEXTURE_STACK_SIZE}];\n"
 
-        return f"{text}{layout}{qualifier + ' ' if qualifier else ''}{storage} {base_type} {decl};\n"
+        flat = self._interpolation(node, base_type)
+        return f"{text}{layout}{flat}{qualifier + ' ' if qualifier else ''}{storage} {base_type} {decl};\n"
+
+    def _interpolation(self, node, base_type: str) -> str:
+        """"flat " for an integer varying, "" otherwise: integers can't be
+        interpolated, and GLSL requires `flat` wherever one stage passes
+        one to the next (a vertex shader's outputs, a fragment shader's
+        inputs, and both sides of a geometry stage)."""
+        varying = (isinstance(node, fbusl.node.Output) and self.shader_type != fbusl.ShaderType.FRAGMENT) or (
+            isinstance(node, fbusl.node.Input) and self.shader_type != fbusl.ShaderType.VERTEX)
+        integer = base_type in ("int", "uint") or base_type.startswith(("ivec", "uvec"))
+        already = "flat" in (getattr(node, "qualifier", "") or "")  # written in the source
+        return "flat " if varying and integer and not already else ""
 
     def generate_define(self, node):
         """Generates a `#define NAME value` preprocessor directive."""
@@ -668,7 +693,9 @@ RayHit trace_ray(Ray ray) {{
         if isinstance(node.right, fbusl.node.BinOp):
             right = f"({right})"
 
-        return f"{left}{node.op}{right}"
+        # FBUSL spells the logical operators as words; GLSL doesn't.
+        op = {"and": "&&", "or": "||"}.get(node.op, node.op)
+        return f"{left} {op} {right}" if op != node.op else f"{left}{op}{right}"
 
     def generate_struct(self, node):
         """Generates a `struct Name { ... };` declaration, one field per

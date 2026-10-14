@@ -195,7 +195,8 @@ class WebGL2Generator(GL33Generator):
             elif type_name == "textureStack":
                 text += f"uniform vec4 _ENGINE_{node.name}_uv_rect[{MAX_TEXTURE_STACK_SIZE}];\n"
 
-        return f"{text}{layout}{qualifier + ' ' if qualifier else ''}{storage} {base_type} {decl};\n"
+        flat = self._interpolation(node, base_type)
+        return f"{text}{layout}{flat}{qualifier + ' ' if qualifier else ''}{storage} {base_type} {decl};\n"
 
     def generate_buffer_block(self, node: fbusl.node.BufferBlock):
         """Same contract as GL33Generator.generate_buffer_block() (declares

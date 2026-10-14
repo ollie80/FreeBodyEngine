@@ -327,8 +327,11 @@ class GL33Renderer(Renderer):
             except Exception:
                 render_mode = None
 
-        glBindVertexArray(mesh.vao)
-        glDrawElements(GL_TRIANGLES, len(mesh.indices), GL_UNSIGNED_INT, ctypes.c_void_p(0))
+        # The mesh's own draw, not a hard-coded glDrawElements(GL_TRIANGLES,
+        # ..., GL_UNSIGNED_INT): that ignored the mesh's primitive type and
+        # index width, and failed outright on an unindexed mesh - a mesh of
+        # points a geometry shader expands is both.
+        mesh.draw()
 
         if render_mode == "wireframe":
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)

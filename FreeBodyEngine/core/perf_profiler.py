@@ -131,14 +131,21 @@ class PerformanceProfiler(Service):
         })
         self._panel.add(graph)
 
+        # One full-height column per bar, with the bar anchored to that
+        # column's bottom. Anchoring the bars straight to `graph` took them
+        # out of its horizontal flow ("anchored children do not consume
+        # space in normal flow" - ui/element.py), so all of them landed on
+        # the same x and the graph read as a single bar.
         self._graph_bars = []
         for _ in range(_HISTORY_LEN):
+            column = UIElement(None, styles={"width": _BAR_WIDTH, "height": "100h"})
+            graph.add(column)
             bar = UIElement(None, styles={
-                "width": _BAR_WIDTH, "height": 1,
+                "width": "100w", "height": 1,
                 "parent_anchor": "bottom_left", "anchor": "bottom_left",
                 "base_color": (0.1, 1.0, 0.4, 1.0),
             })
-            graph.add(bar)
+            column.add(bar)
             self._graph_bars.append(bar)
 
         self._breakdown = UIElement(None, styles={

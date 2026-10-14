@@ -55,6 +55,12 @@ class UpdateCoordinator:
         self.physics_timestep = 1 / get_flag(MAX_TPS, 69)
         self.update_timestep = 1 / get_flag(MAX_FPS, 69)
 
+        # Whether the current iteration ran UPDATE/DRAW - set before LATE
+        # runs, so a LATE callback can tell a drawn frame from one that
+        # wasn't (see Window._present()). True until the first update(),
+        # so anything presenting before the loop starts still does.
+        self.did_draw = True
+
         # Per-callback timing, for FreeBodyEngine.core.perf_profiler's
         # PerformanceProfiler (or any other consumer) - off by default
         # (a single `if` check per callback when disabled, effectively
@@ -144,10 +150,11 @@ class UpdateCoordinator:
 
         Returns whether UPDATE/DRAW actually ran this call - Main.run()
         uses this to sleep when they didn't (see its own docstring for
-        why that has to be real, not skipped): LATE callbacks (window.draw
-        - the buffer swap - among them, registered generically by every
-        Window backend) still run unconditionally every iteration
-        regardless of this return value, same as always."""
+        why that has to be real, not skipped). LATE callbacks still run
+        every iteration regardless; the same answer is left in
+        `self.did_draw` for any of them that must not act on an
+        iteration that drew nothing - the window's buffer swap above
+        all (see Window._present())."""
         if self.profiling_enabled:
             self._frame_timings = {}
 
@@ -212,6 +219,7 @@ class UpdateCoordinator:
 
             self.update_accumulator -= self.update_timestep
             self.time.frame()
+        self.did_draw = did_draw
 
         # Published *before* LATE runs (not after) so a LATE-phase reader
         # (FreeBodyEngine.core.perf_profiler.PerformanceProfiler's own
