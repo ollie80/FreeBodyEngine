@@ -49,7 +49,8 @@ from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.graphics.pbr.material import PBRMaterial
 from FreeBodyEngine.graphics.lighting import Light, LightType
 from FreeBodyEngine.graphics.pbr.shaders import (MAX_LIGHTS, LIGHTING_COMPOSITE_VERT,
-                                                 LIGHTING_COMPOSITE_FRAG, FXAA_VERT, FXAA_FRAG)
+                                                 LIGHTING_COMPOSITE_FRAG, FXAA_VERT, FXAA_FRAG,
+                                                 AO_FRAG, AO_BLUR_FRAG, TONEMAP_FRAG)
 
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
 # TilemapRenderer is deliberately not imported. Nothing here uses the
@@ -72,6 +73,21 @@ from fbusl.injector import Injector
 import numpy as np
 
 SHADOW_MAP_SIZE = 2048
+
+# How much depth slop the shadow comparison allows, measured in shadow-map
+# texels of world distance. Big enough that a lit surface doesn't shadow
+# itself across the PCF kernel's reach; small enough that a shadow stays
+# attached to what casts it.
+SHADOW_BIAS_TEXELS = 2.0
+
+
+def _shadow_depth_range(light) -> tuple[float, float]:
+    """The shadow frustum's near and far planes for `light`, in world units.
+
+    Shared by the projection matrix and the depth bias so the two cannot
+    drift apart - the bias is a fraction of exactly this range (see
+    _apply_lighting_uniforms)."""
+    return 0.1, light.shadow_distance * 2.0
 
 
 class PBRPipeline(GraphicsPipeline):
@@ -114,7 +130,12 @@ class PBRPipeline(GraphicsPipeline):
             # the opaque pass's depth buffer for correct transparent
             # occlusion, isolated via set_draw_buffers() so they don't also
             # clobber the G-buffer channels above (see _draw_composite()).
-            'lit': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
+            # Float, not RGBA8: the composite writes radiance, and a sunlit
+            # surface or a specular highlight is legitimately past 1.0.
+            # Clamped to 8 bits here, every one of those arrived at the
+            # tonemap pass already flattened to the same white, which is
+            # exactly the headroom the curve exists to use.
+            'lit': (AttachmentType.COLOR, AttachmentFormat.RGBA16F),
             'depth': (AttachmentType.DEPTH, AttachmentFormat.DEPTH24)
         }, transparent = True
         )
@@ -186,6 +207,44 @@ class PBRPipeline(GraphicsPipeline):
         # How far along an edge the blur may reach, in texels.
         self.fxaa_span_max = 8.0
 
+        # Exposure and tonemapping - see shaders.TONEMAP_FRAG. On by
+        # default: the composite's output is radiance, and sending that to a
+        # screen unmapped is not a style, it is a missing step. A project
+        # whose colours are authored as final output (flat 2D art, say)
+        # turns it off, and `unlit` turns it off implicitly for the same
+        # reason.
+        self.tonemap = True
+        self.exposure = 1.0
+        self._tonemap_shader = self.renderer.load_shader(FXAA_VERT, TONEMAP_FRAG, Injector(), None)
+        self._post_framebuffer = self.renderer.create_framebuffer(
+            self.main_framebuffer.width, self.main_framebuffer.height, {
+                'tonemapped': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
+            })
+
+        # Ambient occlusion - see shaders.AO_FRAG. Two framebuffers because
+        # the pass is dithered and needs a blur, and a blur cannot read and
+        # write one target.
+        self.ao = True
+        # World units. About a metre suits human-scale scenes; a model
+        # viewer wants centimetres and a city block wants metres.
+        self.ao_radius = 1.0
+        # How much ambient a fully occluded point loses. 1.0 removes all of
+        # it, which is darker than any real contact and reads as soot.
+        self.ao_strength = 0.9
+        # World-space slop before a surface counts as occluding, the depth
+        # bias of this pass - see AO_FRAG.
+        self.ao_bias = 0.05
+        self._ao_shader = self.renderer.load_shader(FXAA_VERT, AO_FRAG, Injector(), None)
+        self._ao_blur_shader = self.renderer.load_shader(FXAA_VERT, AO_BLUR_FRAG, Injector(), None)
+        self._ao_framebuffer = self.renderer.create_framebuffer(
+            self.main_framebuffer.width, self.main_framebuffer.height, {
+                'ao': (AttachmentType.COLOR, AttachmentFormat.R8),
+            })
+        self._ao_blur_framebuffer = self.renderer.create_framebuffer(
+            self.main_framebuffer.width, self.main_framebuffer.height, {
+                'ao': (AttachmentType.COLOR, AttachmentFormat.R8),
+            })
+
         # Speed lines, drawn in the same final pass as the antialiasing
         # (they are a screen-space overlay, so the last pass before the
         # screen is exactly where they belong and they cost nothing extra).
@@ -207,8 +266,14 @@ class PBRPipeline(GraphicsPipeline):
         self.renderer.submit(mesh, material, transform, camera)
 
     def resize(self, size: tuple[int, int]):
-        """Resizes `main_framebuffer` to match the new framebuffer `size`."""
+        """Resizes `main_framebuffer` and every full-screen pass that has to
+        stay the same size as it - the AO pair and the tonemap target all
+        sample it by UV, so a stale size samples the wrong texels rather
+        than failing outright."""
         self.main_framebuffer.resize(size)
+        self._post_framebuffer.resize(size)
+        self._ao_framebuffer.resize(size)
+        self._ao_blur_framebuffer.resize(size)
 
     def _collect(self, node, tilemaps, sprites, debugs, models, lights, meshes):
         """Recursively walks `node`'s subtree once, bucketing every node
@@ -264,7 +329,6 @@ class PBRPipeline(GraphicsPipeline):
         view * model * vertex` multiplication is already proven against."""
         target = camera.world_transform.position if camera.inherits_from('Node3D') else Vector3(0.0, 0.0, 0.0)
         direction = light.direction3
-        eye = target - direction * light.shadow_distance
 
         # Built from a look-at basis along `direction3`, not by rebuilding
         # the light's Euler rotation the way Camera3D does.
@@ -298,6 +362,26 @@ class PBRPipeline(GraphicsPipeline):
         right = right / np.linalg.norm(right)
         up = np.cross(right, forward)
 
+        # Snap the frustum's centre to whole shadow-map texels, along the
+        # light's own two lateral axes.
+        #
+        # Without this the map is re-rasterized onto a grid that has moved a
+        # fraction of a texel every time the camera moves at all, so every
+        # shadow edge in the scene jumps between neighbouring texels from one
+        # frame to the next - which reads as flickering whenever the camera
+        # creeps by less than a texel per frame (a vehicle crawling, or a
+        # chase camera still easing into place after the thing it follows has
+        # stopped). Faster than that and the motion hides it; exactly still
+        # and it is stable but arbitrary. Quantizing the centre means a
+        # sub-texel move produces the *same* matrix, so the map's contents
+        # only change when the grid itself steps - one whole texel at a time.
+        texel = (2.0 * light.shadow_extent) / SHADOW_MAP_SIZE
+        centre = np.array([target.x, target.y, target.z], dtype=np.float32)
+        for axis in (right, up):
+            offset = float(np.dot(centre, axis))
+            centre = centre + axis * (round(offset / texel) * texel - offset)
+        eye = Vector3(float(centre[0]), float(centre[1]), float(centre[2])) - direction * light.shadow_distance
+
         world_matrix = np.array([
             [right[0], right[1], right[2], 0.0],
             [up[0], up[1], up[2], 0.0],
@@ -307,8 +391,7 @@ class PBRPipeline(GraphicsPipeline):
         view = np.linalg.inv(world_matrix)
 
         half = light.shadow_extent
-        near = 0.1
-        far = light.shadow_distance * 2.0
+        near, far = _shadow_depth_range(light)
         # Row-vector layout: the depth translation goes in the last ROW,
         # not the last column.
         #
@@ -369,6 +452,18 @@ class PBRPipeline(GraphicsPipeline):
                 shader['proj'] = proj
             else:
                 shader = self._shadow_shader
+            # Bound explicitly, every model. Setting a uniform binds the
+            # program it belongs to, which is why this worked for as long
+            # as it did - but a shader that already holds the value being
+            # set has nothing to upload and so binds nothing, and then the
+            # draw below goes out under whatever program the *previous*
+            # model left bound. Between two ordinary models that is
+            # harmless; between a model with a geometry-shader depth pass
+            # (buildings, drawn from points) and a plain triangle mesh
+            # after it, the triangles are fed to a geometry shader
+            # declaring points in, which is GL_INVALID_OPERATION and takes
+            # the whole shadow pass down with it.
+            shader.use()
             for mesh_name in model._model.meshes:
                 shader['model'] = model.world_transform.model
                 model._model.meshes[mesh_name].draw()
@@ -479,6 +574,20 @@ class PBRPipeline(GraphicsPipeline):
             shader['ShadowEnabled'] = True
             shader['ShadowTexelSize'] = 1.0 / SHADOW_MAP_SIZE
             shader['ShadowSoftnessRadius'] = self.shadow_pcf_radius
+            # In world units first, then as a fraction of the frustum's depth
+            # range, which is what the shader compares in.
+            #
+            # A constant in depth-range units (what this was) means the slop
+            # scales with `shadow_distance`: the engine's 30-unit default is
+            # a harmless 8cm, but a scene that pushes the frustum out to a few
+            # hundred units - an outdoor one, where the sun has to cover a
+            # view distance - silently turns it into most of a metre, and
+            # every shadow cast by anything shorter than that simply isn't
+            # there. Derived from the texel size instead, it is the same
+            # fraction of a texel at any scene scale.
+            near, far = _shadow_depth_range(shadow_light)
+            texel_world = (2.0 * shadow_light.shadow_extent) / SHADOW_MAP_SIZE
+            shader['ShadowBias'] = (texel_world * SHADOW_BIAS_TEXELS) / max(far - near, 0.001)
             shader['ShadowMap'] = self.renderer.texture_manager.wrap_external_texture(
                 self._shadow_framebuffer.get_attachment_texture('depth')
             )
@@ -552,6 +661,13 @@ class PBRPipeline(GraphicsPipeline):
         # that genuinely is not in that program, not a missing feature to fix.
         # Transparent objects therefore do not receive 2D shadows, the same way
         # they already do not receive the directional shadow map.
+        if getattr(self, '_ao_active', False):
+            self._composite_shader['AOEnabled'] = True
+            self._composite_shader['AOMap'] = self.renderer.texture_manager.wrap_external_texture(
+                self._ao_blur_framebuffer.get_attachment_texture('ao'))
+        else:
+            self._composite_shader['AOEnabled'] = False
+
         if self._occluder_texture is not None:
             self._composite_shader['OccluderEnabled'] = True
             self._composite_shader['OccluderMap'] = self._occluder_texture
@@ -653,6 +769,18 @@ class PBRPipeline(GraphicsPipeline):
         # to. Composed the other way round the factors applied backwards,
         # every fragment landed outside the shadow map's depth range, and
         # the whole world came back shadowed.
+        # Ambient occlusion, between the G-buffer and the composite that
+        # samples it. Only with 3D models in the scene: every surface in a
+        # 2D one is a quad on the same plane facing the camera, so every tap
+        # lands at the same distance as its origin and the pass can only
+        # ever return "unoccluded" - at the cost of a full-screen pass.
+        ao_active = bool(self.ao) and len(models) > 0
+        if ao_active:
+            self._render_ao(camera)
+            self.main_framebuffer.bind()
+            self.main_framebuffer.set_draw_buffers(self._gbuffer_attachments)
+        self._ao_active = ao_active
+
         shadow_matrix = (shadow_view @ shadow_proj) if shadow_light is not None else None
         transparent_shaders_seen = set()
         for call in self.renderer.calls:
@@ -708,11 +836,93 @@ class PBRPipeline(GraphicsPipeline):
         # what is in the buffer.
         # The post pass does the AA resolve *and* the speed-line overlay, so
         # it also runs when antialiasing is off but speed lines are not.
-        if self.output_channel == 'lit' and (self.antialiasing or self.speed_line_strength > 0.0):
-            self._draw_fxaa(window_size)
+        if self.output_channel == 'lit':
+            # Unconditional, unlike the AA resolve below it: with the 'lit'
+            # attachment holding radiance, skipping this would not mean "no
+            # tonemapping", it would mean handing an 8-bit screen values it
+            # cannot show. Turning the curve itself off is `tonemap`.
+            self._draw_tonemap()
+            if self.antialiasing or self.speed_line_strength > 0.0:
+                self._draw_fxaa(window_size)
+            else:
+                self._post_framebuffer.unbind()
+                self._post_framebuffer.draw('tonemapped', window_size)
         else:
             self.main_framebuffer.unbind()
             self.main_framebuffer.draw(self.output_channel, window_size)
+
+    def _render_ao(self, camera):
+        """Fills the AO buffer from the G-buffer, then blurs the dither out
+        of it - see shaders.AO_FRAG.
+
+        Runs after the G-buffer is complete and before the lighting
+        composite, which is the only window where world position and normal
+        exist for every visible surface and nothing has been lit yet."""
+        texture_manager = self.renderer.texture_manager
+
+        self._ao_framebuffer.bind()
+        # White is "nothing occludes this", so anything the pass skips (the
+        # sky) stays unshaded rather than arriving black.
+        self.renderer.clear(Color("#FFFFFFFF"))
+        self.renderer.disable_depth_testing()
+
+        shader = self._ao_shader
+        shader['gWorldPos'] = texture_manager.wrap_external_texture(
+            self.main_framebuffer.get_attachment_texture('gWorldPos'))
+        shader['gWorldNormal'] = texture_manager.wrap_external_texture(
+            self.main_framebuffer.get_attachment_texture('gWorldNormal'))
+        # Same `view @ proj` composition order, and the same reason, as the
+        # shadow matrix - see render()'s note.
+        shader['ViewProj'] = camera.view_matrix @ camera.proj_matrix
+        shader['ViewPos'] = self._camera_view_pos(camera)
+        shader['Radius'] = self.ao_radius
+        shader['Strength'] = self.ao_strength
+        shader['Bias'] = self.ao_bias
+        shader['model'] = self._identity_model
+        shader.use()
+        self._composite_quad.draw()
+        self._ao_framebuffer.unbind()
+
+        self._ao_blur_framebuffer.bind()
+        self.renderer.clear(Color("#FFFFFFFF"))
+        blur = self._ao_blur_shader
+        blur['AOMap'] = texture_manager.wrap_external_texture(
+            self._ao_framebuffer.get_attachment_texture('ao'))
+        blur['InverseResolution'] = (
+            1.0 / max(self._ao_framebuffer.width, 1),
+            1.0 / max(self._ao_framebuffer.height, 1),
+        )
+        blur['model'] = self._identity_model
+        blur.use()
+        self._composite_quad.draw()
+        self._ao_blur_framebuffer.unbind()
+
+    def _draw_tonemap(self):
+        """Maps the composite's radiance onto what a screen can show - see
+        shaders.TONEMAP_FRAG.
+
+        Its own pass rather than a few lines at the end of the composite,
+        because the forward-shaded transparent objects are drawn onto 'lit'
+        *after* the composite has run: tonemapping inside it would map the
+        opaque world and leave everything blended on top of it unmapped, at
+        a different exposure. One pass over the finished image maps all of
+        it once. It is also what FXAA then runs on, which is what FXAA
+        wants - its edge detection is a luma threshold, and luma only means
+        anything on display-referred values."""
+        self._post_framebuffer.bind()
+        self.renderer.disable_depth_testing()
+
+        shader = self._tonemap_shader
+        shader['Screen'] = self.renderer.texture_manager.wrap_external_texture(
+            self.main_framebuffer.get_attachment_texture('lit'))
+        shader['Exposure'] = self.exposure
+        # `unlit` means the scene's colours are already final - running them
+        # through a filmic curve would be a second opinion nobody asked for.
+        shader['TonemapEnabled'] = bool(self.tonemap) and not bool(self.unlit)
+        shader['model'] = self._identity_model
+        shader.use()
+        self._composite_quad.draw()
+        self._post_framebuffer.unbind()
 
     def _draw_fxaa(self, window_size: tuple[int, int]):
         """Resolves 'lit' to the screen through the FXAA shader.
@@ -730,11 +940,15 @@ class PBRPipeline(GraphicsPipeline):
         """
         self.renderer.bind_window_framebuffer(window_size)
 
-        lit_texture = self.main_framebuffer.get_attachment_texture('lit')
+        # The tonemapped image, not 'lit' itself: FXAA thresholds on luma,
+        # and a luma taken from unmapped radiance has no fixed meaning - the
+        # same edge passes or fails the test depending on how bright the
+        # scene happens to be.
+        lit_texture = self._post_framebuffer.get_attachment_texture('tonemapped')
         self._fxaa_shader['Screen'] = self.renderer.texture_manager.wrap_external_texture(lit_texture)
         self._fxaa_shader['InverseResolution'] = (
-            1.0 / max(self.main_framebuffer.width, 1),
-            1.0 / max(self.main_framebuffer.height, 1),
+            1.0 / max(self._post_framebuffer.width, 1),
+            1.0 / max(self._post_framebuffer.height, 1),
         )
         self._fxaa_shader['EdgeThreshold'] = self.fxaa_edge_threshold
         self._fxaa_shader['EdgeThresholdMin'] = self.fxaa_edge_threshold_min

@@ -170,8 +170,7 @@ def shadow_factor(world_pos: vec3) -> float:
         return 1.0
 
     frag_depth: float = ndc.z * 0.5 + 0.5
-    bias: float = 0.0025
-    biased_depth: float = frag_depth - bias
+    biased_depth: float = frag_depth - ShadowBias
 
     # Percentage-closer filtering: sixteen comparisons on a 4x4 grid around
     # the sample point, averaged.
@@ -411,6 +410,10 @@ ShadowMap: texture
 # many texels wide the PCF kernel reaches - see shadow_factor.
 ShadowTexelSize: float
 ShadowSoftnessRadius: float
+# How far a surface may sit behind the depth the shadow map recorded for it
+# before it counts as shadowed, as a fraction of the shadow frustum's depth
+# range - set from the texel size, see PBRPipeline._apply_lighting_uniforms.
+ShadowBias: float
 # Distance fog. `FogColor` is what a surface fades to, `FogStart` the
 # distance it begins at and `FogEnd` where it is fully fogged; `FogDensity`
 # scales the whole effect (0 disables it). Fog is applied in the composite
@@ -477,6 +480,13 @@ gMetallic: texture
 gWorldPos: texture
 gWorldNormal: texture
 gNormal: texture
+# Ambient occlusion, as a full-screen single-channel mask - see AO_FRAG.
+# It scales the ambient term only: the sun is a directional light with a
+# shadow map of its own, and darkening direct light by a screen-space
+# approximation of nearby geometry would double-count what the shadow map
+# already says.
+AOMap: texture
+AOEnabled: bool
 {_LIGHT_UNIFORM_BLOCK}
 @input
 uv: vec2
@@ -529,9 +539,14 @@ def main() -> void:
         roughness: float = clamp(sample(gRoughness, uv).x, 0.04, 1.0)
         metallic: float = sample(gMetallic, uv).x
 
+        ambient: vec3 = Ambient
+        if AOEnabled == True:
+            ao: float = sample(AOMap, uv).x
+            ambient = vec3(Ambient.x * ao, Ambient.y * ao, Ambient.z * ao)
+
         shaded: vec3 = vec3(albedo.x + emissive.x, albedo.y + emissive.y, albedo.z + emissive.z)
         if Unlit == False:
-            shaded = accumulate_lighting(world_pos, normal, ViewPos, albedo, roughness, metallic, emissive, Ambient)
+            shaded = accumulate_lighting(world_pos, normal, ViewPos, albedo, roughness, metallic, emissive, ambient)
 
         # Distance fog, from the camera to this fragment's world position.
         # Linear between FogStart and FogEnd rather than exponential: a
@@ -769,4 +784,227 @@ def main() -> void:
 
     resolved = speed_lines(resolved, uv)
     result = vec4(resolved.x, resolved.y, resolved.z, 1.0)
+"""
+
+
+# Screen-space ambient occlusion, as its own fullscreen pass between the
+# G-buffer and the lighting composite - see PBRPipeline._render_ao.
+#
+# What it is for: a directional light's shadow map says what the *sun* can't
+# see, at the resolution of a map spread over the whole view. It has nothing
+# to say about the small-scale contact between surfaces - the darkening in
+# the inch where a wheel meets tarmac, along the base of a wall, inside a
+# doorway. Without it every object in a scene reads as pasted onto the one
+# behind rather than standing in front of it, and a box city looks like a
+# decal sheet however good its shadows are.
+#
+# The G-buffer already carries world position and world normal at full float
+# precision, so this needs no depth reconstruction and no inverse-projection
+# matrix: a sample point is a world position, and finding what the camera
+# actually sees there is one projection through ViewProj and one texture
+# read. The tap count is fixed and unrolled for the same reason the shadow
+# PCF is - a loop over an array of offsets is not worth the FBUSL surface it
+# would need.
+_AO_TAPS = [
+    # Direction, then how far along it to sample as a fraction of Radius.
+    # Spread across the range rather than all at one distance: samples all
+    # at the rim measure a shell, not a volume, and miss the near contact
+    # that is the whole point.
+    ((0.53, 0.42, 0.74), 0.30), ((-0.62, 0.35, 0.70), 0.45),
+    ((0.31, -0.58, 0.75), 0.60), ((-0.27, -0.66, 0.70), 0.75),
+    ((0.86, 0.12, 0.49), 0.35), ((-0.80, 0.26, 0.54), 0.50),
+    ((0.18, 0.88, 0.44), 0.65), ((-0.11, -0.90, 0.42), 0.80),
+    ((0.64, -0.46, 0.61), 0.40), ((-0.55, -0.49, 0.67), 0.55),
+    ((0.39, 0.71, 0.58), 0.70), ((-0.44, 0.68, 0.59), 0.90),
+]
+
+AO_FRAG = """
+@uniform
+gWorldPos: texture
+gWorldNormal: texture
+# The camera's view * projection, in the same row-vector convention
+# ShadowMatrix uses (see PBRPipeline.render's note on `view @ proj`): a
+# numpy array arrives at a GL mat4 transposed, so `ViewProj * v` here is
+# the row-vector `v @ ViewProj` the rest of the engine composes.
+ViewProj: mat4
+ViewPos: vec3
+# How far out, in world units, a surface looks for geometry that occludes
+# it. This is the scale of the effect: a metre reads as contact shading
+# around objects, ten metres as a soft darkening of whole alcoves.
+Radius: float
+# How much of the ambient term the full occlusion of a point removes.
+Strength: float
+# How much nearer the camera an occluder has to be before it counts, in
+# world units - the slop that stops a flat surface shading itself from its
+# own samples the way a shadow map needs a depth bias.
+Bias: float
+
+@output
+result: vec4
+
+@input
+uv: vec2
+
+def ao_tap(origin: vec3, normal: vec3, direction: vec3, distance: float) -> float:
+    # Into the hemisphere the surface actually faces: a direction pointing
+    # into the surface is flipped rather than discarded, which keeps every
+    # tap useful and biases the set toward the normal the way a cosine
+    # distribution would.
+    facing: float = dot(direction, normal)
+    d: vec3 = direction
+    if facing < 0.0:
+        d = vec3(-direction.x, -direction.y, -direction.z)
+
+    # Lifted along the normal before being pushed out, so a tap along a
+    # near-tangent direction starts above the surface instead of inside it.
+    sample_pos: vec3 = origin + normal * (Bias * 0.5) + d * distance
+
+    clip: vec4 = ViewProj * vec4(sample_pos.x, sample_pos.y, sample_pos.z, 1.0)
+    if clip.w < 0.0001:
+        return 0.0
+
+    ndc: vec3 = vec3(clip.x / clip.w, clip.y / clip.w, clip.z / clip.w)
+    tap_uv: vec2 = vec2(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5)
+
+    # Separate ifs, not an or-chain: FBUSL's expression parser does not fold
+    # keyword-lexed and/or into its precedence climb - see shadow_factor.
+    in_bounds: bool = True
+    if tap_uv.x < 0.0:
+        in_bounds = False
+    if tap_uv.x > 1.0:
+        in_bounds = False
+    if tap_uv.y < 0.0:
+        in_bounds = False
+    if tap_uv.y > 1.0:
+        in_bounds = False
+    if in_bounds == False:
+        return 0.0
+
+    occluder4: vec4 = sample(gWorldPos, tap_uv)
+    # Sky, or anything else that wrote no geometry: open, not occluding.
+    if occluder4.w < 0.5:
+        return 0.0
+    occluder: vec3 = vec3(occluder4.x, occluder4.y, occluder4.z)
+
+    # Occluded when what the camera sees in that direction is nearer than
+    # the point being tested - the standard SSAO comparison, done on world
+    # distance from the eye rather than on buffer depth so it needs no
+    # knowledge of the projection's near/far.
+    to_sample: vec3 = sample_pos - ViewPos
+    to_occluder: vec3 = occluder - ViewPos
+    sample_distance: float = sqrt(dot(to_sample, to_sample))
+    occluder_distance: float = sqrt(dot(to_occluder, to_occluder))
+    if sample_distance - occluder_distance < (Bias):
+        return 0.0
+
+    # Range check. Without it a wall a hundred metres behind a railing
+    # occludes it completely, because it is nearer the camera than the
+    # sample point by far more than the bias - the classic SSAO halo. Fades
+    # the tap out as the occluder's real distance from this surface passes
+    # the radius.
+    gap: vec3 = occluder - origin
+    gap_distance: float = sqrt(dot(gap, gap))
+    return clamp(Radius / max(gap_distance, 0.0001), 0.0, 1.0)
+
+def main() -> void:
+    origin4: vec4 = sample(gWorldPos, uv)
+    # No geometry here (sky): nothing to occlude, and writing 1 keeps the
+    # blur below from dragging darkness in off the horizon.
+    if origin4.w < 0.5:
+        result = vec4(1.0, 1.0, 1.0, 1.0)
+        return
+
+    origin: vec3 = vec3(origin4.x, origin4.y, origin4.z)
+    normal4: vec4 = sample(gWorldNormal, uv)
+    normal: vec3 = normalize(vec3(normal4.x, normal4.y, normal4.z))
+
+    # Twelve fixed directions shade in rings - visible as banding on a large
+    # flat surface. Scaling each pixel's radius by a hash of its position
+    # turns that into noise, which the blur pass then removes. Keeps a
+    # majority of the radius so the effect's scale stays what it says.
+    hashed: float = fract(sin(uv.x * 12.9898 + uv.y * 78.233) * 43758.5453)
+    radius: float = Radius * (0.65 + 0.35 * hashed)
+
+    occlusion: float = 0.0
+""" + "\n".join(
+    f"    occlusion = occlusion + ao_tap(origin, normal, vec3({d[0]}, {d[1]}, {d[2]}), radius * {dist})"
+    for d, dist in _AO_TAPS
+) + f"""
+
+    ao: float = clamp(1.0 - occlusion / {float(len(_AO_TAPS))} * Strength, 0.0, 1.0)
+    result = vec4(ao, ao, ao, 1.0)
+"""
+
+
+# The AO pass's noise removal: a plain 4x4 box blur. Separable would be two
+# passes for the same result, which is only a win at a far larger kernel
+# than this.
+AO_BLUR_FRAG = """
+@uniform
+AOMap: texture
+InverseResolution: vec2
+
+@output
+result: vec4
+
+@input
+uv: vec2
+
+def main() -> void:
+    total: float = 0.0
+""" + "\n".join(
+    f"    total = total + sample(AOMap, vec2(uv.x + InverseResolution.x * {dx}.5, uv.y + InverseResolution.y * {dy}.5)).x"
+    for dx in (-2, -1, 0, 1) for dy in (-2, -1, 0, 1)
+) + """
+
+    blurred: float = total / 16.0
+    result = vec4(blurred, blurred, blurred, 1.0)
+"""
+
+
+# Exposure and tonemapping: the pipeline's HDR -> display pass.
+#
+# The lighting composite writes real radiance into a float buffer, where a
+# sunlit white surface is comfortably past 1.0 and a highlight on wet tarmac
+# further still. Sent straight to an 8-bit screen all of that clips to the
+# same flat white, which is what makes a bright scene look washed out no
+# matter how carefully it is lit: there is no headroom, so every lit surface
+# arrives at the same value and all the modelling in the light is thrown
+# away. The curve below is Narkowicz's fit of the ACES filmic response - it
+# rolls highlights off smoothly into white instead of clipping them, and
+# puts some contrast back into the midtones on the way.
+TONEMAP_FRAG = """
+@uniform
+Screen: texture
+# A stop multiplier applied before the curve. This is the exposure control:
+# raising it brightens the image and pushes more of it into the shoulder,
+# the same way a camera's would.
+Exposure: float
+# Off, this pass is a straight copy - for a 2D or flat-shaded project whose
+# colours are authored as final output rather than as light.
+TonemapEnabled: bool
+
+@output
+result: vec4
+
+@input
+uv: vec2
+
+def tonemap_channel(x: float) -> float:
+    a: float = 2.51
+    b: float = 0.03
+    c: float = 2.43
+    d: float = 0.59
+    e: float = 0.14
+    return clamp(x * (a * x + b) / (x * (c * x + d) + e), 0.0, 1.0)
+
+def main() -> void:
+    source: vec4 = sample(Screen, uv)
+    colour: vec3 = vec3(source.x, source.y, source.z)
+
+    if TonemapEnabled == True:
+        exposed: vec3 = vec3(colour.x * Exposure, colour.y * Exposure, colour.z * Exposure)
+        colour = vec3(tonemap_channel(exposed.x), tonemap_channel(exposed.y), tonemap_channel(exposed.z))
+
+    result = vec4(colour.x, colour.y, colour.z, source.w)
 """

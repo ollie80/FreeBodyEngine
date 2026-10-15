@@ -104,6 +104,10 @@ ShadowMap: texture
 # opaque one standing next to each other get the same shadow edge.
 ShadowTexelSize: float
 ShadowSoftnessRadius: float
+# Likewise the depth slop, which the pipeline derives from the shadow map's
+# texel size rather than fixing as a constant - see
+# PBRPipeline._apply_lighting_uniforms.
+ShadowBias: float
 # Distance fog, kept identical to the deferred composite's so a transparent
 # surface fades into the distance the same way the opaque world does.
 FogColor: vec3
@@ -223,8 +227,7 @@ def shadow_factor(world_pos: vec3) -> float:
         return 1.0
 
     frag_depth: float = ndc.z * 0.5 + 0.5
-    bias: float = 0.0025
-    biased_depth: float = frag_depth - bias
+    biased_depth: float = frag_depth - ShadowBias
 
     # 16-tap percentage-closer filtering, matching the deferred composite's
     # (graphics/pbr/shaders.py) tap for tap - see the long note there for
