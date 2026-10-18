@@ -186,6 +186,10 @@ class HeadlessWindow(Window):
     def set_title(self, new_title):
         """No-op - a headless window is never shown, so it has no visible title to set."""
         pass
+    
+    @property
+    def framebuffer_size(self) -> tuple:
+        return (0, 0)
 
     @property
     def size(self) -> tuple[int, int]:
