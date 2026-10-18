@@ -983,6 +983,18 @@ Exposure: float
 # Off, this pass is a straight copy - for a 2D or flat-shaded project whose
 # colours are authored as final output rather than as light.
 TonemapEnabled: bool
+# Grade, applied after the curve. 1.0 leaves the image alone.
+#
+# Saturation and contrast are here because they are the other half of
+# miniature faking: a tilt-shifted photograph is always pushed in both,
+# since real miniatures are painted in brighter, flatter colour than the
+# world and the eye expects a toy to be vivid. Blur alone reads as a lens
+# fault; blur plus saturation reads as a model.
+Saturation: float
+Contrast: float
+# Darkens the corners. A diorama is lit by one lamp over a table, and the
+# fall-off at the edge of the frame is most of what says so.
+Vignette: float
 
 @output
 result: vec4
@@ -1006,5 +1018,255 @@ def main() -> void:
         exposed: vec3 = vec3(colour.x * Exposure, colour.y * Exposure, colour.z * Exposure)
         colour = vec3(tonemap_channel(exposed.x), tonemap_channel(exposed.y), tonemap_channel(exposed.z))
 
-    result = vec4(colour.x, colour.y, colour.z, source.w)
+    # Saturation about this pixel's own luminance, so neutrals stay
+    # neutral and only the colour in the image is pushed.
+    luma: float = colour.x * 0.299 + colour.y * 0.587 + colour.z * 0.114
+    grey: vec3 = vec3(luma, luma, luma)
+    colour = mix(grey, colour, Saturation)
+
+    # Contrast about mid grey rather than black, which is what keeps a
+    # push from simply brightening or darkening the whole frame.
+    mid: vec3 = vec3(0.5, 0.5, 0.5)
+    colour = mix(mid, colour, Contrast)
+
+    # Vignette, as a smooth fall-off from the centre of the frame.
+    dx: float = uv.x - 0.5
+    dy: float = uv.y - 0.5
+    radius: float = sqrt(dx * dx + dy * dy) * 1.41421
+    shade: float = 1.0 - clamp((radius - 0.45) / 0.55, 0.0, 1.0) * Vignette
+    colour = vec3(colour.x * shade, colour.y * shade, colour.z * shade)
+
+    # One line: FBUSL ends a statement at the newline.
+    out_r: float = clamp(colour.x, 0.0, 1.0)
+    out_g: float = clamp(colour.y, 0.0, 1.0)
+    out_b: float = clamp(colour.z, 0.0, 1.0)
+    result = vec4(out_r, out_g, out_b, source.w)
+"""
+
+
+# Depth of field: a circle-of-confusion pass, a bokeh gather, and a
+# composite - see PBRPipeline._draw_dof.
+#
+# Why this is worth three passes to a game about a toy: a shallow focal
+# plane is the strongest scale cue an image has. A camera a metre from a
+# building has everything sharp; a macro lens a hand's width from a model
+# has a band of focus a few centimetres deep and mush either side. Eyes
+# read that before they read anything else, which is why a tilt-shifted
+# photograph of a real city looks like a train set.
+#
+# The approach is the standard production one - half-resolution gather,
+# signed circle of confusion, background clamped against the centre pixel
+# - plus the golden-angle spiral from Dennis Gustafsson's single-pass
+# bokeh, which is what gets a round, even bokeh out of a few dozen taps
+# instead of the cross-shaped spokes a naive ring gives.
+#
+# Three things this does that the first attempt did not:
+#
+#   * The blur radius is per pixel, driven by how far out of focus that
+#     pixel is, rather than one radius for the whole frame mixed in by
+#     distance. That is the difference between progressive defocus and a
+#     fog of uniform blur.
+#   * A sharp foreground can no longer bleed into the blurred background.
+#     A background sample's size is clamped against the centre pixel's,
+#     which is the standard fix for the halo that otherwise appears around
+#     every in-focus object.
+#   * It runs before the tonemap, on radiance. Bokeh is only photographic
+#     when a bright highlight spreads into a bright *disc*, and a highlight
+#     that has already been rolled off to white by the curve has nothing
+#     left to spread.
+
+#: The angle between successive spiral samples: 137.5 degrees. Any
+#: rational fraction of a turn lines samples up into spokes; the golden
+#: angle is the most irrational number there is, so they never do.
+GOLDEN_ANGLE = 2.39996323
+
+#: Taps in the gather, and the furthest one, in half-resolution texels.
+#: The spiral's spacing is derived from the two so the disc is filled
+#: evenly - radius grows as the square root of the sample index, which is
+#: what distributes points uniformly over a disc rather than crowding them
+#: at the middle.
+DOF_TAPS = 48
+DOF_MAX_BLUR = 10.0
+
+#: Where the spiral starts, in texels. Not zero and not large: the first
+#: version started its innermost tap two texels out, which left a hole in
+#: the middle of every disc and was half of why the blur broke into
+#: visible cells.
+DOF_INNER = 0.6
+
+
+def _dof_spiral(taps: int, max_blur: float, inner: float = DOF_INNER):
+    """(x, y, radius) per tap, as a golden-angle spiral.
+
+    Radius grows as the square root of the sample index, which is what
+    spreads points evenly over a disc instead of crowding them at the
+    centre, and the step is solved so the last tap lands exactly on
+    `max_blur` however many taps there are.
+    """
+    import math
+
+    step = (max_blur * max_blur - inner * inner) / (2.0 * max(taps - 1, 1))
+    points = []
+    radius = inner
+    angle = 0.0
+    for _ in range(taps):
+        points.append((math.cos(angle) * radius, math.sin(angle) * radius, radius))
+        radius = math.sqrt(radius * radius + 2.0 * step)
+        angle += GOLDEN_ANGLE
+    return points
+
+
+DOF_COC_FRAG = """
+@uniform
+Screen: texture
+gWorldPos: texture
+ViewPos: vec3
+# How far either side of the focal distance stays sharp, and how far past
+# that the blur reaches full strength, in world units.
+FocusRange: float
+FocusFalloff: float
+# Tilt-shift proper: blur added toward the top and bottom of the frame
+# whatever the depth there is. The depth term alone is a photographic
+# effect; this band is the one that says "diorama", and it is what the
+# Link's Awakening remake leans on. 0 disables it.
+TiltStrength: float
+# Where the sharp band ends, as a fraction of half the screen height.
+TiltBand: float
+
+@output
+result: vec4
+
+@input
+uv: vec2
+
+def distance_to(point: vec4) -> float:
+    dx: float = point.x - ViewPos.x
+    dy: float = point.y - ViewPos.y
+    dz: float = point.z - ViewPos.z
+    return sqrt(dx * dx + dy * dy + dz * dz)
+
+def main() -> void:
+    colour: vec4 = sample(Screen, uv)
+
+    # Focus on whatever is in the middle of the screen, which in a chase
+    # camera is always the thing being chased. An explicit focus distance
+    # would have to be driven per frame by whatever the camera follows,
+    # and would be wrong on the frame it changed; this is one fetch and is
+    # never wrong.
+    centre: vec4 = sample(gWorldPos, vec2(0.5, 0.5))
+    focus: float = distance_to(centre)
+    if centre.w < 0.5:
+        focus = 400.0
+
+    here: vec4 = sample(gWorldPos, uv)
+    depth: float = distance_to(here)
+    # The sky belongs at infinity, not at the origin, which is where an
+    # unwritten gWorldPos texel would otherwise put it.
+    if here.w < 0.5:
+        depth = 2000.0
+
+    # Signed: negative in front of the focal plane, positive behind it.
+    # The sign is what lets the gather tell a near-field sample (which may
+    # spill over a sharp edge) from a far-field one (which may not).
+    gap: float = depth - focus
+    coc: float = 0.0
+    if gap > FocusRange:
+        coc = (gap - FocusRange) / max(FocusFalloff, 0.0001)
+    if gap < -FocusRange:
+        coc = (gap + FocusRange) / max(FocusFalloff, 0.0001)
+    coc = clamp(coc, -1.0, 1.0)
+
+    # The tilt band, taken on top of whatever the depth asked for.
+    offset: float = abs(uv.y - 0.5) * 2.0
+    band: float = clamp((offset - TiltBand) / max(1.0 - TiltBand, 0.0001), 0.0, 1.0)
+    band = band * band * (3.0 - 2.0 * band) * TiltStrength
+    if band > abs(coc):
+        coc = band
+
+    result = vec4(colour.x, colour.y, colour.z, coc)
+"""
+
+
+DOF_BOKEH_FRAG = """
+@uniform
+# Colour in rgb, signed circle of confusion in a - see DOF_COC_FRAG.
+Source: texture
+# One texel of the half-resolution buffer, in uv.
+TexelSize: vec2
+MaxBlur: float
+
+@output
+result: vec4
+
+@input
+uv: vec2
+
+def main() -> void:
+    centre: vec4 = sample(Source, uv)
+    centre_coc: float = centre.w
+    centre_size: float = abs(centre_coc) * MaxBlur
+
+    # The running average, seeded with the centre sample. Every tap either
+    # contributes its own colour or contributes the average so far, which
+    # is what keeps the disc's edge from darkening where samples are
+    # rejected.
+    total: vec3 = vec3(centre.x, centre.y, centre.z)
+    count: float = 1.0
+
+    # The whole spiral is turned by a per-pixel angle. Without this every
+    # pixel samples the same 48 directions, and a sparse fixed pattern
+    # repeated across the screen reads as cells rather than as blur -
+    # turning it scatters the error into noise, which is what the eye
+    # (and the half-resolution upsample) forgives.
+    hashed: float = fract(sin(uv.x * 12.9898 + uv.y * 78.233) * 43758.5453)
+    spin: float = hashed * 6.28318
+    spin_c: float = cos(spin)
+    spin_s: float = sin(spin)
+
+""" + "\n".join(f"""    ox{i}: float = {x:.4f} * spin_c - {y:.4f} * spin_s
+    oy{i}: float = {x:.4f} * spin_s + {y:.4f} * spin_c
+    s{i}: vec4 = sample(Source, vec2(uv.x + TexelSize.x * ox{i}, uv.y + TexelSize.y * oy{i}))
+    size{i}: float = abs(s{i}.w) * MaxBlur
+    # A sample further from the camera than this pixel may only blur into
+    # it up to about this pixel's own blur - without that clamp a sharp
+    # foreground smears a halo across everything behind it.
+    if s{i}.w > centre_coc:
+        size{i} = min(size{i}, centre_size * 2.0)
+    m{i}: float = smoothstep({r:.4f} - 0.5, {r:.4f} + 0.5, size{i})
+    inv{i}: float = 1.0 / count
+    avg{i}: vec3 = total * inv{i}
+    total = total + mix(avg{i}, vec3(s{i}.x, s{i}.y, s{i}.z), m{i})
+    count = count + 1.0"""
+                 for i, (x, y, r) in enumerate(_dof_spiral(DOF_TAPS, DOF_MAX_BLUR))) + """
+
+    final: vec3 = total / count
+    result = vec4(final.x, final.y, final.z, centre_coc)
+"""
+
+
+DOF_COMPOSITE_FRAG = """
+@uniform
+Sharp: texture
+# The half-resolution gather, with the circle of confusion still in alpha.
+Bokeh: texture
+Strength: float
+
+@output
+result: vec4
+
+@input
+uv: vec2
+
+def main() -> void:
+    sharp: vec4 = sample(Sharp, uv)
+    blurred: vec4 = sample(Bokeh, uv)
+
+    # Mixed by how far out of focus this pixel is, so a pixel on the focal
+    # plane keeps its full resolution and nothing in focus is ever
+    # softened by the half-resolution gather.
+    blend: float = clamp(abs(blurred.w) * Strength, 0.0, 1.0)
+    crisp: vec3 = vec3(sharp.x, sharp.y, sharp.z)
+    soft: vec3 = vec3(blurred.x, blurred.y, blurred.z)
+    mixed: vec3 = mix(crisp, soft, blend)
+    result = vec4(mixed.x, mixed.y, mixed.z, sharp.w)
 """

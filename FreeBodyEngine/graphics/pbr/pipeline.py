@@ -50,7 +50,9 @@ from FreeBodyEngine.graphics.pbr.material import PBRMaterial
 from FreeBodyEngine.graphics.lighting import Light, LightType
 from FreeBodyEngine.graphics.pbr.shaders import (MAX_LIGHTS, LIGHTING_COMPOSITE_VERT,
                                                  LIGHTING_COMPOSITE_FRAG, FXAA_VERT, FXAA_FRAG,
-                                                 AO_FRAG, AO_BLUR_FRAG, TONEMAP_FRAG)
+                                                 AO_FRAG, AO_BLUR_FRAG, TONEMAP_FRAG,
+                                                 DOF_COC_FRAG, DOF_BOKEH_FRAG,
+                                                 DOF_COMPOSITE_FRAG, DOF_MAX_BLUR)
 
 from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
 # TilemapRenderer is deliberately not imported. Nothing here uses the
@@ -215,10 +217,53 @@ class PBRPipeline(GraphicsPipeline):
         # reason.
         self.tonemap = True
         self.exposure = 1.0
+        # Grade, applied after the curve - 1.0 and 0.0 leave the image
+        # alone. See shaders.TONEMAP_FRAG for why saturation and contrast
+        # belong with a miniature look rather than being gratuitous.
+        self.saturation = 1.0
+        self.contrast = 1.0
+        self.vignette = 0.0
+        self._dof_view_pos = Vector3(0.0, 0.0, 0.0)
         self._tonemap_shader = self.renderer.load_shader(FXAA_VERT, TONEMAP_FRAG, Injector(), None)
         self._post_framebuffer = self.renderer.create_framebuffer(
             self.main_framebuffer.width, self.main_framebuffer.height, {
                 'tonemapped': (AttachmentType.COLOR, AttachmentFormat.RGBA8),
+            })
+
+        # Depth of field - see shaders.DOF_COMPOSITE_FRAG. Off by default:
+        # it is a look, not a correction, and a project that has not asked
+        # for it should not pay two passes for it.
+        self.dof = False
+        # Metres either side of whatever is in the middle of the screen
+        # that stay sharp, and how far past that the blur reaches full
+        # strength.
+        self.dof_range = 14.0
+        self.dof_falloff = 40.0
+        self.dof_strength = 1.0
+        # Tilt-shift: blur toward the top and bottom of the frame whatever
+        # the depth is there. The depth term is the photographic effect;
+        # this band is the one that reads as "diorama". 0 turns it off.
+        self.dof_tilt = 0.0
+        self.dof_tilt_band = 0.55
+        self._dof_coc_shader = self.renderer.load_shader(FXAA_VERT, DOF_COC_FRAG, Injector(), None)
+        self._dof_bokeh_shader = self.renderer.load_shader(FXAA_VERT, DOF_BOKEH_FRAG, Injector(), None)
+        self._dof_shader = self.renderer.load_shader(FXAA_VERT, DOF_COMPOSITE_FRAG, Injector(), None)
+
+        # Half resolution, and float: the gather runs on radiance, before
+        # the tonemap, because a highlight that has already been rolled off
+        # to white has nothing left to spread into a bright disc. Alpha
+        # carries the signed circle of confusion through both passes.
+        half = (max(self.main_framebuffer.width // 2, 1),
+                max(self.main_framebuffer.height // 2, 1))
+        self._dof_coc = self.renderer.create_framebuffer(half[0], half[1], {
+            'coc': (AttachmentType.COLOR, AttachmentFormat.RGBA16F),
+        })
+        self._dof_bokeh = self.renderer.create_framebuffer(half[0], half[1], {
+            'bokeh': (AttachmentType.COLOR, AttachmentFormat.RGBA16F),
+        })
+        self._dof_framebuffer = self.renderer.create_framebuffer(
+            self.main_framebuffer.width, self.main_framebuffer.height, {
+                'focused': (AttachmentType.COLOR, AttachmentFormat.RGBA16F),
             })
 
         # Ambient occlusion - see shaders.AO_FRAG. Two framebuffers because
@@ -272,6 +317,9 @@ class PBRPipeline(GraphicsPipeline):
         than failing outright."""
         self.main_framebuffer.resize(size)
         self._post_framebuffer.resize(size)
+        self._dof_framebuffer.resize(size)
+        self._dof_coc.resize((max(size[0] // 2, 1), max(size[1] // 2, 1)))
+        self._dof_bokeh.resize((max(size[0] // 2, 1), max(size[1] // 2, 1)))
         self._ao_framebuffer.resize(size)
         self._ao_blur_framebuffer.resize(size)
 
@@ -781,6 +829,10 @@ class PBRPipeline(GraphicsPipeline):
             self.main_framebuffer.set_draw_buffers(self._gbuffer_attachments)
         self._ao_active = ao_active
 
+        # Kept for the depth-of-field composite, which runs after the
+        # scene is finished and no longer has the camera to hand.
+        self._dof_view_pos = self._camera_view_pos(camera)
+
         shadow_matrix = (shadow_view @ shadow_proj) if shadow_light is not None else None
         transparent_shaders_seen = set()
         for call in self.renderer.calls:
@@ -841,6 +893,8 @@ class PBRPipeline(GraphicsPipeline):
             # attachment holding radiance, skipping this would not mean "no
             # tonemapping", it would mean handing an 8-bit screen values it
             # cannot show. Turning the curve itself off is `tonemap`.
+            if self.dof:
+                self._draw_dof()
             self._draw_tonemap()
             if self.antialiasing or self.speed_line_strength > 0.0:
                 self._draw_fxaa(window_size)
@@ -912,17 +966,81 @@ class PBRPipeline(GraphicsPipeline):
         self._post_framebuffer.bind()
         self.renderer.disable_depth_testing()
 
+        # The depth-of-field result if it ran, the raw lit buffer if not.
+        source = self.main_framebuffer.get_attachment_texture('lit')
+        if self.dof:
+            source = self._dof_framebuffer.get_attachment_texture('focused')
+
         shader = self._tonemap_shader
-        shader['Screen'] = self.renderer.texture_manager.wrap_external_texture(
-            self.main_framebuffer.get_attachment_texture('lit'))
+        shader['Screen'] = self.renderer.texture_manager.wrap_external_texture(source)
         shader['Exposure'] = self.exposure
         # `unlit` means the scene's colours are already final - running them
         # through a filmic curve would be a second opinion nobody asked for.
         shader['TonemapEnabled'] = bool(self.tonemap) and not bool(self.unlit)
+        shader['Saturation'] = self.saturation
+        shader['Contrast'] = self.contrast
+        shader['Vignette'] = self.vignette
         shader['model'] = self._identity_model
         shader.use()
         self._composite_quad.draw()
         self._post_framebuffer.unbind()
+
+    def _draw_dof(self):
+        """Circle of confusion, bokeh gather, composite.
+
+        Runs on the lit buffer before the tonemap, and writes a buffer the
+        tonemap then reads instead - so everything downstream is unchanged
+        and the curve rolls off bokeh highlights rather than the other way
+        round.
+        """
+        texture_manager = self.renderer.texture_manager
+        lit = self.main_framebuffer.get_attachment_texture('lit')
+
+        # 1. Half-resolution colour, with the signed circle of confusion
+        #    packed into alpha.
+        self._dof_coc.bind()
+        self.renderer.disable_depth_testing()
+        shader = self._dof_coc_shader
+        shader['Screen'] = texture_manager.wrap_external_texture(lit)
+        shader['gWorldPos'] = texture_manager.wrap_external_texture(
+            self.main_framebuffer.get_attachment_texture('gWorldPos'))
+        shader['ViewPos'] = self._dof_view_pos
+        shader['FocusRange'] = self.dof_range
+        shader['FocusFalloff'] = self.dof_falloff
+        shader['TiltStrength'] = self.dof_tilt
+        shader['TiltBand'] = self.dof_tilt_band
+        shader['model'] = self._identity_model
+        shader.use()
+        self._composite_quad.draw()
+        self._dof_coc.unbind()
+
+        # 2. The gather. Fixed tap count; the per-pixel radius comes out of
+        #    which taps each pixel's own circle of confusion accepts.
+        self._dof_bokeh.bind()
+        shader = self._dof_bokeh_shader
+        shader['Source'] = texture_manager.wrap_external_texture(
+            self._dof_coc.get_attachment_texture('coc'))
+        shader['TexelSize'] = (1.0 / max(self._dof_coc.width, 1),
+                               1.0 / max(self._dof_coc.height, 1))
+        shader['MaxBlur'] = DOF_MAX_BLUR
+        shader['model'] = self._identity_model
+        shader.use()
+        self._composite_quad.draw()
+        self._dof_bokeh.unbind()
+
+        # 3. Back against the full-resolution image, by how far out of
+        #    focus each pixel is - so anything sharp keeps every pixel it
+        #    had.
+        self._dof_framebuffer.bind()
+        shader = self._dof_shader
+        shader['Sharp'] = texture_manager.wrap_external_texture(lit)
+        shader['Bokeh'] = texture_manager.wrap_external_texture(
+            self._dof_bokeh.get_attachment_texture('bokeh'))
+        shader['Strength'] = self.dof_strength
+        shader['model'] = self._identity_model
+        shader.use()
+        self._composite_quad.draw()
+        self._dof_framebuffer.unbind()
 
     def _draw_fxaa(self, window_size: tuple[int, int]):
         """Resolves 'lit' to the screen through the FXAA shader.
@@ -944,11 +1062,12 @@ class PBRPipeline(GraphicsPipeline):
         # and a luma taken from unmapped radiance has no fixed meaning - the
         # same edge passes or fails the test depending on how bright the
         # scene happens to be.
-        lit_texture = self._post_framebuffer.get_attachment_texture('tonemapped')
+        source = self._post_framebuffer
+        lit_texture = source.get_attachment_texture('tonemapped')
         self._fxaa_shader['Screen'] = self.renderer.texture_manager.wrap_external_texture(lit_texture)
         self._fxaa_shader['InverseResolution'] = (
-            1.0 / max(self._post_framebuffer.width, 1),
-            1.0 / max(self._post_framebuffer.height, 1),
+            1.0 / max(source.width, 1),
+            1.0 / max(source.height, 1),
         )
         self._fxaa_shader['EdgeThreshold'] = self.fxaa_edge_threshold
         self._fxaa_shader['EdgeThresholdMin'] = self.fxaa_edge_threshold_min
