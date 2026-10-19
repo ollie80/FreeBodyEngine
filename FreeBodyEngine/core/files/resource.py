@@ -35,7 +35,14 @@ class FileResource:
 
         file_bytes = self.data.read(size, offset)
 
-        return file_bytes.decode() if len(file_bytes) > 0 else ""
+        # Line endings normalised to "\n", the way Python's own text mode
+        # does. Files checked out on Windows have "\r\n", and every pack a
+        # release build makes carries them through byte for byte - FBUSL's
+        # tokenizer rejects a '\r' outright, so a built game died compiling
+        # its very first engine shader. Bytes reads (bytes=True) are
+        # untouched.
+        text = file_bytes.decode() if len(file_bytes) > 0 else ""
+        return text.replace("\r\n", "\n").replace("\r", "\n") if "\r" in text else text
 
     def write(self, data: bytes|str, offset = -1):
         """Writes `data` at `offset` (appending at the current end of file

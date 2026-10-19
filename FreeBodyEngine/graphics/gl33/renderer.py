@@ -317,8 +317,9 @@ class GL33Renderer(Renderer):
         fixed-function polygon-mode concept, not just made it optional."""
         self.total_draw_calls += 1
         self.texture_manager.begin_draw()
+        # material.use() ends by using its shader, which binds its textures;
+        # using it a second time here bound them all again.
         material.use()
-        material.shader.use()
 
         render_mode = material.data.get('render_mode', None)
         if render_mode == "wireframe":

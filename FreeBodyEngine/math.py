@@ -368,57 +368,52 @@ class Transform3:
         translation` (row-vector convention) so a locally-authored mesh is
         scaled and rotated about its own origin before being placed in the
         world - see the note below on why the factor order matters here."""
+        # Cached on the nine numbers it is built from: the renderer asks for
+        # every model's matrix every draw (and the shadow pass again), and
+        # nearly all of them have not moved since last time. Keyed on the
+        # values rather than a dirty flag for the reason Node2D's
+        # world_transform gives - a Vector can be changed from outside
+        # without the Transform ever knowing.
+        #
+        # (This is the second `class Transform3` in this file, and the one
+        # Python keeps - the first is shadowed by it.)
         tx, ty, tz = self.position
         sx, sy, sz = self.scale
-        rx, ry, rz = map(math.radians, self.rotation)
+        rxd, ryd, rzd = self.rotation
+        key = (tx, ty, tz, rxd, ryd, rzd, sx, sy, sz)
+        cached = self.__dict__.get('_model_cache')
+        if cached is not None and cached[0] == key:
+            return cached[1]
 
+        rx, ry, rz = math.radians(rxd), math.radians(ryd), math.radians(rzd)
         cosx, sinx = math.cos(rx), math.sin(rx)
         cosy, siny = math.cos(ry), math.sin(ry)
         cosz, sinz = math.cos(rz), math.sin(rz)
 
-        rot_x = numpy.array([
-            [1,     0,      0,     0],
-            [0,   cosx,  -sinx,   0],
-            [0,   sinx,   cosx,   0],
-            [0,     0,      0,     1]
+        # rot_z @ rot_y @ rot_x, written out: the same matrix the three
+        # separate rotations used to be multiplied into, without building
+        # five arrays and doing two matrix products to get it.
+        r00 = cosz * cosy
+        r01 = cosz * siny * sinx - sinz * cosx
+        r02 = cosz * siny * cosx + sinz * sinx
+        r10 = sinz * cosy
+        r11 = sinz * siny * sinx + cosz * cosx
+        r12 = sinz * siny * cosx - cosz * sinx
+        r20 = -siny
+        r21 = cosy * sinx
+        r22 = cosy * cosx
+
+        # `scale @ rotation @ translation` (row-vector convention: a point is
+        # scaled, then rotated, then moved): scale multiplies the rotation's
+        # rows, and translation is the last row.
+        result = numpy.array([
+            [sx * r00, sx * r01, sx * r02, 0.0],
+            [sy * r10, sy * r11, sy * r12, 0.0],
+            [sz * r20, sz * r21, sz * r22, 0.0],
+            [tx, ty, tz, 1.0],
         ])
-
-        rot_y = numpy.array([
-            [cosy,  0, siny, 0],
-            [0,     1,   0,  0],
-            [-siny, 0, cosy, 0],
-            [0,     0,   0,  1]
-        ])
-
-        rot_z = numpy.array([
-            [cosz, -sinz, 0, 0],
-            [sinz,  cosz, 0, 0],
-            [0,       0,  1, 0],
-            [0,       0,  0, 1]
-        ])
-
-        scale = numpy.diag([sx, sy, sz, 1])
-
-        translation = numpy.array([
-            [1, 0, 0, 0],
-            [0, 1, 0, 0],
-            [0, 0, 1, 0],
-            [tx, ty, tz, 1]
-        ], dtype=float)
-
-        rotation = rot_z @ rot_y @ rot_x
-
-        # `translation`'s translation components live in its last ROW (a
-        # row-vector affine matrix: v' = v @ M), so composing left-to-right
-        # as `translation @ rotation @ scale` applies translation *first*
-        # and scale *last* to any point run through this matrix - meaning
-        # scale then also multiplies the translation itself (a Model3D at
-        # position (2, 0, 0) with scale 8 ended up at world (16, 0, 0), not
-        # (2, 0, 0)). Scale-then-rotate-then-translate (the standard TRS
-        # order for placing a locally-authored mesh in the world) needs the
-        # matrix factors in the opposite order: `scale @ rotation @
-        # translation`.
-        return scale @ rotation @ translation
+        self.__dict__['_model_cache'] = (key, result)
+        return result
 
     def to_matrix(self) -> numpy.ndarray:
         """This transform's 4x4 matrix - the same matrix as `model`, under

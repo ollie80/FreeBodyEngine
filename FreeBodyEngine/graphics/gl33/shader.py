@@ -304,26 +304,32 @@ class GLShader(Shader):
         equals the value already cached for this uniform, avoiding redundant
         driver calls when the same value is set every frame - as material
         properties typically are."""
-        if name not in self.uniforms:
+        uniform = self.uniforms.get(name)
+        if uniform is None:
             fb_error(f"Uniform '{name}' not found in shader")
             return
 
-        if not self.check_val_type(val, self.uniforms[name].type, name):
+        # Unchanged? Then there is nothing to do - and this is checked
+        # before validating, not after: most uniforms are set to the value
+        # they already hold (every material property, every draw), and the
+        # type check walks vectors element by element in Python. Validated
+        # only when a value is actually going to the driver.
+        cached_val = self.uniform_cache[name]
+        if isinstance(val, np.ndarray):
+            if isinstance(cached_val, np.ndarray) and val.shape == cached_val.shape                     and np.array_equal(val, cached_val):
+                return
+        elif val is cached_val:
+            return
+        elif not isinstance(cached_val, np.ndarray) and not isinstance(val, (Texture, TextureStack)):
+            if cached_val == val:
+                return
+
+        if not self.check_val_type(val, uniform.type, name):
             return
 
-        cached_val = self.uniform_cache[name]
-
-        if not isinstance(val, (Texture, TextureStack)):
-            if (not isinstance(val, np.ndarray)) and (not isinstance(cached_val, np.ndarray)):
-                if cached_val == val:
-                    return
-            else:
-                if np.array_equal(val, cached_val):
-                    return
-
-        self.uniform_cache[name] = val
-
-        uniform = self.get_uniform(name)
+        # Arrays cached as copies, so one changed in place and set again is
+        # seen as changed.
+        self.uniform_cache[name] = val.copy() if isinstance(val, np.ndarray) else val
 
         glUseProgram(self._shader)
         set_gl_uniform(uniform.location, uniform.type, val)
@@ -349,9 +355,19 @@ class GLShader(Shader):
         """Returns the introspected GLUniform record (location/size/type)
         for uniform `name`."""
         return self.uniforms[name]
+    def _texture_uniforms(self):
+        """The shader's texture uniforms, found once - _bind_textures runs
+        every draw and used to walk every uniform to find them."""
+        found = getattr(self, '_texture_uniform_list', None)
+        if found is None:
+            found = [(name, uniform) for name, uniform in self.uniforms.items()
+                     if uniform.type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY)]
+            self._texture_uniform_list = found
+        return found
+
     def _bind_textures(self):
         texture_manager = get_service('renderer').texture_manager
-        for name, uniform in self.uniforms.items():
+        for name, uniform in self._texture_uniforms():
             if uniform.type == GL_SAMPLER_2D:
                 if uniform.size == 1:
                     texture = self.uniform_cache[name]

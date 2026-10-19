@@ -83,6 +83,49 @@ SHADOW_MAP_SIZE = 2048
 SHADOW_BIAS_TEXELS = 2.0
 
 
+def _frustum_planes(matrix) -> np.ndarray:
+    """The six planes of the frustum `matrix` (a row-vector view @ proj,
+    clip = v @ matrix) projects onto clip space, as (a, b, c, d) rows with
+    unit normals pointing inwards - a point p is inside a plane when
+    a*x + b*y + c*z + d >= 0."""
+    m = np.asarray(matrix, dtype=np.float64)
+    c0, c1, c2, c3 = m[:, 0], m[:, 1], m[:, 2], m[:, 3]
+    planes = np.array([c3 + c0, c3 - c0, c3 + c1, c3 - c1, c3 + c2, c3 - c2])
+    return planes / np.maximum(np.linalg.norm(planes[:, :3], axis=1, keepdims=True), 1e-12)
+
+
+def _mesh_sphere(mesh):
+    """(centre, radius) bounding `mesh`'s vertices in its own space, or None
+    if it keeps no vertex data. Cached per mesh, and recomputed when a
+    dynamic mesh's data changes (Mesh.set_data bumps `_version`)."""
+    version = getattr(mesh, '_version', 0)
+    cached = mesh.__dict__.get('_fb_bounds')
+    if cached is not None and cached[0] == version:
+        return cached[1]
+    entry = getattr(mesh, 'attributes', {}).get('verticies')
+    sphere = None
+    if entry is not None and entry[1] is not None and len(entry[1]) >= 3:
+        points = np.asarray(entry[1], dtype=np.float64).reshape(-1, 3)
+        lo, hi = points.min(axis=0), points.max(axis=0)
+        sphere = ((lo + hi) * 0.5, float(np.linalg.norm(hi - lo)) * 0.5)
+    mesh.__dict__['_fb_bounds'] = (version, sphere)
+    return sphere
+
+
+def _sphere_visible(planes, mesh, model_matrix) -> bool:
+    """Whether `mesh`, placed by the row-vector `model_matrix`, could be
+    inside the frustum `planes` - a bounding-sphere test, so it errs on
+    the side of drawing."""
+    sphere = _mesh_sphere(mesh)
+    if sphere is None:
+        return True
+    centre, radius = sphere
+    linear = model_matrix[:3, :3]
+    world = centre @ linear + model_matrix[3, :3]
+    reach = radius * float(np.sqrt(max((linear * linear).sum(axis=1))))
+    return bool(np.all(planes[:, :3] @ world + planes[:, 3] >= -reach))
+
+
 def _shadow_depth_range(light) -> tuple[float, float]:
     """The shadow frustum's near and far planes for `light`, in world units.
 
@@ -99,6 +142,55 @@ class PBRPipeline(GraphicsPipeline):
         """Adds 'scene_manager' as a service dependency, alongside GraphicsPipeline's own 'renderer' dependency."""
         super().__init__()
         self.dependencies.append('scene_manager')
+
+        # Plain settings, set here rather than in on_initialize so an
+        # uninitialized pipeline (tests/graphics/test_shadow_snapping.py)
+        # can still build shadow matrices.
+        # Shadow-map resolution, per side. SHADOW_MAP_SIZE by default; a
+        # scene that needs finer shadows over the same extent raises it, and
+        # the map is reallocated on the next frame (see _render_shadow_map).
+        self.shadow_map_size = SHADOW_MAP_SIZE
+        # Where the shadow frustum is centred. None follows the camera,
+        # which spends half the map on what is behind it; a chase scene
+        # that knows where the player is looking can put the centre ahead
+        # of the camera instead and have every texel where it is seen.
+        self.shadow_focus = None
+        # Bilinear PCF: each of the 16 comparisons blends the four texels
+        # around it by how far between them it falls, instead of taking
+        # whichever one it lands in. Off by default; on, a shadow edge is a
+        # smooth ramp at any map resolution rather than a staircase of
+        # texels.
+        self.shadow_smooth = False
+        # How far a surface is pushed out along its own normal before it is
+        # looked up in the shadow map, in shadow-map texels. 0 by default.
+        # The depth bias alone cannot stop thin or steeply lit surfaces -
+        # grass, railings - shadowing themselves in stripes ("acne"); moving
+        # the lookup off the surface does, without detaching shadows the
+        # way a larger depth bias would.
+        self.shadow_normal_offset = 0.0
+        # Frustum culling. Off by default. On, a model's mesh is skipped in
+        # the main pass when its bounding sphere is wholly outside the
+        # camera's frustum, and in the shadow pass when it is wholly outside
+        # the shadow frustum - neither can put a pixel on screen. Every draw
+        # costs a material bind and a dozen uniform checks in Python, so a
+        # scene with props scattered all round the camera (behind it, past
+        # the far plane, off the sides) pays for a lot it cannot see.
+        self.frustum_culling = False
+        # A light cookie for the sun: a tiling greyscale Texture (1 lets the
+        # light through, 0 stops it) standing for a canopy of leaves above
+        # the scene, so the ground and everything on it is dappled the way
+        # it is under a tree. None by default. Softer and far cheaper than
+        # modelling the leaves into the shadow map, where every one would
+        # cast a hard-edged shadow; a real canopy's is blurred by the sun's
+        # own width.
+        self.sun_cookie = None
+        # World units per tile of the cookie, the canopy's height (which
+        # only shifts and slants the pattern), how much the dark of the
+        # cookie takes away (0-1), and how far it sways, in world units.
+        self.sun_cookie_scale = 400.0
+        self.sun_cookie_height = 400.0
+        self.sun_cookie_strength = 1.0
+        self.sun_cookie_sway = 2.0
 
     def on_initialize(self):
         """Fetches the 'scene_manager' service, creates `main_framebuffer`
@@ -245,6 +337,19 @@ class PBRPipeline(GraphicsPipeline):
         # this band is the one that reads as "diorama". 0 turns it off.
         self.dof_tilt = 0.0
         self.dof_tilt_band = 0.55
+        # Lens falloff, instead of the flat band above. Off by default. On,
+        # everything within `dof_lens_band` of the focal distance either
+        # side (as a fraction of it) stays sharp, and past that the blur
+        # follows a real lens - the difference of inverse distances - so it
+        # comes on hard in front of the subject and gently behind it.
+        # That asymmetry is the macro look: a thing at half the focal
+        # distance is a smear, a thing at twice it is only soft.
+        # `dof_range` and `dof_falloff` are unused while this is on; a flat
+        # band in world units cannot blur the near side at all once it is
+        # wider than the distance from the camera to the subject.
+        self.dof_lens = False
+        self.dof_lens_band = 0.5
+        self.dof_lens_scale = 1.0
         self._dof_coc_shader = self.renderer.load_shader(FXAA_VERT, DOF_COC_FRAG, Injector(), None)
         self._dof_bokeh_shader = self.renderer.load_shader(FXAA_VERT, DOF_BOKEH_FRAG, Injector(), None)
         self._dof_shader = self.renderer.load_shader(FXAA_VERT, DOF_COMPOSITE_FRAG, Injector(), None)
@@ -279,6 +384,12 @@ class PBRPipeline(GraphicsPipeline):
         # World-space slop before a surface counts as occluding, the depth
         # bias of this pass - see AO_FRAG.
         self.ao_bias = 0.05
+        # How much of the occlusion also darkens direct light, 0-1. 0 by
+        # default, which is physically right - the shadow map already says
+        # where direct light is blocked. A stylised scene lit mostly by the
+        # sun raises it, because there ambient is too small a share of the
+        # light for occlusion of it alone to show.
+        self.ao_direct = 0.0
         self._ao_shader = self.renderer.load_shader(FXAA_VERT, AO_FRAG, Injector(), None)
         self._ao_blur_shader = self.renderer.load_shader(FXAA_VERT, AO_BLUR_FRAG, Injector(), None)
         self._ao_framebuffer = self.renderer.create_framebuffer(
@@ -376,6 +487,8 @@ class PBRPipeline(GraphicsPipeline):
         the convention default_shader.fbvert/shadow_depth.fbvert's `proj *
         view * model * vertex` multiplication is already proven against."""
         target = camera.world_transform.position if camera.inherits_from('Node3D') else Vector3(0.0, 0.0, 0.0)
+        if self.shadow_focus is not None:
+            target = self.shadow_focus
         direction = light.direction3
 
         # Built from a look-at basis along `direction3`, not by rebuilding
@@ -423,7 +536,7 @@ class PBRPipeline(GraphicsPipeline):
         # and it is stable but arbitrary. Quantizing the centre means a
         # sub-texel move produces the *same* matrix, so the map's contents
         # only change when the grid itself steps - one whole texel at a time.
-        texel = (2.0 * light.shadow_extent) / SHADOW_MAP_SIZE
+        texel = (2.0 * light.shadow_extent) / self.shadow_map_size
         centre = np.array([target.x, target.y, target.z], dtype=np.float32)
         for axis in (right, up):
             offset = float(np.dot(centre, axis))
@@ -461,6 +574,21 @@ class PBRPipeline(GraphicsPipeline):
 
         return view, proj
 
+    def _apply_cookie_uniforms(self, shader, sun):
+        """The sun cookie's uniforms (see `sun_cookie`), on shaders that
+        declare them - the deferred composite only."""
+        if 'CookieEnabled' not in getattr(shader, 'uniforms', {}):
+            return
+        enabled = sun is not None and self.sun_cookie is not None
+        shader['CookieEnabled'] = enabled
+        if not enabled:
+            return
+        shader['CookieMap'] = self.sun_cookie
+        shader['CookieScale'] = float(self.sun_cookie_scale)
+        shader['CookieStrength'] = float(self.sun_cookie_strength)
+        shader['CookieHeight'] = float(self.sun_cookie_height)
+        shader['CookieSway'] = float(self.sun_cookie_sway)
+
     def _render_shadow_map(self, light, view, proj, sprites, debugs, models, meshes):
         """Depth-only pass: draws every opaque mesh's shadow-caster
         geometry (sprites/mesh nodes/debug draws/3D model submeshes -
@@ -469,12 +597,16 @@ class PBRPipeline(GraphicsPipeline):
         view/projection into `self._shadow_framebuffer`, using the raw
         mesh.draw() rather than going through a Material (this pass only
         cares about depth, no material properties are read)."""
+        size = int(self.shadow_map_size)
+        if self._shadow_framebuffer.width != size:
+            self._shadow_framebuffer.resize((size, size))
         self._shadow_framebuffer.bind()
         self.renderer.clear(Color("#000000FF"))
         self.renderer.enable_depth_testing()
 
         self._shadow_shader['view'] = view
         self._shadow_shader['proj'] = proj
+        shadow_planes = _frustum_planes(view @ proj) if self.frustum_culling else None
 
         for sprite in sprites:
             self._shadow_shader['model'] = sprite.world_transform.model
@@ -513,8 +645,12 @@ class PBRPipeline(GraphicsPipeline):
             # the whole shadow pass down with it.
             shader.use()
             for mesh_name in model._model.meshes:
-                shader['model'] = model.world_transform.model
-                model._model.meshes[mesh_name].draw()
+                mesh = model._model.meshes[mesh_name]
+                matrix = model.world_transform.model
+                if shadow_planes is not None and not _sphere_visible(shadow_planes, mesh, matrix):
+                    continue
+                shader['model'] = matrix
+                mesh.draw()
 
         self.renderer.disable_depth_testing()
         self._shadow_framebuffer.unbind()
@@ -620,7 +756,14 @@ class PBRPipeline(GraphicsPipeline):
 
         if shadow_light is not None:
             shader['ShadowEnabled'] = True
-            shader['ShadowTexelSize'] = 1.0 / SHADOW_MAP_SIZE
+            shader['ShadowTexelSize'] = 1.0 / self.shadow_map_size
+            # Only the deferred composite declares these three; the forward
+            # pass shares this setup but still filters its shadows the old
+            # way, and setting a uniform a shader lacks logs an error.
+            declared = getattr(shader, 'uniforms', {})
+            if 'ShadowSmooth' in declared:
+                shader['ShadowMapSize'] = float(self.shadow_map_size)
+                shader['ShadowSmooth'] = bool(self.shadow_smooth)
             shader['ShadowSoftnessRadius'] = self.shadow_pcf_radius
             # In world units first, then as a fraction of the frustum's depth
             # range, which is what the shader compares in.
@@ -634,14 +777,17 @@ class PBRPipeline(GraphicsPipeline):
             # there. Derived from the texel size instead, it is the same
             # fraction of a texel at any scene scale.
             near, far = _shadow_depth_range(shadow_light)
-            texel_world = (2.0 * shadow_light.shadow_extent) / SHADOW_MAP_SIZE
+            texel_world = (2.0 * shadow_light.shadow_extent) / self.shadow_map_size
             shader['ShadowBias'] = (texel_world * SHADOW_BIAS_TEXELS) / max(far - near, 0.001)
+            if 'ShadowNormalOffset' in declared:
+                shader['ShadowNormalOffset'] = texel_world * self.shadow_normal_offset
             shader['ShadowMap'] = self.renderer.texture_manager.wrap_external_texture(
                 self._shadow_framebuffer.get_attachment_texture('depth')
             )
             shader['ShadowMatrix'] = shadow_matrix
         else:
             shader['ShadowEnabled'] = False
+        self._apply_cookie_uniforms(shader, shadow_light)
 
     def set_occluders(self, texture, origin, extent):
         """Hands the lighting pass a world-space mask of what blocks light.
@@ -711,6 +857,7 @@ class PBRPipeline(GraphicsPipeline):
         # they already do not receive the directional shadow map.
         if getattr(self, '_ao_active', False):
             self._composite_shader['AOEnabled'] = True
+            self._composite_shader['AODirect'] = float(self.ao_direct)
             self._composite_shader['AOMap'] = self.renderer.texture_manager.wrap_external_texture(
                 self._ao_blur_framebuffer.get_attachment_texture('ao'))
         else:
@@ -797,10 +944,18 @@ class PBRPipeline(GraphicsPipeline):
         for mesh_node in meshes:
             self.renderer.submit(mesh_node.mesh, mesh_node.material, mesh_node.world_transform, camera)
 
+        view_planes = (_frustum_planes(camera.view_matrix @ camera.proj_matrix)
+                       if self.frustum_culling else None)
         for model in models:
+            if not getattr(model, 'draw_in_view', True):
+                continue  # shadow-only - see Model3D.draw_in_view
             for mesh_name in model._model.meshes:
+                mesh = model._model.meshes[mesh_name]
+                if view_planes is not None and not _sphere_visible(
+                        view_planes, mesh, model.world_transform.model):
+                    continue
                 material = model._model.materials[model._model.material_map[mesh_name]]
-                self.renderer.submit(model._model.meshes[mesh_name], material, model.world_transform, camera)
+                self.renderer.submit(mesh, material, model.world_transform, camera)
 
         self.renderer.flush_opaque()
 
@@ -1009,6 +1164,9 @@ class PBRPipeline(GraphicsPipeline):
         shader['FocusFalloff'] = self.dof_falloff
         shader['TiltStrength'] = self.dof_tilt
         shader['TiltBand'] = self.dof_tilt_band
+        shader['LensEnabled'] = bool(self.dof_lens)
+        shader['LensBand'] = float(self.dof_lens_band)
+        shader['LensScale'] = float(self.dof_lens_scale)
         shader['model'] = self._identity_model
         shader.use()
         self._composite_quad.draw()

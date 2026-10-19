@@ -315,7 +315,19 @@ class Node3D(Node):
         transform in world space rather than parent-local space. Falls
         back to the local transform unchanged if the parent isn't a
         `Node3D` (e.g. it's the scene's `RootNode`)."""
-        if self.parent.inherits_from('Node3D'):
-            return self.transform.compose_with(self.parent.world_transform)
-        else:
+        if not self.parent.inherits_from('Node3D'):
             return self.transform
+        # Memoised on what it is composed from, as Node2D's is (see there):
+        # this node's own nine numbers and the parent's world transform -
+        # which is itself memoised, so an unmoved chain hands back the same
+        # object and is recognised by identity.
+        parent_world = self.parent.world_transform
+        t = self.transform
+        key = (tuple(t.position), tuple(t.rotation), tuple(t.scale), id(parent_world),
+               tuple(parent_world.position), tuple(parent_world.rotation), tuple(parent_world.scale))
+        cached = self.__dict__.get('_world_cache')
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        world = t.compose_with(parent_world)
+        self.__dict__['_world_cache'] = (key, world)
+        return world

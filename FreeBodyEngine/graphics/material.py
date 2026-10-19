@@ -456,25 +456,39 @@ class Material:
         `pixel_filter` to it and sets `{Prop}_Texture` and
         `{Prop}_useTexture = True` - then activates the shader for
         drawing."""
+        # The uniform names each property sets, built once: this runs every
+        # draw, and the f-strings were a measurable part of it.
+        names = self.__dict__.get('_uniform_names')
+        if names is None:
+            names = {p: (f"{p.capitalize()}_Color", f"{p.capitalize()}_useTexture",
+                         f"{p.capitalize()}_Texture") for p in self.properties}
+            self.__dict__['_uniform_names'] = names
         for material_property in self.properties:
-            
+
             val = self.properties[material_property]
+            colour_name, use_name, texture_name = names.get(material_property) or (
+                f"{material_property.capitalize()}_Color", f"{material_property.capitalize()}_useTexture",
+                f"{material_property.capitalize()}_Texture")
             if isinstance(val, (Color, int, float, tuple, list)):
                 # Numbers and pairs as well as colours: a property declared
                 # COLOR_R or COLOR_RG holds one, and its uniform is a float or
                 # a vec2 to match.
-                self.shader.set_uniform(f"{material_property.capitalize()}_Color", val)
-                self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", False)
+                self.shader.set_uniform(colour_name, val)
+                self.shader.set_uniform(use_name, False)
             elif isinstance(val, (Texture, Image)):
                 if isinstance(val, Texture):
                     tex = val
                 elif isinstance(val, Image):
                     tex = val.texture
 
-                tex.manager.set_texture_filter(tex.id, self.pixel_filter)
-                self.shader.set_uniform(f"{material_property.capitalize()}_Texture", tex)
-                self.shader.set_uniform(f"{material_property.capitalize()}_useTexture", True)
+                # Applied when it changes, not every draw: it is two driver
+                # calls per texture.
+                if getattr(tex, '_applied_filter', None) != self.pixel_filter:
+                    tex.manager.set_texture_filter(tex.id, self.pixel_filter)
+                    tex._applied_filter = self.pixel_filter
+                self.shader.set_uniform(texture_name, tex)
+                self.shader.set_uniform(use_name, True)
             else:
-                self.shader.set_uniform(f"{material_property.capitalize()}_Color", Color('#FF00FFFF'))
+                self.shader.set_uniform(colour_name, Color('#FF00FFFF'))
 
         self.shader.use()

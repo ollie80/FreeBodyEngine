@@ -125,7 +125,7 @@ def light_contribution(world_pos: vec3, normal: vec3, view_dir: vec3, albedo: ve
     radiance: vec3 = l_color * (l_intensity * atten)
     return (diffuse + specular) * radiance * n_dot_l
 
-def shadow_tap(u: float, v: float, biased_depth: float) -> float:
+def shadow_compare(u: float, v: float, biased_depth: float) -> float:
     # One shadow-map comparison: 0 if something is nearer the light here.
     map_depth: float = sample(ShadowMap, vec2(u, v)).x
 
@@ -141,11 +141,63 @@ def shadow_tap(u: float, v: float, biased_depth: float) -> float:
         return 0.0
     return 1.0
 
-def shadow_factor(world_pos: vec3) -> float:
+def shadow_tap(u: float, v: float, biased_depth: float) -> float:
+    if ShadowSmooth == False:
+        return shadow_compare(u, v, biased_depth)
+
+    # Bilinear PCF (PBRPipeline.shadow_smooth): the four texels around the
+    # point, each compared, then blended by where between their centres it
+    # falls. The map is sampled nearest, so this is done by hand; it turns
+    # every texel step on a shadow edge into a ramp.
+    tx: float = u * ShadowMapSize - 0.5
+    ty: float = v * ShadowMapSize - 0.5
+    bx: float = floor(tx)
+    by: float = floor(ty)
+    fx: float = tx - bx
+    fy: float = ty - by
+    u0: float = (bx + 0.5) * ShadowTexelSize
+    u1: float = (bx + 1.5) * ShadowTexelSize
+    v0: float = (by + 0.5) * ShadowTexelSize
+    v1: float = (by + 1.5) * ShadowTexelSize
+    s00: float = shadow_compare(u0, v0, biased_depth)
+    s10: float = shadow_compare(u1, v0, biased_depth)
+    s01: float = shadow_compare(u0, v1, biased_depth)
+    s11: float = shadow_compare(u1, v1, biased_depth)
+    return mix(mix(s00, s10, fx), mix(s01, s11, fx), fy)
+
+def sun_cookie(world_pos: vec3) -> float:
+    # Light let through by a canopy that is not in the scene (PBRPipeline.
+    # sun_cookie): the point is traced back along the sun to the canopy's
+    # height and the cookie read there, so the dapple lands on walls and
+    # bodies as well as the ground, slanted the way the sun says. Two reads
+    # drifting against each other in the wind make it shimmer.
+    if CookieEnabled == False:
+        return 1.0
+    sun: vec3 = normalize(Light0_Direction)
+    down: float = max(sun.y * -1.0, 0.05)
+    t: float = (CookieHeight - world_pos.y) / down
+    qx: float = world_pos.x - sun.x * t
+    qz: float = world_pos.z - sun.z * t
+    sway_x: float = sin(TIME * 0.7) * CookieSway + sin(TIME * 1.9 + qz * 0.013) * CookieSway * 0.35
+    sway_z: float = cos(TIME * 0.53) * CookieSway + sin(TIME * 1.6 + qx * 0.011) * CookieSway * 0.35
+    a: float = sample(CookieMap, vec2((qx + sway_x) / CookieScale, (qz + sway_z) / CookieScale)).x
+    b: float = sample(CookieMap, vec2((qx - sway_z * 0.6) / CookieScale, (qz + sway_x * 0.8) / CookieScale)).x
+    return mix(1.0, (a + b) * 0.5, CookieStrength)
+
+def shadow_factor(world_pos: vec3, normal: vec3) -> float:
     if ShadowEnabled == False:
         return 1.0
 
-    clip: vec4 = ShadowMatrix * vec4(world_pos.x, world_pos.y, world_pos.z, 1.0)
+    # Looked up a little off the surface (PBRPipeline.shadow_normal_offset)
+    # so a surface cannot shadow itself. Only along a real normal: a
+    # zero-area sliver triangle writes a zero one, which normalizes to NaN,
+    # and one NaN pixel through the bilinear taps and the depth-of-field
+    # gather becomes a black disc. The comparison is false for NaN, so
+    # such a pixel is looked up where it is.
+    lookup: vec3 = world_pos
+    if dot(normal, normal) > 0.5:
+        lookup = world_pos + normal * ShadowNormalOffset
+    clip: vec4 = ShadowMatrix * vec4(lookup.x, lookup.y, lookup.z, 1.0)
     ndc: vec3 = vec3(clip.x, clip.y, clip.z) / clip.w
     shadow_uv: vec2 = vec2(ndc.x * 0.5 + 0.5, ndc.y * 0.5 + 0.5)
 
@@ -390,7 +442,7 @@ def accumulate_lighting(world_pos: vec3, normal: vec3, view_pos: vec3, albedo: v
 """ + "\n".join(
     f"""    c{i}: vec3 = light_contribution(world_pos, normal, view_dir, albedo, f0, roughness, metallic, Light{i}_Active, Light{i}_Type, Light{i}_Position, Light{i}_Direction, Light{i}_Color, Light{i}_Intensity, Light{i}_Range, Light{i}_SpotCos)
     v{i}: float = light_visibility(world_pos, Light{i}_Position, Light{i}_Type, Light{i}_Active)"""
-    + ("\n    total = total + c0 * shadow_factor(world_pos) * v0" if i == 0 else f"\n    total = total + c{i} * v{i}")
+    + ("\n    total = total + c0 * shadow_factor(world_pos, normal) * sun_cookie(world_pos) * v0" if i == 0 else f"\n    total = total + c{i} * v{i}")
     for i in range(MAX_LIGHTS)
 ) + """
     return albedo * ambient + total + emissive
@@ -410,6 +462,20 @@ ShadowMap: texture
 # many texels wide the PCF kernel reaches - see shadow_factor.
 ShadowTexelSize: float
 ShadowSoftnessRadius: float
+# The map's size in texels, for the bilinear taps (ShadowSmooth), and how
+# far along its normal a surface is moved before the lookup, in world units.
+ShadowMapSize: float
+ShadowSmooth: bool
+ShadowNormalOffset: float
+# The sun's cookie (PBRPipeline.sun_cookie): a tiling light-through-leaves
+# mask, its tile size in world units, how strongly it darkens, the height
+# of the canopy it stands for, and how far it sways in the wind.
+CookieEnabled: bool
+CookieMap: texture
+CookieScale: float
+CookieStrength: float
+CookieHeight: float
+CookieSway: float
 # How far a surface may sit behind the depth the shadow map recorded for it
 # before it counts as shadowed, as a fraction of the shadow frustum's depth
 # range - set from the texel size, see PBRPipeline._apply_lighting_uniforms.
@@ -487,6 +553,11 @@ gNormal: texture
 # already says.
 AOMap: texture
 AOEnabled: bool
+# How much of the occlusion also darkens direct light (PBRPipeline.
+# ao_direct), 0-1. 0 is the default and the rule above. A stylised scene
+# lit mostly by direct light - where ambient is a few percent of a sunlit
+# surface - has no other way to show contact shading at all.
+AODirect: float
 {_LIGHT_UNIFORM_BLOCK}
 @input
 uv: vec2
@@ -540,13 +611,19 @@ def main() -> void:
         metallic: float = sample(gMetallic, uv).x
 
         ambient: vec3 = Ambient
+        ao: float = 1.0
         if AOEnabled == True:
-            ao: float = sample(AOMap, uv).x
+            ao = sample(AOMap, uv).x
             ambient = vec3(Ambient.x * ao, Ambient.y * ao, Ambient.z * ao)
 
         shaded: vec3 = vec3(albedo.x + emissive.x, albedo.y + emissive.y, albedo.z + emissive.z)
         if Unlit == False:
             shaded = accumulate_lighting(world_pos, normal, ViewPos, albedo, roughness, metallic, emissive, ambient)
+            # The direct part alone (everything but ambient and emission),
+            # darkened by AODirect's share of the occlusion.
+            base: vec3 = albedo * ambient + emissive
+            direct: vec3 = shaded - base
+            shaded = base + direct * mix(1.0, ao, AODirect)
 
         # Distance fog, from the camera to this fragment's world position.
         # Linear between FogStart and FogEnd rather than exponential: a
@@ -1132,6 +1209,12 @@ FocusFalloff: float
 TiltStrength: float
 # Where the sharp band ends, as a fraction of half the screen height.
 TiltBand: float
+# Lens falloff (PBRPipeline.dof_lens): sharp within LensBand of the focal
+# distance (as a fraction of it), blurring past that by the difference of
+# inverse distances, scaled by LensScale.
+LensEnabled: bool
+LensBand: float
+LensScale: float
 
 @output
 result: vec4
@@ -1174,6 +1257,22 @@ def main() -> void:
         coc = (gap - FocusRange) / max(FocusFalloff, 0.0001)
     if gap < -FocusRange:
         coc = (gap + FocusRange) / max(FocusFalloff, 0.0001)
+
+    if LensEnabled == True:
+        # Measured from the edges of the sharp zone, not the focal plane, so
+        # the whole subject stays sharp; a thin lens's blur grows with
+        # |1/edge - 1/depth|, here scaled so the near side is fully blurred
+        # at half the near edge's distance and the far side approaches full
+        # only towards infinity.
+        near_edge: float = focus * (1.0 - LensBand)
+        far_edge: float = focus * (1.0 + LensBand)
+        coc = 0.0
+        if depth < near_edge:
+            coc = 1.0 - near_edge / max(depth, 0.001)
+        if depth > far_edge:
+            coc = 1.0 - far_edge / depth
+        coc = coc * LensScale
+
     coc = clamp(coc, -1.0, 1.0)
 
     # The tilt band, taken on top of whatever the depth asked for.

@@ -1,4 +1,5 @@
 import importlib.resources
+import importlib.util
 import os
 import json
 import tomllib
@@ -398,12 +399,25 @@ class Builder:
         which case "fbusl" is left as a normal PyPI dependency, which is the
         correct behavior for anyone without a local FBUSL checkout."""
         engine_repo_root = os.path.abspath(os.path.join(__file__, "..", "..", ".."))
-        candidate = os.path.abspath(os.path.join(engine_repo_root, "..", "FBUSL"))
-        has_setup = os.path.isfile(os.path.join(candidate, "setup.py"))
-        has_pyproject = os.path.isfile(os.path.join(candidate, "pyproject.toml"))
-        has_package = os.path.isdir(os.path.join(candidate, "fbusl"))
-        if (has_setup or has_pyproject) and has_package:
-            return candidate
+        candidates = [os.path.abspath(os.path.join(engine_repo_root, "..", "FBUSL"))]
+        # ...or wherever the FBUSL this Python imports lives, if that is a
+        # source checkout (an editable install) rather than site-packages.
+        # A checkout kept somewhere else entirely (".../Github/FBUSL") is
+        # what dev runs against, so a build that skipped it shipped the
+        # older PyPI release - and the first shader using anything newer
+        # (atan) failed to compile in the built game only.
+        try:
+            spec = importlib.util.find_spec("fbusl")
+            if spec is not None and spec.origin:
+                candidates.append(os.path.dirname(os.path.dirname(os.path.abspath(spec.origin))))
+        except (ImportError, ValueError):
+            pass
+        for candidate in candidates:
+            has_setup = os.path.isfile(os.path.join(candidate, "setup.py"))
+            has_pyproject = os.path.isfile(os.path.join(candidate, "pyproject.toml"))
+            has_package = os.path.isdir(os.path.join(candidate, "fbusl"))
+            if (has_setup or has_pyproject) and has_package:
+                return candidate
         return None
 
     def _run_quiet(self, cmd: list[str]):
@@ -1680,6 +1694,20 @@ log_level = 2
         self.progress.stage("Scanning project assets")
         images, data, meshes, fonts = self.locate_assets()
         engine_images, engine_data, engine_meshes, engine_fonts = self.get_engine_assets()
+
+        # `raw = [...]` in fbproject.toml: asset paths (relative to the
+        # asset dir) shipped byte-for-byte as well, for a project that reads
+        # them itself - a .glb walked node by node for its names and
+        # transforms (which the baked .fbmesh flattens away), a .ttf
+        # rasterised by PIL rather than through the font atlas. A raw model
+        # is not baked as well: nothing would read the bake.
+        raw_names = set(self.get_user_setting('raw', []) or [])
+        raw_files = {abs_path: rel_path for abs_path, rel_path in (images | data | meshes | fonts).items()
+                     if rel_path in raw_names}
+        missing = raw_names - set(raw_files.values())
+        if missing:
+            warning(f"fbproject.toml lists raw assets that do not exist: {sorted(missing)}")
+        meshes = {abs_path: rel_path for abs_path, rel_path in meshes.items() if rel_path not in raw_names}
         self.progress.done("Scanned project assets")
 
         self.reset_dirs()
@@ -1723,6 +1751,11 @@ log_level = 2
             abs_path: rel_path for abs_path, rel_path in (meshes | engine_meshes).items()
             if rel_path.rsplit(".", 1)[-1].lower() not in MODEL_FILE_TYPES
         }
+        # Plus whatever the project asked to have shipped raw (see above).
+        # Images and data are already in their own paks under their own
+        # names, so only what is not gets added here.
+        raw_meshes |= {abs_path: rel_path for abs_path, rel_path in raw_files.items()
+                       if abs_path not in images and abs_path not in data}
         self.bundle_assets(raw_meshes, 'mesh')
 
         self.build_code()

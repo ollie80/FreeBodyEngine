@@ -43,5 +43,10 @@ class Model3D(Node3D):
         # which need the same vertex/geometry stages to shadow correctly.
         # Gets `view`, `proj` and `model` set like the plain one.
         self.shadow_shader = None
+        # Whether the camera sees this model. False makes it a shadow-only
+        # caster: drawn into the shadow map and nowhere else - the canopy
+        # of a tree just out of shot, a cloud, anything whose shadow belongs
+        # in the scene but whose shape does not.
+        self.draw_in_view = True
 
         self._model = model
