@@ -98,8 +98,12 @@ class AnimationPlayer:
         changed = False
 
         frame = anim.frames[self.frame_index]
+        # The same floor is both the test and the step. Subtracting the raw
+        # duration while testing against the floor meant a 0-duration frame
+        # took nothing off `elapsed`, so a looping animation of them never
+        # left this loop and the game hung.
         while self.elapsed >= max(frame.duration, 1e-4):
-            self.elapsed -= frame.duration
+            self.elapsed -= max(frame.duration, 1e-4)
 
             if self.frame_index + 1 < len(anim.frames):
                 self.frame_index += 1

@@ -3,6 +3,7 @@ from FreeBodyEngine.core.collider import Collider2D, RectangleCollisionShape, Ci
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine import physics_delta, log, warning
 from typing import Union
+import numpy as np
 
 
 class PhysicsBody(Node2D):
@@ -39,7 +40,11 @@ class PhysicsBody(Node2D):
                 "friction is the fraction of speed kept per second, so a value above 1.0 "
                 "makes the body accelerate on its own without any force applied."
             )
-        self.vel = velocity
+        # Copied, not stored: the default is one Vector object shared by every
+        # call, and `vel` is changed in place (`+=`, `*=`) - stored directly,
+        # every body built without a velocity moved and decayed one shared
+        # vector, so pushing one pushed them all.
+        self.vel = Vector(velocity)
         self.rot_vel = rotational_velocity
         self.mass = mass
         self.friction = friction
@@ -152,7 +157,7 @@ class PhysicsBody(Node2D):
         def apply_mtv(mtv: Vector, contact_point: Vector):
             """Applies this body's share (`correction_share`) of the collision's minimum translation vector `mtv`: pushes it out of the overlap, cancels the component of its velocity still moving into `mtv`'s direction (stopping it from accelerating further into the surface without killing tangential motion), and, if a contact point was found, converts the resulting linear impulse into an angular one via torque."""
             mtv = mtv * correction_share
-            self.world_transform.position += mtv
+            self._move_world(mtv)
 
             if self.vel.dot(mtv) < 0:
                 mtv_dir = mtv.normalized
@@ -218,6 +223,24 @@ class PhysicsBody(Node2D):
             if overlap > 0 and dist != 0:
                 mtv = delta.normalized * overlap
                 apply_mtv(mtv, contact_point)
+
+    def _move_world(self, delta: Vector):
+        """Moves the body by `delta` in world space.
+
+        Through the local transform, converted by the inverse of the parent's
+        world rotation and scale. Writing to `world_transform.position`
+        directly only worked for a body at the top of the tree: under another
+        Node2D that is a composed copy (cached, see Node2D.world_transform),
+        so the push-out landed in the cache and the body snapped back into
+        the wall the moment anything recomputed it.
+        """
+        parent = getattr(self, 'parent', None)
+        if parent is None or not parent.inherits_from('Node2D'):
+            self.transform.position += delta
+            return
+        linear = parent.world_transform.to_matrix()[:2, :2]
+        local = np.linalg.solve(linear, np.array([delta.x, delta.y], dtype=np.float64))
+        self.transform.position += Vector(float(local[0]), float(local[1]))
 
     def on_collision(self, collider: Collider2D, other: Collider2D):
         """Called after a collision with `other` has been resolved - override to react to collisions (e.g. play a sound, take damage)."""

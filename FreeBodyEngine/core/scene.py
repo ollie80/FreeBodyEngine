@@ -121,7 +121,9 @@ class Scene:
         :param id: The id of the entity.
         :type id: UUID
         """
-        self.root.remove(ids)
+        # Unpacked - passed as `ids`, the whole tuple was looked up as a
+        # single id, matched nothing, and nothing was ever removed.
+        self.root.remove(*ids)
 
     def on_update(self):
         """

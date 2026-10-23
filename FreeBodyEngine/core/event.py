@@ -163,17 +163,17 @@ class EventManager(Service):
 
     def unregister_event(self, name: str):
         """Unregisters the event named `name`, warning instead if it doesn't
-        exist.
-
-        Note: this reads `self.events[name].category`, but `Event` only
-        defines a `categories` attribute - as written, this raises
-        `AttributeError` whenever `name` does exist."""
+        exist."""
         if name not in self.events:
             warning(f'Could not unregister event "{name}" because it does not exist')
             return
 
-        for category in self.events[name].category:
-            self.category_map[category].remove(name)
+        # `.categories` - this read `.category`, which Event never had, so
+        # unregistering any event raised AttributeError (Input.on_destroy()
+        # unregisters three).
+        for category in self.events[name].categories:
+            if name in self.category_map.get(category, ()):
+                self.category_map[category].remove(name)
 
         del self.events[name]
 
@@ -184,5 +184,12 @@ class EventManager(Service):
         if event not in self.events:
             warning(f'Event "{event}" is not registered.')
             return
-        for callback in self.events[event].callbacks:
-            callback(*callback_args, **callback_kwargs)
+        # Over a snapshot: a callback that unregisters itself (a one-shot
+        # listener) or registers another changed the set mid-iteration and
+        # raised "Set changed size during iteration", skipping the rest.
+        # One unregistered by an earlier callback in this same emit is not
+        # called.
+        callbacks = self.events[event].callbacks
+        for callback in list(callbacks):
+            if callback in callbacks:
+                callback(*callback_args, **callback_kwargs)

@@ -481,6 +481,27 @@ class GLFWMouse(Mouse):
         """Hides the system cursor for this window."""
         glfw.set_input_mode(self.window._window, glfw.CURSOR, glfw.CURSOR_HIDDEN)
 
+    def lock_position(self):
+        """Locks the cursor to the window, hidden - GLFW's CURSOR_DISABLED.
+        `position` keeps tracking movement as an unbounded virtual position,
+        so the change between frames is the mouse's motion, the same thing
+        WebMouse's pointer lock reports. Uses raw (unaccelerated) motion where
+        the platform has it, which is what a camera driven by the mouse wants.
+
+        Not implemented here before, so this raised NotImplementedError on
+        the default desktop window."""
+        handle = self.window._window
+        glfw.set_input_mode(handle, glfw.CURSOR, glfw.CURSOR_DISABLED)
+        if glfw.raw_mouse_motion_supported():
+            glfw.set_input_mode(handle, glfw.RAW_MOUSE_MOTION, glfw.TRUE)
+
+    def unlock_position(self):
+        """Releases a lock_position() lock, showing the cursor again."""
+        handle = self.window._window
+        if glfw.raw_mouse_motion_supported():
+            glfw.set_input_mode(handle, glfw.RAW_MOUSE_MOTION, glfw.FALSE)
+        glfw.set_input_mode(handle, glfw.CURSOR, glfw.CURSOR_NORMAL)
+
     def get_scroll_delta(self) -> Vector:
         """How far the scroll wheel moved this frame, drained from the
         window's GLFW scroll callback each `update()`."""

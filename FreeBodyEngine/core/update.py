@@ -218,6 +218,13 @@ class UpdateCoordinator:
                 self._run(callback, UpdatePhase.DRAW)
 
             self.update_accumulator -= self.update_timestep
+            # At most one frame of debt, as the physics accumulator above is
+            # capped. Uncapped, every frame slower than the cap left its
+            # overrun behind for good - ten seconds at 30fps against a 69fps
+            # cap banked over five seconds of it - and once the game sped up
+            # again it drew with no frame limit at all until that was paid off.
+            if self.update_accumulator > self.update_timestep:
+                self.update_accumulator = self.update_timestep
             self.time.frame()
         self.did_draw = did_draw
 

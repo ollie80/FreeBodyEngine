@@ -1,6 +1,6 @@
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine.utils import abstractmethod
-from FreeBodyEngine import get_main
+from FreeBodyEngine import get_main, get_service, service_exists, warning
 from typing import TYPE_CHECKING, Literal, Union
 from FreeBodyEngine.core.node import Node2D
 from FreeBodyEngine.core.scene import Scene
@@ -819,11 +819,15 @@ def cast_ray(position: Vector, direction: Vector, max_distance: float, scene: 'S
     :param scene: The scene that the ray will be cast in, defaults to the curent scene.
     :type scene: Scene
     """
-    if scene == None:
-        scene = get_main().active_scene
-        if scene == None:
+    # This read `get_main().active_scene` (Main has no such attribute - the
+    # scene manager has it, as a name), used `warning` without importing it,
+    # cast only inside the "no scene given" branch so passing a scene always
+    # returned None, and dropped `max_distance`.
+    if scene is None:
+        manager = get_service('scene_manager') if service_exists('scene_manager') else None
+        scene = manager.get_active() if manager is not None else None
+        if scene is None:
             warning('Cannot cast ray as no scene was specified and there is no active scene.')
             return None
-        
-        ray = Ray2D(position, direction, scene)
-        return ray.cast()
+
+    return Ray2D(position, direction, scene).cast(max_distance)

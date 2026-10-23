@@ -94,28 +94,14 @@ class DevFileSystem(FileSystem):
         path) exists on disk."""
         return exists(path)
 
-    def get_file(self, path):
-        """Resolves `path` to a real file on disk and returns a FileResource
-        wrapping it - `user://` paths resolve under the per-platform user
-        data directory (always writable), `engine://` paths resolve into
-        the installed `FreeBodyEngine.engine_assets` package (never
-        writable), and anything else resolves under `asset_directory`
-        (writable only when ASSET_WRITES_PERMITTED is set, true by default
-        in dev mode). For that last case, if the resolved path already
-        exists on disk but writes aren't permitted, this warns and returns
-        None instead of a resource; otherwise DevFileStream itself creates
-        the underlying file on disk if it's missing and writes are
-        permitted."""
-        system_path = ""
+    def _resolve(self, path) -> tuple[str, bool]:
+        """`path` as a real path on disk, and whether it may be written -
+        see get_file()."""
         if path.startswith('user://'):
-            
-            system_path = self.sanitise_path(path.removeprefix("user://"))
-            system_path = self.user_files_path + system_path
+            system_path = self.user_files_path + self.sanitise_path(path.removeprefix("user://"))
             writes_permitted = True
         elif path.startswith('engine://'):
-            system_path = path.removeprefix("engine://")
-            system_path = files('FreeBodyEngine.engine_assets').joinpath(system_path)
-                                  
+            system_path = str(files('FreeBodyEngine.engine_assets').joinpath(path.removeprefix("engine://")))
             writes_permitted = False
         elif self.cache_directory is not None and path.split("/", 1)[0] in KIND_DIRS.values():
             # Baked fonts/models - see core/files/asset_cache.py. Never
@@ -125,38 +111,71 @@ class DevFileSystem(FileSystem):
         else:
             system_path = self.asset_directory + self.sanitise_path(path)
             writes_permitted = get_flag(ASSET_WRITES_PERMITTED, False)
+        return os.path.expanduser(system_path), writes_permitted
 
-            if self.ensure_path(system_path) and not writes_permitted:
-                warning(f'File does not exsist at {path}.')
-                return None
-        system_path = os.path.expanduser(system_path)
+    def path_exists(self, path) -> bool:
+        """Whether `path` is a file on disk - see core/files' path_exists()."""
+        return exists(self._resolve(path)[0])
+
+    def get_file(self, path):
+        """Resolves `path` to a real file on disk and returns a FileResource
+        wrapping it - `user://` paths resolve under the per-platform user
+        data directory (always writable), `engine://` paths resolve into
+        the installed `FreeBodyEngine.engine_assets` package (never
+        writable), and anything else resolves under `asset_directory`
+        (writable only when ASSET_WRITES_PERMITTED is set, true by default
+        in dev mode).
+
+        A path that doesn't exist and can't be written warns and returns
+        None. One that can be written gets a resource whose file is only
+        created when something writes to it - see DevFileStream. It used to
+        be created right here, so any mistyped asset path (or a probe like
+        path_exists()) left an empty file in the project's assets. The
+        existence check was also inverted: it refused files that *did*
+        exist."""
+        system_path, writes_permitted = self._resolve(path)
+
+        if not writes_permitted and not exists(system_path):
+            warning(f'File does not exist at {path}.')
+            return None
+
         stream = DevFileStream(system_path, writes_permitted)
-
         return self._add(FileResource(self.generate_file_id(), stream, path))
 
 class DevFileStream(FileStream):
     """A FileStream backed by a real file on disk, opened in binary mode for
     the lifetime of the resource (`r+b` when writes are allowed, else read-
-    only `rb`) rather than reopened per read/write."""
-    def __init__(self, path: str, writes_allowed: bool):
-        """Opens `path`, creating an empty file there first if it doesn't
-        exist and `writes_allowed` is True (errors instead if writes
-        aren't allowed and the file is missing)."""
-        if not exists(path):
-            if writes_allowed:
-                dirname = os.path.dirname(path)
-                if dirname:
-                    os.makedirs(dirname, exist_ok=True)
-                open_file(path, 'w').close()
-            else:
-                error(f'No file at path {path}')
+    only `rb`) rather than reopened per read/write.
 
-        mode = 'r+b' if writes_allowed else 'rb'
-        self._stream = open_file(path, mode)
+    A writable path that doesn't exist yet stays that way until the first
+    write: until then it reads as empty, and nothing is created on disk."""
+    def __init__(self, path: str, writes_allowed: bool):
+        """Opens `path` if it exists (errors if it doesn't and writes aren't
+        allowed - a missing writable file is created by the first write)."""
         self.path = path
         self.writes_allowed = writes_allowed
+        self._stream = None
+        if exists(path):
+            self._stream = open_file(path, 'r+b' if writes_allowed else 'rb')
+        elif not writes_allowed:
+            error(f'No file at path {path}')
+
+    def _opened(self, create: bool = False):
+        """The open file, opening it if it has appeared since (or creating
+        it, with `create`); None if there is still no file."""
+        if self._stream is None:
+            if exists(self.path):
+                self._stream = open_file(self.path, 'r+b' if self.writes_allowed else 'rb')
+            elif create:
+                dirname = os.path.dirname(self.path)
+                if dirname:
+                    os.makedirs(dirname, exist_ok=True)
+                self._stream = open_file(self.path, 'w+b')
+        return self._stream
 
     def __len__(self):
+        if self._opened() is None:
+            return 0
         pos = self._stream.tell()
         self._stream.seek(0, 2)
         size = self._stream.tell()
@@ -175,6 +194,7 @@ class DevFileStream(FileStream):
 
         final_offset = len(self) if offset == -1 else offset
 
+        self._opened(create=True)
         self._stream.seek(final_offset)
         self._stream.write(data)
         self._stream.flush()
@@ -184,6 +204,8 @@ class DevFileStream(FileStream):
         """Reads `size` bytes starting at `offset` (the whole file when
         `size` is -1, the default). Leaves the stream position reset to 0
         afterwards."""
+        if self._opened() is None:
+            return b""
         self._stream.seek(offset)
         val = self._stream.read(size)
         self._stream.seek(0)
@@ -197,7 +219,7 @@ class DevFileStream(FileStream):
         shorter length. Copies in 1MB chunks rather than loading the whole
         tail into memory at once, since asset files this shifts can be
         large. A no-op if writes aren't allowed, or if the range is empty."""
-        if not self.writes_allowed:
+        if not self.writes_allowed or self._opened() is None:
             return
 
         self._stream.seek(0, 2)
@@ -231,14 +253,15 @@ class DevFileStream(FileStream):
 
     def clear(self):
         """Truncates the file to empty. A no-op if writes aren't allowed."""
-        if self.writes_allowed:
+        if self.writes_allowed and self._opened() is not None:
             self._stream.truncate(0)
             self._stream.flush()
             self._stream.seek(0)
 
     def close(self):
-        """Closes the underlying file handle."""
-        self._stream.close()
+        """Closes the underlying file handle, if one was ever opened."""
+        if self._stream is not None:
+            self._stream.close()
 
     def __enter__(self):
         return self

@@ -22,8 +22,17 @@ def path_exists(path: str) -> bool:
     at all, on any platform: a fresh project with no `actions.toml` (the
     common case - it's optional input-action config) crashed with
     AttributeError the instant register_default_services() ran, before
-    ever reaching main.run()."""
-    return get_service('files').get_file(path) is not None
+    ever reaching main.run().
+
+    Asks the FileSystem directly where it can say (DevFileSystem): there,
+    get_file() hands back a resource for any writable path whether or not a
+    file is there, so going through it answered True for everything - and
+    used to create the file it was asking about."""
+    files = get_service('files')
+    exists_check = getattr(files, 'path_exists', None)
+    if exists_check is not None:
+        return exists_check(path)
+    return files.get_file(path) is not None
 
 loaders = {}
 

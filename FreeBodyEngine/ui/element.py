@@ -462,7 +462,7 @@ class RootElement(GenericElement):
         gap
     """
 
-    def __init__(self, width: int, height: int, styles={}):
+    def __init__(self, width: int, height: int, styles=None):
         """Args:
             width: Width of the root layout area (typically the window/framebuffer width), in pixels.
             height: Height of the root layout area (typically the window/framebuffer height), in pixels.
@@ -470,7 +470,7 @@ class RootElement(GenericElement):
         """
         super().__init__()
 
-        self.styles = styles
+        self.styles = dict(styles) if styles else {}  # own copy - see UIElement.__init__
         self.layout = Layout(0, 0, width, height)
 
     @property
@@ -508,7 +508,7 @@ class RootElement(GenericElement):
 
     def set_styles(self, styles: dict[str, any]):
         """Replaces the root's styles wholesale."""
-        self.styles = styles
+        self.styles = dict(styles)
 
     def calculate_layout(self):
         """
@@ -749,7 +749,7 @@ class UIElement(GenericElement):
         "scrollbar_thumb": {},
     }
 
-    def __init__(self, tag: str = None, styles={}):
+    def __init__(self, tag: str = None, styles=None):
         """Args:
             tag: Optional identifier for this element, not used by the layout/draw code itself.
             styles: This element's styles - see the style documentation above.
@@ -757,7 +757,13 @@ class UIElement(GenericElement):
         super().__init__(tag)
 
         self.state = ElementStates.NORMAL
-        self.styles: dict[str, any] = styles
+        # An element's own copy. set_style() writes into this dict, and it
+        # used to be whatever was passed - the `{}` default (one dict for every
+        # call) or a style dict reused across elements - so styling one element
+        # restyled every other element sharing it. The copy is shallow: a
+        # per-state table ('hover', ...) is still the caller's, and only ever
+        # read here.
+        self.styles: dict[str, any] = dict(styles) if styles else {}
         self.parent: GenericElement
         self.id = uuid.uuid4()
         self.animations: list[UIAnimation] = []

@@ -39,7 +39,7 @@ class PhysicsBody(Node2D):
                 "friction is the fraction of speed kept per second, so a value above 1.0 "
                 "makes the body accelerate on its own without any force applied."
             )
-        self.vel = velocity
+        self.vel = Vector(velocity)  # copied - see core/physics/__init__.py
         self.rot_vel = rotational_velocity
         self.mass = mass
         self.friction = friction

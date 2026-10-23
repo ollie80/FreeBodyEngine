@@ -90,3 +90,46 @@ def test_friction_above_one_warns(fixed_step, capsys):
     certainly a mistake - FreeBodyDev passes friction=4."""
     PhysicsBody(friction=4.0)
     assert 'friction' in capsys.readouterr().out.lower()
+
+
+def test_bodies_built_without_velocity_do_not_share_it(fixed_step):
+    """The default `Vector(0, 0)` is one object for every call, and `vel` is
+    changed in place - stored directly, pushing one body pushed them all."""
+    a, b = PhysicsBody(), PhysicsBody()
+    a.apply_force(Vector(60, 0))
+    a._integrate_forces()
+    assert a.vel.x > 0
+    assert b.vel.x == 0
+
+
+def test_passed_velocity_is_copied(fixed_step):
+    start = Vector(3, 0)
+    body = PhysicsBody(velocity=start)
+    _advance(body, 0.5)
+    assert start.x == 3
+
+
+def _nested_body(parent_rotation, parent_scale):
+    from FreeBodyEngine.core.node import Node2D
+    from FreeBodyEngine.core.scene import Scene
+    scene = Scene('test')
+    parent = Node2D(position=Vector(10, 0), rotation=parent_rotation, scale=parent_scale)
+    body = PhysicsBody(velocity=Vector(0, 0))
+    parent.add(body)
+    scene.add(parent)
+    return body
+
+
+@pytest.mark.parametrize('rotation, scale', [(0.0, Vector(1, 1)), (90.0, Vector(1, 1)), (30.0, Vector(2, 0.5))])
+def test_push_out_moves_a_nested_body_in_world_space(fixed_step, rotation, scale):
+    """Collision push-out used to be written to `world_transform.position`,
+    which for a body under another Node2D is a cached composed copy - the
+    push landed in the cache and the body snapped back into the wall."""
+    body = _nested_body(rotation, scale)
+    before = body.world_transform.position.copy()
+    body._move_world(Vector(5, -2))
+    # Force a fresh composition rather than trusting the cache.
+    body._world_key = None
+    after = body.world_transform.position
+    assert after.x - before.x == pytest.approx(5, abs=1e-6)
+    assert after.y - before.y == pytest.approx(-2, abs=1e-6)

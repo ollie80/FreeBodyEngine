@@ -3,6 +3,7 @@ from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine import (
     warning,
     get_main,
+    main_exists,
     get_service,
     register_service_update,
     unregister_service_update,
@@ -390,6 +391,7 @@ class Input(Service):
         self.pressed = {}
         self.pressed_set = set(self.pressed.keys())
         self.released = set()
+        self._previous_pressed = set()
 
         self.gamepads = {}
 
@@ -417,10 +419,30 @@ class Input(Service):
         pass
 
     def reset(self):
-        """Called at the start of each poll: carries this frame's still-pressed actions into `released` (so a released action reads True for exactly one frame), then clears `pressed`/`pressed_set` for update() to repopulate."""
-        self.released = self.pressed_set.copy()
+        """Called at the start of each poll: remembers what was pressed as of the last poll (update() releases whatever of it isn't pressed any more), then clears `pressed`/`pressed_set` for update() to repopulate.
+
+        `released` used to be set to the whole of the last poll's pressed set,
+        so an action read as released on every frame it was *held* after the
+        first, not just on the frame it was let go.
+
+        It is cleared only once a frame has been drawn since it was set. This
+        runs every loop iteration (EARLY) while game code reads it in UPDATE,
+        which only runs on iterations that draw - cleared every poll, a release
+        landing on an iteration that drew nothing was gone before anything
+        could see it."""
+        self._previous_pressed = self.pressed_set
+        if self._frame_seen_input():
+            self.released = set()
         self.pressed = {}
         self.pressed_set = set()
+
+    @staticmethod
+    def _frame_seen_input() -> bool:
+        """Whether game code has had a frame to read input since the last poll
+        - true whenever there is no running loop to ask (e.g. under test)."""
+        if not main_exists():
+            return True
+        return getattr(get_main().updater, 'did_draw', True)
 
     def action_exists(self, name) -> bool:
         """Checks whether `name` is a registered action."""
@@ -504,6 +526,8 @@ class Input(Service):
             self.pressed[name] = highest
             if pressed:
                 self.pressed_set.add(name)
+
+        self.released |= self._previous_pressed - self.pressed_set
 
     @classmethod
     def parse_actions(self, source: dict[str, list[str]]):

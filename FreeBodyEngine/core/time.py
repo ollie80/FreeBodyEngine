@@ -72,12 +72,12 @@ class Time:
             warning(f'Delta time spike: {self.delta_time}')
 
 class CooldownManager(Service):
-    """Tracks the remaining time on every active @cooldown/@physics_cooldown-decorated call, keyed by `id(self)` of the instance the decorated method was called on."""
+    """Tracks the remaining time on every active @cooldown/@physics_cooldown-decorated call, keyed by the instance the method was called on *and* the method - see _cooldown_wrapper()."""
     def __init__(self):
         """Sets up empty cooldown-tracking dicts for both the frame-time and physics-time decorators."""
         super().__init__('cooldown_manager')
-        self.cooldowns: dict[str, float] = {}
-        self.physics_cooldowns = {}
+        self.cooldowns: dict[tuple[int, str], float] = {}
+        self.physics_cooldowns: dict[tuple[int, str], float] = {}
 
     def on_initialize(self):
         """Registers update() and physics_update() to run every frame's UPDATE phase and every physics step, respectively."""
@@ -86,61 +86,70 @@ class CooldownManager(Service):
 
     def update(self):
         """Counts down every tracked @cooldown entry by this frame's delta time."""
-        for cooldown in self.cooldowns:
-            self.cooldowns[cooldown] = self.cooldowns[cooldown] - delta()
+        self._count_down(self.cooldowns, delta())
 
     def physics_update(self):
         """Counts down every tracked @physics_cooldown entry by one physics step's delta time."""
-        for cooldown in self.physics_cooldowns:
-            self.physics_cooldowns[cooldown] = self.physics_cooldowns[cooldown] - physics_delta()
+        self._count_down(self.physics_cooldowns, physics_delta())
+
+    @staticmethod
+    def _count_down(cooldowns: dict, elapsed: float):
+        """Subtracts `elapsed` from every entry and forgets the ones that have
+        run out. Entries used to stay forever, counting ever further negative:
+        one per object that ever called a decorated method, kept for the life
+        of the game - and an id() reused by a later object inherited it."""
+        for key in list(cooldowns):
+            remaining = cooldowns[key] - elapsed
+            # A hair above zero counts as done: 0.5 less five steps of 0.1
+            # leaves 2.8e-17, which would hold a cooldown an extra frame.
+            if remaining <= 1e-9:
+                del cooldowns[key]
+            else:
+                cooldowns[key] = remaining
 
     def on_destroy(self):
         """Unregisters update() and physics_update() from their update phases."""
         unregister_service_update(UpdatePhase.UPDATE, self.update)
         unregister_service_update(UpdatePhase.PHYSICS, self.physics_update)
 
+def _cooldown_wrapper(method, seconds: float, table: str):
+    """The wrapper both decorators share: runs `method` unless this instance's
+    cooldown *for this method* is still counting down, then starts it again.
+    Silently skips the call every time if the `cooldown_manager` service isn't
+    registered.
+
+    Keyed by instance and method. It was keyed by instance alone, so two
+    decorated methods on one object - a fire and a reload, say - shared a
+    single cooldown and each blocked the other."""
+    key_name = method.__qualname__
+
+    @wraps(method)
+    def wrapper(self, *args, **kwargs):
+        if not service_exists('cooldown_manager'):
+            return None
+        cooldowns = getattr(get_service('cooldown_manager'), table)
+        key = (id(self), key_name)
+        if key in cooldowns:
+            return None
+        cooldowns[key] = seconds
+        return method(self, *args, **kwargs)
+    return wrapper
+
 def cooldown(seconds: float):
-    """Decorator to add a cooldown to functions."""
+    """Decorator to add a cooldown to functions: the method runs, then calls
+    to it on the same object do nothing until `seconds` of frame time have
+    passed."""
     def decorator(method):
-        """Wraps `method` so each call checks (and, once expired, resets) this instance's frame-time cooldown before running it."""
-
-        def wrapper(self, *args, **kwargs):
-            """Runs `method` only if `self`'s cooldown has expired (or was never started), resetting it to `seconds` first; otherwise does nothing and returns None. Silently skips the call every time if the `cooldown_manager` service isn't registered."""
-            if service_exists('cooldown_manager'):
-                id_ = id(self)
-                manager = get_service('cooldown_manager')
-
-                if id_ in manager.cooldowns:
-                    if manager.cooldowns[id_] <= 0:
-                        manager.cooldowns[id_] = seconds
-                        return method(self, *args, **kwargs)
-                else:
-                    manager.cooldowns[id_] = seconds
-                    return method(self, *args, **kwargs)
-
-            return
-        return wrapper
+        return _cooldown_wrapper(method, seconds, 'cooldowns')
     return decorator
 
 def physics_cooldown(seconds: float):
-    """Decorator to add a cooldown to physics based functions. """
+    """Decorator to add a cooldown to physics based functions - the same as
+    `cooldown`, counted in physics steps' time.
+
+    Used to skip its first call (it only started the countdown) and, once the
+    countdown first ran out, never restart it - so after `seconds` the method
+    ran on every physics step."""
     def decorator(method):
-        """Wraps `method` so each physics step checks this instance's physics-time cooldown before running it."""
-
-        @wraps(method)
-        def wrapper(self, *args, **kwargs):
-            """Runs `method` only once `self`'s physics cooldown has already reached zero; the first call instead just seeds it to `seconds` and returns None without running `method`.
-
-            Note: unlike `cooldown()`'s wrapper, this never resets `physics_cooldowns[id_]` back to `seconds` after it fires - `CooldownManager.physics_update()` keeps decrementing it further negative every step, so once the cooldown first expires this branch keeps returning True and `method` runs on every subsequent physics step."""
-            id_ = id(self)
-
-            manager = get_service('cooldown_manager')
-            if id_ in manager.physics_cooldowns:
-                if manager.physics_cooldowns[id_] <= 0:
-                    return method(self, *args, **kwargs)
-            else:
-                manager.physics_cooldowns[id_] = seconds
-
-            return
-        return wrapper
+        return _cooldown_wrapper(method, seconds, 'physics_cooldowns')
     return decorator
