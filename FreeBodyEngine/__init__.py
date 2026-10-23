@@ -254,7 +254,8 @@ from FreeBodyEngine import math
 from FreeBodyEngine import net
 from FreeBodyEngine import ui
 from FreeBodyEngine.core.time import cooldown, physics_cooldown
-from FreeBodyEngine.core.input import get_action_pressed, get_action_released, get_action_strength, get_action_vector
+from FreeBodyEngine.core.input import (get_action_pressed, get_action_just_pressed, get_action_released,
+                                       get_action_strength, get_action_axis, get_action_vector)
 from FreeBodyEngine.core.mouse import Mouse
 from FreeBodyEngine.utils import add
 from FreeBodyEngine import graphics
@@ -263,6 +264,41 @@ from FreeBodyEngine.utils import get_platform
 
 from FreeBodyEngine.core.scene import add_scene, set_scene, remove_scene
 from FreeBodyEngine.core.window import create_cursor, set_cursor
+from FreeBodyEngine.core import input
+
+# The classes a game reaches for, at the top level - `fb.Sprite2D` rather than
+# `fb.graphics.sprite.Sprite2D`. The full paths keep working; these are the
+# same objects.
+from FreeBodyEngine.core.files import load_file, path_exists
+from FreeBodyEngine.math import Vector, Vector3, Transform
+from FreeBodyEngine.core.node import Node, Node2D, Node3D
+from FreeBodyEngine.core.scene import Scene
+from FreeBodyEngine.core.camera import Camera2D, Camera3D
+from FreeBodyEngine.core.timer import Timer
+from FreeBodyEngine.core.input import Key
+from FreeBodyEngine.core.collider import (RectangleCollider2D, CircleCollider2D, PolygonCollider2D,
+                                          Raycaster2D, cast_ray)
+from FreeBodyEngine.core.physics import PhysicsBody
+from FreeBodyEngine.core.physics.body import RigidBody2D
+from FreeBodyEngine.core.physics.joints import (DistanceJoint2D, SpringJoint2D, RevoluteJoint2D,
+                                                WeldJoint2D, TargetJoint2D)
+from FreeBodyEngine.core.tilemap.tilemap import Tilemap
+from FreeBodyEngine.graphics.color import Color
+from FreeBodyEngine.graphics.sprite import Sprite, Sprite2D, AnimatedSprite2D
+from FreeBodyEngine.graphics.mesh2d import MeshNode2D
+from FreeBodyEngine.graphics.model.model import Model3D
+from FreeBodyEngine.graphics.lighting import (PointLight2D, DirectionalLight2D, SpotLight2D,
+                                              PointLight3D, DirectionalLight3D, SpotLight3D)
+from FreeBodyEngine.ui import UIManager
+
+
+def __getattr__(name):
+    """`fb.UIElement`/`fb.RootElement` resolve lazily, through `fb.ui` - which
+    of the native and pure-Python implementations to use is only decided the
+    first time one is asked for (see ui/__init__.py), after flags are set."""
+    if name in ("UIElement", "RootElement"):
+        return getattr(ui, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 
@@ -289,40 +325,55 @@ def init():
 
     return main
 
+# What `from FreeBodyEngine import *` brings in. Every name here must exist -
+# it listed five loaders that didn't (and ran "audio" and "add" together for
+# want of a comma), so the import raised AttributeError. tests/test_api.py
+# checks it.
+#
+# `math` and `input` are left out on purpose: star-importing them would
+# replace the standard library's `math` and the builtin `input()` in the
+# importing module. They stay reachable as `fb.math` and `fb.input`.
 __all__ = [
-            "utils",
-            "ui",
-            "net",
-            "load_material",
-            "load_image",
-            'cooldown',
-            'physics_cooldown',
-            "_get_pre_flags",
-            "load_shader",
-            "load_sound",
-            "load_sprite",
-            "audio"
-            'add',
-            "get_platform",
-            "core",
-            "math",
-            "graphics",
-            "error",
-            "warning",
-            'add_scene', 
-            'set_scene', 
-            'remove_scene',
-            "log",
-            "get_main",
-            "create_cursor",
-            "set_cursor",
-            "delta",
-            "init",
-            "get_action_pressed",
-            "get_action_released",
-            "get_action_strength",
-            "get_action_vector",
-            "register_service",
-            "service_exists",
-            "_set_main"
+    # subpackages
+    "core", "graphics", "audio", "ui", "net", "utils",
+    # engine lifecycle and services
+    "init", "get_main", "main_exists", "fbquit", "get_platform",
+    "register_service", "unregister_service", "get_service", "service_exists",
+    "register_service_update", "unregister_service_update",
+    # flags
+    "get_flag", "set_flag",
+    "HEADLESS", "DEVMODE", "TEST_WINDOW", "TERMINAL_WINDOW", "NATIVE_UI", "PROJECT_PATH",
+    "PROFILER", "NAME", "FULLSCREEN", "FORCE_RENDERER", "FORCE_GEOMETRY_MODE",
+    "MAX_FPS", "MAX_TPS", "ALLOW_DISK_WRITE", "SUPRESS_WARNINGS", "SUPRESS_ERRORS",
+    "SUPRESS_LOGS", "QUIT",
+    # events
+    "register_event", "unregister_event", "emit_event",
+    "register_event_callback", "unregister_event_callback",
+    "register_event_category", "unregister_event_category",
+    # time
+    "delta", "physics_delta", "get_time", "cooldown", "physics_cooldown", "Timer",
+    # logging
+    "log", "warning", "error",
+    # scenes and nodes
+    "add", "add_scene", "set_scene", "remove_scene", "Scene",
+    "Node", "Node2D", "Node3D", "Camera2D", "Camera3D",
+    # files
+    "load_file", "path_exists",
+    # maths
+    "Vector", "Vector3", "Transform",
+    # input
+    "Key", "get_mouse", "create_cursor", "set_cursor",
+    "get_action_pressed", "get_action_just_pressed", "get_action_released",
+    "get_action_strength", "get_action_axis", "get_action_vector",
+    # physics
+    "RectangleCollider2D", "CircleCollider2D", "PolygonCollider2D", "Raycaster2D", "cast_ray",
+    "PhysicsBody", "RigidBody2D",
+    "DistanceJoint2D", "SpringJoint2D", "RevoluteJoint2D", "WeldJoint2D", "TargetJoint2D",
+    "Tilemap",
+    # graphics
+    "Color", "Sprite", "Sprite2D", "AnimatedSprite2D", "MeshNode2D", "Model3D",
+    "PointLight2D", "DirectionalLight2D", "SpotLight2D",
+    "PointLight3D", "DirectionalLight3D", "SpotLight3D",
+    # ui
+    "UIManager", "UIElement", "RootElement",
 ]

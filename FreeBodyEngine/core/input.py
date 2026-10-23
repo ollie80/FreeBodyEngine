@@ -380,18 +380,35 @@ class Action:
     def __str__(self):
         return f"ACTION {self.input}" if self.check == None else f"ACTION {self.input} {self.check.check_type} {self.check.val}"
 
+# The actions a project gets when it defines none (no actions.toml) - enough to
+# move something around and confirm or back out of a menu without writing a
+# config first. A project that defines any actions of its own gets only its
+# own.
+DEFAULT_ACTIONS = {
+    "left": ["LEFT", "A", "DPAD_LEFT", "AXIS_LEFT_X < -0.2"],
+    "right": ["RIGHT", "D", "DPAD_RIGHT", "AXIS_LEFT_X > 0.2"],
+    "up": ["UP", "W", "DPAD_UP", "AXIS_LEFT_Y < -0.2"],
+    "down": ["DOWN", "S", "DPAD_DOWN", "AXIS_LEFT_Y > 0.2"],
+    "accept": ["SPACE", "ENTER", "GAMEPAD_A"],
+    "cancel": ["ESCAPE", "GAMEPAD_B"],
+}
+
+
 class Input(Service):
     """Central input service - polls the window backend every frame and turns raw key/gamepad state into named, engine-defined actions (each action can be bound to several physical inputs via `actions`)."""
-    def __init__(self, actions: dict[str, list[Action]] = {}):
-        """Stores the action bindings and sets up empty pressed/released tracking state."""
+    def __init__(self, actions: dict[str, list[Action]] = None):
+        """Stores the action bindings - DEFAULT_ACTIONS when none are given -
+        and sets up empty pressed/released tracking state."""
         super().__init__("input")
         self.dependencies.append("window")
 
-        self.actions = actions
+        self.actions = actions if actions else self.parse_actions(DEFAULT_ACTIONS)
         self.pressed = {}
         self.pressed_set = set(self.pressed.keys())
         self.released = set()
+        self.just_pressed = set()
         self._previous_pressed = set()
+        self._warned_unknown = set()
 
         self.gamepads = {}
 
@@ -414,9 +431,16 @@ class Input(Service):
         """Replaces the entire action-bindings dict."""
         self.actions = actions
 
-    def bind_action(self, name: str, inputs: list[Key]):
-        """Intended to add extra input bindings to an existing action at runtime - not yet implemented."""
-        pass
+    def bind_action(self, name: str, inputs: list):
+        """Adds bindings to action `name` at runtime, creating it if needed.
+        Each input is a Key, or a string in actions.toml's form ("SPACE",
+        "AXIS_LEFT_X > 0.5"). Did nothing at all until now."""
+        strings = [i for i in inputs if isinstance(i, str)]
+        bindings = [Action(i, None) for i in inputs if not isinstance(i, str)]
+        if strings:
+            bindings += self.parse_actions({name: strings})[name]
+        self.actions.setdefault(name, []).extend(bindings)
+        self._warned_unknown.discard(name)
 
     def reset(self):
         """Called at the start of each poll: remembers what was pressed as of the last poll (update() releases whatever of it isn't pressed any more), then clears `pressed`/`pressed_set` for update() to repopulate.
@@ -433,6 +457,7 @@ class Input(Service):
         self._previous_pressed = self.pressed_set
         if self._frame_seen_input():
             self.released = set()
+            self.just_pressed = set()
         self.pressed = {}
         self.pressed_set = set()
 
@@ -448,33 +473,53 @@ class Input(Service):
         """Checks whether `name` is a registered action."""
         return name in self.actions.keys()
 
-    def get_action_pressed(self, name) -> bool:
-        """Returns whether `name` is currently pressed (held down this frame); warns and returns None if `name` isn't a registered action."""
-        if self.action_exists(name):
-            return name in self.pressed_set
-        else:
-            warning(f'Action with name "{name}" does not exist.')
+    def _known(self, name) -> bool:
+        """Whether `name` is an action, warning once per name if it isn't -
+        with the closest real name, since this is nearly always a typo.
 
-    def get_action_strength(self, name):
-        """Returns `name`'s current analog strength (the highest check-passing value among its bound inputs this frame); warns and returns None if `name` isn't a registered action."""
-        if self.action_exists(name):
-            return self.pressed[name]
-        else:
-            warning(f'Action with name "{name}" does not exist.')
+        Unknown names used to warn on every call (every frame) and return
+        None, which then failed somewhere else entirely: `None - 0.5` in
+        get_vector(), or a condition that was simply never true."""
+        if name in self.actions:
+            return True
+        if name not in self._warned_unknown:
+            self._warned_unknown.add(name)
+            import difflib
+            close = difflib.get_close_matches(str(name), [str(n) for n in self.actions], n=1)
+            hint = f' Did you mean "{close[0]}"?' if close else ''
+            known = ", ".join(sorted(str(n) for n in self.actions))
+            warning(f'Action "{name}" does not exist.{hint} Actions: {known}.')
+        return False
+
+    def get_action_pressed(self, name) -> bool:
+        """Returns whether `name` is currently pressed (held down this frame). False, with a warning, if `name` isn't a registered action."""
+        return self._known(name) and name in self.pressed_set
+
+    def get_action_just_pressed(self, name) -> bool:
+        """Returns whether `name` went down this frame - true on the first
+        frame of a press only, where get_action_pressed() is true for as long
+        as it's held. False, with a warning, if `name` isn't an action."""
+        return self._known(name) and name in self.just_pressed
+
+    def get_action_strength(self, name) -> float:
+        """Returns `name`'s current analog strength (the highest check-passing value among its bound inputs this frame). 0.0, with a warning, if `name` isn't a registered action."""
+        if not self._known(name):
+            return 0.0
+        return float(self.pressed.get(name, 0.0))
 
     def get_action_released(self, name) -> bool:
-        """Returns whether `name` was released this frame (it was pressed as of the last poll, but isn't anymore); warns and returns None if `name` isn't a registered action."""
-        if self.action_exists(name):
-            return name in self.released
-        else:
-            warning(f'Action with name "{name}" does not exist.')
+        """Returns whether `name` was released this frame (it was pressed as of the last poll, but isn't anymore). False, with a warning, if `name` isn't a registered action."""
+        return self._known(name) and name in self.released
+
+    def get_axis(self, negative: str, positive: str) -> float:
+        """One axis from two actions: `positive`'s strength less
+        `negative`'s, so -1..1 for digital keys and anything between for an
+        analog stick."""
+        return self.get_action_strength(positive) - self.get_action_strength(negative)
 
     def get_vector(self, neg_x: str, pos_x: str, neg_y: str, pos_y: str):
         """Get a vector from the strengths of 4 actions."""
-        x = self.get_action_strength(pos_x) - self.get_action_strength(neg_x)
-        y = self.get_action_strength(pos_y) - self.get_action_strength(neg_y)
-        
-        return Vector(x, y)
+        return Vector(self.get_axis(neg_x, pos_x), self.get_axis(neg_y, pos_y))
 
     def _key_callback(self, key: Key, type: KeyCallbackType):
         if type == KeyCallbackType.PRESS:
@@ -528,6 +573,7 @@ class Input(Service):
                 self.pressed_set.add(name)
 
         self.released |= self._previous_pressed - self.pressed_set
+        self.just_pressed |= self.pressed_set - self._previous_pressed
 
     @classmethod
     def parse_actions(self, source: dict[str, list[str]]):
@@ -579,6 +625,25 @@ def get_action_released(name: str) -> bool:
     return get_service("input").get_action_released(name)
 
 
+def get_action_just_pressed(name: str) -> bool:
+    """Returns whether the action `name` went down this frame."""
+    return get_service("input").get_action_just_pressed(name)
+
+
+def get_action_axis(negative: str, positive: str) -> float:
+    """`positive`'s strength less `negative`'s - see Input.get_axis()."""
+    return get_service("input").get_axis(negative, positive)
+
+
 def get_action_vector(neg_x: str, pos_x: str, neg_y: str, pos_y: str) -> Vector:
     """Get a vector from the strengths of four actions."""
     return get_service("input").get_vector(neg_x, pos_x, neg_y, pos_y)
+
+
+# Short names, for `fb.input.pressed("jump")` - this module is `fb.input`.
+pressed = get_action_pressed
+just_pressed = get_action_just_pressed
+released = get_action_released
+strength = get_action_strength
+axis = get_action_axis
+vector = get_action_vector

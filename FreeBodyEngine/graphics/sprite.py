@@ -114,11 +114,6 @@ class Sprite2D(Node2D):
     def visible(self, value: bool):
         self._sprite.visible = value
 
-    def on_draw(self):
-        """Draws the wrapped sprite. Mirrors the `Node.on_draw` hook
-        pattern (see core/node.py)."""
-        self._sprite.draw()
-
 class Sprite3D(Node2D):
     """Intended 3D counterpart to Sprite2D for positioning a Sprite via a
     3D transform."""

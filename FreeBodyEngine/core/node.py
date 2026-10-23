@@ -195,33 +195,9 @@ class Node(GenericNode):
         self.on_kill()
 
 
-    def on_event_loop(self, event):
-        """Hook meant for handling input/window events; not currently
-        invoked by anything in the engine. No-op by default."""
-        pass
-
     def on_kill(self):
         """Called after this node has been removed from its parent by
         `kill`; override to add teardown logic. No-op by default."""
-        pass
-
-    def on_draw(self):
-        """Hook meant for custom per-node draw logic (overridden by e.g.
-        `Sprite2D`), but not currently called by the tree traversal or the
-        renderer - rendering instead goes through `find_nodes_with_type`
-        elsewhere. No-op by default."""
-        pass
-
-    def on_post_update(self):
-        """Hook meant to run once every node's update has finished for the
-        frame; not currently invoked by anything in the engine. No-op by
-        default."""
-        pass
-
-    def on_pre_update(self):
-        """Hook meant to run before any node's update runs for the frame;
-        not currently invoked by anything in the engine. No-op by
-        default."""
         pass
 
     def on_update(self):
