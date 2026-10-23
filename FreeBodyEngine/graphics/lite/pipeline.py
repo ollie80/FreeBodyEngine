@@ -44,7 +44,7 @@ import numpy as np
 from FreeBodyEngine import get_service
 from FreeBodyEngine.core.scene import SceneManager
 from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
+from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType, Framebuffer
 from FreeBodyEngine.graphics.lite.material import LiteMaterial
 from FreeBodyEngine.graphics.material import BlendMode
 from FreeBodyEngine.graphics.mesh import generate_quad
@@ -352,15 +352,17 @@ class LitePipeline(GraphicsPipeline):
 
     # -- the frame ---------------------------------------------------------
 
-    def draw(self):
+    def draw_scene(self, framebuffer: Framebuffer = None):
+        """Renders the active scene to the window, or into `framebuffer` -
+        see GraphicsPipeline.draw_scene. Every pass runs in
+        `main_framebuffer` either way; only where 'lit' ends up differs."""
         self.main_framebuffer.bind()
         camera = self.scene_manager.get_active().camera
         window_size = get_service('window').framebuffer_size
 
         if not camera:
             self.renderer.clear(Color("#000000FF"))
-            self.main_framebuffer.draw(self.output_channel, window_size)
-            self.main_framebuffer.unbind()
+            self._present(self.main_framebuffer, self.output_channel, framebuffer, window_size)
             return
 
         self.main_framebuffer.set_draw_buffers(
@@ -399,5 +401,4 @@ class LitePipeline(GraphicsPipeline):
 
         self._draw_overlay(camera, debugs)
 
-        self.main_framebuffer.draw(self.output_channel, window_size)
-        self.main_framebuffer.unbind()
+        self._present(self.main_framebuffer, self.output_channel, framebuffer, window_size)

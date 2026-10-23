@@ -54,7 +54,7 @@ from FreeBodyEngine.graphics.pbr.shaders import (MAX_LIGHTS, LIGHTING_COMPOSITE_
                                                  DOF_COC_FRAG, DOF_BOKEH_FRAG,
                                                  DOF_COMPOSITE_FRAG, DOF_MAX_BLUR)
 
-from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType
+from FreeBodyEngine.graphics.framebuffer import AttachmentFormat, AttachmentType, Framebuffer
 # TilemapRenderer is deliberately not imported. Nothing here uses the
 # name - _collect() identifies one with node.inherits_from(
 # 'TilemapRenderer'), a string - and importing it reached the tilemap
@@ -879,18 +879,20 @@ class PBRPipeline(GraphicsPipeline):
         self._composite_shader.use()
         self._composite_quad.draw()
 
-    def draw(self):
+    def draw_scene(self, framebuffer: Framebuffer = None):
         """Renders one frame - see module docstring for the full frame
-        structure. Falls back to just clearing the window to opaque black
-        if the active scene has no camera."""
+        structure - to the window, or into `framebuffer` (see
+        GraphicsPipeline.draw_scene). Every pass, post-processing included,
+        runs in this pipeline's own buffers either way; only the last one
+        writes somewhere different. Falls back to just clearing the output
+        to opaque black if the active scene has no camera."""
         self.main_framebuffer.bind()
         camera = self.scene_manager.get_active().camera
         window_size = get_service('window').framebuffer_size
 
         if not camera:
             self.renderer.clear(Color("#000000FF"))
-            self.main_framebuffer.draw(self.output_channel, window_size)
-            self.main_framebuffer.unbind()
+            self._present(self.main_framebuffer, self.output_channel, framebuffer, window_size)
             return
 
         # Cleared with every attachment (including 'lit') active as a draw
@@ -1052,13 +1054,11 @@ class PBRPipeline(GraphicsPipeline):
                 self._draw_dof()
             self._draw_tonemap()
             if self.antialiasing or self.speed_line_strength > 0.0:
-                self._draw_fxaa(window_size)
+                self._draw_fxaa(window_size, framebuffer)
             else:
-                self._post_framebuffer.unbind()
-                self._post_framebuffer.draw('tonemapped', window_size)
+                self._present(self._post_framebuffer, 'tonemapped', framebuffer, window_size)
         else:
-            self.main_framebuffer.unbind()
-            self.main_framebuffer.draw(self.output_channel, window_size)
+            self._present(self.main_framebuffer, self.output_channel, framebuffer, window_size)
 
     def _render_ao(self, camera):
         """Fills the AO buffer from the G-buffer, then blurs the dither out
@@ -1200,13 +1200,13 @@ class PBRPipeline(GraphicsPipeline):
         self._composite_quad.draw()
         self._dof_framebuffer.unbind()
 
-    def _draw_fxaa(self, window_size: tuple[int, int]):
-        """Resolves 'lit' to the screen through the FXAA shader.
+    def _draw_fxaa(self, window_size: tuple[int, int], framebuffer: Framebuffer = None):
+        """Resolves 'lit' to the screen - or into `framebuffer`, see
+        draw_scene() - through the FXAA shader.
 
         Unlike Framebuffer.draw(), which blits an attachment straight to the
-        window, this is a real fullscreen quad draw into the default
-        framebuffer - so it binds that framebuffer and sets the viewport
-        itself (bind_window_framebuffer does both).
+        window, this is a real fullscreen quad draw into the output - so it
+        binds that and sets the viewport itself (_bind_output does both).
 
         `InverseResolution` is one texel of the *framebuffer*, not of the
         window: the two differ whenever the window is scaled, and FXAA's
@@ -1214,7 +1214,8 @@ class PBRPipeline(GraphicsPipeline):
         filtering or the edge detection reads neighbours that are not
         neighbours.
         """
-        self.renderer.bind_window_framebuffer(window_size)
+        self._bind_output(framebuffer, window_size)
+        output_size = window_size if framebuffer is None else (framebuffer.width, framebuffer.height)
 
         # The tonemapped image, not 'lit' itself: FXAA thresholds on luma,
         # and a luma taken from unmapped radiance has no fixed meaning - the
@@ -1236,13 +1237,14 @@ class PBRPipeline(GraphicsPipeline):
         self._fxaa_shader['SpeedLineInnerRadius'] = self.speed_line_inner_radius
         self._fxaa_shader['SpeedLineWidth'] = self.speed_line_width
         self._fxaa_shader['SpeedLineCount'] = self.speed_line_count
-        self._fxaa_shader['ScreenAspect'] = window_size[0] / max(window_size[1], 1)
+        self._fxaa_shader['ScreenAspect'] = output_size[0] / max(output_size[1], 1)
 
         self._fxaa_shader['model'] = self._identity_model
 
         self.renderer.disable_depth_testing()
         self._fxaa_shader.use()
         self._composite_quad.draw()
+        self._finish_output(framebuffer, window_size)
 
     def create_material(self, data, injector):
         """Builds a PBRMaterial from `data`, using `injector` to resolve FBUSL builtins."""
