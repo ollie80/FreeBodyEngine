@@ -202,7 +202,7 @@ class Sprite2D(Node2D):
 
     @property
     def z(self) -> float:
-        """Depth nudge - see Sprite.__init__. Higher draws in front."""
+        """Depth nudge - see Sprite.__init__. More negative draws in front."""
         return self._sprite.z
 
     @z.setter
