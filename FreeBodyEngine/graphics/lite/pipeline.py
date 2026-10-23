@@ -385,7 +385,7 @@ class LitePipeline(GraphicsPipeline):
             if view is not None and not self._on_screen(sprite, view):
                 continue
             self.renderer.submit(sprite._sprite.quad, sprite._sprite.material,
-                                 sprite.world_transform, camera, z=sprite._sprite.z)
+                                 sprite.draw_transform, camera, z=sprite._sprite.z)
 
         for mesh_node in meshes:
             if view is not None and not self._on_screen(mesh_node, view):

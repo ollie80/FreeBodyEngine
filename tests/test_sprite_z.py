@@ -6,8 +6,8 @@ need it - every transparent, alpha cut-out sprite in a 2D game:
   * `Sprite2D.__init__` assigned `self._sprite.z = z` unconditionally from a
     default of 0, so wrapping a loaded sprite discarded whatever z its
     `.fbspr` declared.
-  * `AnimatedSprite2D` built its Sprite with the caller's `z` and then let
-    that same line overwrite it, so an animated sprite's z never survived
+  * The animated sprite node built its Sprite with the caller's `z` and then
+    let that same line overwrite it, so an animated sprite's z never survived
     construction at all.
   * `Renderer.flush_transparent` sorted purely on `camera_distance()`, which
     squares its z term - burying a ~1e-2 nudge under an x/y term measured in
@@ -22,7 +22,7 @@ import pytest
 from FreeBodyEngine.graphics.material import BlendMode
 from FreeBodyEngine.graphics.renderer import Renderer
 from FreeBodyEngine.graphics.animation import Animation, AnimationFrame, AnimationSet
-from FreeBodyEngine.graphics.sprite import AnimatedSprite2D, Sprite, Sprite2D
+from FreeBodyEngine.graphics.sprite import Sprite, Sprite2D
 from FreeBodyEngine.math import Transform, Vector
 
 
@@ -104,6 +104,7 @@ def _sprite(z=0.0):
     real needs a renderer, a texture and a material."""
     s = object.__new__(Sprite)
     s.z = z
+    s.animations = None
     return s
 
 
@@ -123,13 +124,13 @@ def test_sprite2d_accepts_an_explicit_zero():
 
 
 def _animation_set():
-    """A one-frame, one-animation set - enough to build an AnimatedSprite2D."""
+    """A one-frame, one-animation set - enough to build an animated Sprite2D."""
     frame = AnimationFrame(texture=object(), duration=1.0)
     return AnimationSet({'idle': Animation(name='idle', frames=[frame])})
 
 
 class _InstancingMaterial(_Material):
-    """AnimatedSprite2D's Sprite takes a per-object copy via instance()."""
+    """An animated Sprite2D's Sprite takes a per-object copy via instance()."""
     def __init__(self, name='anim'):
         super().__init__(name)
         self.properties = {}
@@ -145,21 +146,19 @@ def stub_quad(monkeypatch):
     """Sprite.__init__ builds its quad via generate_quad(), which reaches for
     the live renderer service through create_static_mesh(). The mesh has
     nothing to do with z."""
-    monkeypatch.setattr('FreeBodyEngine.graphics.sprite.generate_quad',
-                        lambda *a, **k: object())
+    monkeypatch.setattr('FreeBodyEngine.graphics.sprite._shared_quad',
+                        lambda: object())
 
 
 def test_animated_sprite2d_keeps_its_z(stub_quad):
-    """The player and its weapon are both AnimatedSprite2Ds; this used to
+    """The player and its weapon are both animated sprites; this used to
     construct the Sprite with `z` and then have Sprite2D reset it to 0."""
-    node = AnimatedSprite2D(_animation_set(), _InstancingMaterial(),
-                            _RecordingRenderer.make(), z=-0.008)
+    node = Sprite2D(_animation_set(), material=_InstancingMaterial(), z=-0.008)
     assert node._sprite.z == -0.008
 
 
 def test_animated_sprite2d_defaults_to_no_nudge(stub_quad):
-    node = AnimatedSprite2D(_animation_set(), _InstancingMaterial(),
-                            _RecordingRenderer.make())
+    node = Sprite2D(_animation_set(), material=_InstancingMaterial())
     assert node._sprite.z == 0
 
 

@@ -20,21 +20,20 @@ def load_sprite(file: FileResource):
             return hot_reload.track_instance(file.file_path, cached.instance())
 
     data = load_toml(file)
-    type = data.get('type', "static")
 
-    if type == "static":
-        img_path = data.get('image')
-        if not img_path:
-            pass
+    # `image` for a still sprite, `animations` (an .fbanim) for an animated
+    # one - or both, the image then being what shows before anything plays.
+    # `material` is optional: the pipeline's default sprite material is used
+    # without one (see graphics/sprite.py's default_sprite_material()).
+    img_path = data.get('image')
+    anim_path = data.get('animations')
+    if not img_path and not anim_path:
+        error(f'Sprite "{file.file_path}" names neither an image nor animations.')
+        return None
 
-        image = load_file(img_path)
-
+    animations = load_file(anim_path) if anim_path else None
     mat_path = data.get('material')
-
-    if not mat_path:
-        pass
-
-    mat = load_file(mat_path)
+    mat = load_file(mat_path) if mat_path else None
     visible = data.get('visible', True)
     z = data.get('z', 0)
 
@@ -43,7 +42,10 @@ def load_sprite(file: FileResource):
     normal_path = data.get('normal')
     normal = load_file(normal_path) if normal_path else None
 
-    sprite = Sprite(image, mat, get_service('renderer'), visible, z, normal)
+    if img_path:
+        sprite = Sprite(load_file(img_path), mat, visible, z, normal, animations)
+    else:
+        sprite = Sprite.from_animations(animations, mat, visible=visible, z=z)
 
     if hot_reload.is_enabled():
         # The registered Sprite is a template to reload into, never drawn;

@@ -609,7 +609,7 @@ class PBRPipeline(GraphicsPipeline):
         shadow_planes = _frustum_planes(view @ proj) if self.frustum_culling else None
 
         for sprite in sprites:
-            self._shadow_shader['model'] = sprite.world_transform.model
+            self._shadow_shader['model'] = sprite.draw_transform.model
             sprite._sprite.quad.draw()
 
         for mesh_node in meshes:
@@ -941,7 +941,7 @@ class PBRPipeline(GraphicsPipeline):
             tilemap.draw(camera)
 
         for sprite in sprites:
-            self.renderer.submit(sprite._sprite.quad, sprite._sprite.material, sprite.world_transform, camera, z=sprite._sprite.z)
+            self.renderer.submit(sprite._sprite.quad, sprite._sprite.material, sprite.draw_transform, camera, z=sprite._sprite.z)
 
         for mesh_node in meshes:
             self.renderer.submit(mesh_node.mesh, mesh_node.material, mesh_node.world_transform, camera)

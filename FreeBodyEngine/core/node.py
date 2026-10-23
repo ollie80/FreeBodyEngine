@@ -345,7 +345,8 @@ class Node2D(Node):
         that actually determine the result cannot miss a change, however it was
         made, and is still a fraction of the cost of recomputing.
         """
-        parent = self.parent
+        # A node not added to anything yet has no parent at all.
+        parent = getattr(self, 'parent', None)
         if parent is None or not parent.inherits_from('Node2D'):
             return self.transform
 
@@ -392,7 +393,8 @@ class Node3D(Node):
         transform in world space rather than parent-local space. Falls
         back to the local transform unchanged if the parent isn't a
         `Node3D` (e.g. it's the scene's `RootNode`)."""
-        if not self.parent.inherits_from('Node3D'):
+        parent = getattr(self, 'parent', None)
+        if parent is None or not parent.inherits_from('Node3D'):
             return self.transform
         # Memoised on what it is composed from, as Node2D's is (see there):
         # this node's own nine numbers and the parent's world transform -

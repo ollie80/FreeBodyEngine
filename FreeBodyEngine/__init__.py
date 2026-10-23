@@ -284,7 +284,7 @@ from FreeBodyEngine.core.physics.joints import (DistanceJoint2D, SpringJoint2D, 
                                                 WeldJoint2D, TargetJoint2D)
 from FreeBodyEngine.core.tilemap.tilemap import Tilemap
 from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine.graphics.sprite import Sprite, Sprite2D, AnimatedSprite2D
+from FreeBodyEngine.graphics.sprite import Sprite, Sprite2D
 from FreeBodyEngine.graphics.mesh2d import MeshNode2D
 from FreeBodyEngine.graphics.model.model import Model3D
 from FreeBodyEngine.graphics.lighting import (PointLight2D, DirectionalLight2D, SpotLight2D,
@@ -371,7 +371,7 @@ __all__ = [
     "DistanceJoint2D", "SpringJoint2D", "RevoluteJoint2D", "WeldJoint2D", "TargetJoint2D",
     "Tilemap",
     # graphics
-    "Color", "Sprite", "Sprite2D", "AnimatedSprite2D", "MeshNode2D", "Model3D",
+    "Color", "Sprite", "Sprite2D", "MeshNode2D", "Model3D",
     "PointLight2D", "DirectionalLight2D", "SpotLight2D",
     "PointLight3D", "DirectionalLight3D", "SpotLight3D",
     # ui

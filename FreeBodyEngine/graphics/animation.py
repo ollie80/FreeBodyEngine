@@ -88,13 +88,24 @@ class AnimationPlayer:
             self.frame_index = 0
             self.elapsed = 0.0
 
+    @property
+    def finished(self) -> bool:
+        """Whether a non-looping animation has played its last frame out.
+        Never true for a looping one. A single-frame one is finished once
+        that frame's duration has passed."""
+        anim = self.animation
+        if anim.loop or not anim.frames:
+            return False
+        last = anim.frames[-1]
+        return self.frame_index == len(anim.frames) - 1 and self.elapsed >= max(last.duration, 1e-4)
+
     def update(self, dt: float) -> bool:
         """Advances playback by dt seconds. Returns True if the current frame changed."""
         anim = self.animation
+        self.elapsed += dt
         if len(anim.frames) <= 1:
             return False
 
-        self.elapsed += dt
         changed = False
 
         frame = anim.frames[self.frame_index]
@@ -103,16 +114,17 @@ class AnimationPlayer:
         # took nothing off `elapsed`, so a looping animation of them never
         # left this loop and the game hung.
         while self.elapsed >= max(frame.duration, 1e-4):
-            self.elapsed -= max(frame.duration, 1e-4)
-
             if self.frame_index + 1 < len(anim.frames):
                 self.frame_index += 1
-                changed = True
             elif anim.loop:
                 self.frame_index = 0
-                changed = True
             else:
+                # The last frame of a one-shot: its time is left on `elapsed`
+                # rather than spent, which is how `finished` can tell it has
+                # played out.
                 break
+            self.elapsed -= max(frame.duration, 1e-4)
+            changed = True
 
             frame = anim.frames[self.frame_index]
 
