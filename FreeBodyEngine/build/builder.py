@@ -5,7 +5,6 @@ import json
 import tomllib
 import subprocess
 import shutil
-import hashlib
 from pathlib import Path
 import sys
 
@@ -16,11 +15,12 @@ import struct
 import venv
 import importlib
 from FreeBodyEngine import warning
-from FreeBodyEngine.font.atlasgen import generate_atlas
 from FreeBodyEngine.build.atlas_gen import AtlasGen
 from FreeBodyEngine.build.progress import ProgressBar
-from FreeBodyEngine.core.files.loaders.font import FONT_MANIFEST_KEY
-from FreeBodyEngine.core.files.loaders.model import GLBParser, GLTFParser, bake_gltf_to_fbmesh, MODEL_MANIFEST_KEY
+from FreeBodyEngine.core.files.loaders.font import FONT_MANIFEST_KEY, bake_font_file, font_cache_extra
+from FreeBodyEngine.core.files.loaders.model import bake_model_file, MODEL_MANIFEST_KEY
+from FreeBodyEngine.core.files import asset_cache
+from FreeBodyEngine.core.files.asset_cache import AssetCache, cache_root_for
 from FreeBodyEngine import requirements as fb_requirements
 from FreeBodyEngine.cli.cpp.compile import compile_cpp_scripts, SCRIPTS_DIR_NAME
 
@@ -80,12 +80,16 @@ IMAGE_FILE_TYPES = ["png", "jpg", "jpeg"]
 # bundled as raw bytes - see MODEL_FILE_TYPES.
 MESH_FILE_TYPES = ["fbx"]
 MODEL_FILE_TYPES = ["glb", "gltf"]
-FONT_ATLAS_SIZE = 48
-FONT_RANGE_PX = 4.0
-FONT_BUILD_DIR = "_ENGINE_fonts"
-FONT_CACHE_NAME = "_ENGINE_font_cache.json"
-MODEL_BUILD_DIR = "_ENGINE_models"
-MODEL_CACHE_NAME = "_ENGINE_model_cache.json"
+
+# Where fonts and models used to be baked before they shared
+# core/files/asset_cache.py's cache - removed by
+# _remove_legacy_bake_output() so a project's asset folder isn't left
+# holding stale copies that locate_assets() would bundle as assets.
+LEGACY_ASSET_DIR_OUTPUT = [
+    "_ENGINE_fonts", "_ENGINE_font_manifest.json", "_ENGINE_font_cache.json",
+    "_ENGINE_models", "_ENGINE_model_manifest.json", "_ENGINE_model_cache.json",
+]
+LEGACY_BUILD_DIR_OUTPUT = ["fonts", "models"]
 
 class Builder:
     """Orchestrates a whole project build (dev or release) from `fbproject.toml`
@@ -153,11 +157,10 @@ class Builder:
         self.cache_path = os.path.join(self.build_path, "cache.json")
 
         # Unlike temp_path (wiped by reset_dirs() on every build), this
-        # persists across release builds - fonts.build_fonts() needs a
-        # stable place to keep previously-built atlases so its own content-
-        # hash cache can actually skip rebuilding them next time.
-        self.font_cache_path = os.path.join(self.build_path, "fonts")
-        self.model_cache_path = os.path.join(self.build_path, "models")
+        # persists across every build and dev run - see
+        # core/files/asset_cache.py. Fonts and models are only ever re-baked
+        # when their source actually changes.
+        self.asset_cache = AssetCache(cache_root_for(os.path.abspath(path)))
         
         self.output_path = os.path.abspath(f'{path}/dist/')
         self.asset_out_path = os.path.join(self.output_path, 'assets')
@@ -612,237 +615,117 @@ class Builder:
         return images, data, meshes, fonts
 
 
-    def _font_content_hash(self, abs_path: str) -> str:
-        """Content hash of a source font file plus the settings its atlas
-        was generated with - used to decide whether a previously-built
-        atlas is still valid, so re-running a build doesn't regenerate
-        every font's MSDF atlas (genuinely slow for a whole family of
-        weights) when nothing about it actually changed. Hashing content
-        rather than comparing mtimes survives a fresh checkout/copy where
-        mtimes get reset but bytes don't change."""
-        h = hashlib.blake2b(digest_size=16)
-        with open(abs_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-        h.update(f":{FONT_ATLAS_SIZE}:{FONT_RANGE_PX}".encode())
-        return h.hexdigest()
+    def _remove_legacy_bake_output(self):
+        """Deletes fonts/models baked by older engine versions, which wrote
+        them into the project's asset folder (dev builds) or `build/fonts`
+        and `build/models` (release builds) instead of the shared asset
+        cache. Left in the asset folder they'd be bundled as ordinary
+        project assets by locate_assets(). Only ever removes these exact
+        engine-generated names."""
+        for name in LEGACY_ASSET_DIR_OUTPUT:
+            self._remove_path(os.path.join(self.asset_path, name))
+        for name in LEGACY_BUILD_DIR_OUTPUT:
+            self._remove_path(os.path.join(self.build_path, name))
 
-    def build_fonts(self, fonts: dict[str, str], output_dir: str):
-        """Pre-builds every given font (.ttf/.otf) into an MSDF atlas +
-        `.fbfont` sidecar under `output_dir`/_ENGINE_fonts, and writes a
-        {original_relative_path: built_relative_path} manifest next to it -
-        core/files/loaders/font.py's resolve_font() reads this same
-        manifest at runtime so a `font` style's raw path (e.g.
-        "FreeMono.ttf") resolves to the pre-built asset instead of being
-        generated on the spot every run. `output_dir` is the *real* project
-        asset directory for a dev build (DevFileSystem reads these loose
-        files directly, nothing else to do) or a persistent per-project
-        build-cache directory for a release build (the caller still has to
-        fold the returned data/image file maps into the data.pak/
-        images.pak bundles - `output_dir` itself is never bundled, only
-        those explicit files are).
+    @staticmethod
+    def _remove_path(path: str):
+        if os.path.isdir(path):
+            _rmtree(path)
+        elif os.path.isfile(path):
+            os.remove(path)
 
-        A `_ENGINE_font_cache.json` next to the manifest records each
-        source font's content hash - a font already built with the same
-        hash is left alone entirely (not re-read, not re-rasterized),
-        so re-running a build only pays for fonts that are new or actually
-        changed since last time.
+    def _bake_into_cache(self, kind: str, items: list[tuple[str, str]], bake, label: str,
+                         manifest_dir: str | None, manifest_key: str, extra: str = ""):
+        """Makes sure every `(abs_path, rel_path)` in `items` has an
+        up-to-date bake of `kind` in the shared asset cache (see
+        core/files/asset_cache.py), only re-baking what changed.
 
-        Fonts under "engine://" (rel_path starting with "engine/") are
-        skipped - they ship inside the installed FreeBodyEngine package,
-        not a project's own build output, so resolve_font()'s on-the-fly
-        generation fallback covers those instead.
-
-        Returns (manifest, data_files, image_files) - the latter two are
-        {abs_path: out_relative_path} maps in the same shape bundle_assets()
-        expects, empty for anything build_for_dev() doesn't need them for.
-        """
+        With `manifest_dir` (a release build), also writes the
+        {rel_path: baked_virtual_path} manifest the runtime loaders read
+        there, and returns `(manifest, data_files, image_files)` - the
+        latter two {abs_path: out_relative_path} maps in the shape
+        bundle_assets() expects, `.png`/`.jpg`/`.fbimg` files going to
+        images. Without it (a dev build, which reads the cache directly at
+        runtime) nothing is written but the cache."""
         manifest: dict[str, str] = {}
         data_files: dict[str, str] = {}
         image_files: dict[str, str] = {}
 
-        items = [(abs_path, rel_path) for abs_path, rel_path in fonts.items() if not rel_path.startswith("engine/")]
-        if not items:
-            return manifest, data_files, image_files
-
-        font_build_dir = os.path.join(output_dir, FONT_BUILD_DIR)
-        os.makedirs(font_build_dir, exist_ok=True)
-
-        cache_path = os.path.join(output_dir, FONT_CACHE_NAME)
-        cache: dict[str, str] = {}
-        if os.path.exists(cache_path):
-            with open(cache_path) as f:
-                cache = json.load(f)
-        new_cache: dict[str, str] = {}
-
         built_count = 0
         skipped_count = 0
 
-        self.progress.stage("Building fonts", total=len(items))
+        if items:
+            self.progress.stage(f"Building {label}s", total=len(items))
+
         for i, (abs_path, rel_path) in enumerate(items, 1):
-            # Flattened so fonts of the same name in different asset
-            # subdirectories (e.g. "ui/test.ttf" vs "levels/test.ttf") don't
-            # collide in the shared build_dir.
-            safe_name = rel_path.replace("/", "__").rsplit(".", 1)[0]
-            image_name = f"{safe_name}.png"
-            fbfont_abs = os.path.join(font_build_dir, f"{safe_name}.fbfont")
-            image_abs = os.path.join(font_build_dir, image_name)
-            built_rel = f"{FONT_BUILD_DIR}/{safe_name}.fbfont"
-
-            content_hash = self._font_content_hash(abs_path)
-            new_cache[rel_path] = content_hash
-
-            up_to_date = (
-                cache.get(rel_path) == content_hash
-                and os.path.exists(fbfont_abs)
-                and os.path.exists(image_abs)
-            )
-
-            if not up_to_date:
-                atlas_image, data = generate_atlas(abs_path, FONT_ATLAS_SIZE, range_px=FONT_RANGE_PX)
-                data["atlas"]["image"] = image_name
-                atlas_image.save(image_abs)
-                with open(fbfont_abs, 'w') as f:
-                    json.dump(data, f)
+            entry, baked = self.asset_cache.ensure(kind, rel_path, abs_path, bake, extra)
+            if baked:
                 built_count += 1
             else:
                 skipped_count += 1
 
-            manifest[rel_path] = built_rel
-            data_files[fbfont_abs] = built_rel
-            image_files[image_abs] = f"{FONT_BUILD_DIR}/{image_name}"
+            manifest[rel_path] = self.asset_cache.virtual_path(kind, entry["main"])
+            for name in entry["files"]:
+                target = image_files if name.rsplit(".", 1)[-1].lower() in ("png", "jpg", "jpeg", "fbimg") else data_files
+                target[self.asset_cache.file_path(kind, name)] = self.asset_cache.virtual_path(kind, name)
 
             self.progress.update(i)
 
-        manifest_abs = os.path.join(output_dir, FONT_MANIFEST_KEY)
-        with open(manifest_abs, 'w') as f:
-            json.dump(manifest, f)
-        data_files[manifest_abs] = FONT_MANIFEST_KEY
+        if manifest_dir is not None:
+            # Always written, even if empty - the runtime loaders treat a
+            # missing manifest as "never built", but can fetch and cache an
+            # empty one in one request rather than warning on every miss.
+            os.makedirs(manifest_dir, exist_ok=True)
+            manifest_abs = os.path.join(manifest_dir, manifest_key)
+            with open(manifest_abs, 'w') as f:
+                json.dump(manifest, f)
+            data_files[manifest_abs] = manifest_key
 
-        with open(cache_path, 'w') as f:
-            json.dump(new_cache, f)
-
-        self.progress.done(f"Built {built_count} font(s), {skipped_count} unchanged")
+        if items:
+            self.progress.done(f"Built {built_count} {label}(s), {skipped_count} unchanged")
         return manifest, data_files, image_files
 
-    def _model_content_hash(self, abs_path: str) -> str:
-        """Same rationale as _font_content_hash() - a fresh checkout/copy
-        resets mtimes without changing bytes, so content is what actually
-        decides whether a model needs rebaking."""
-        h = hashlib.blake2b(digest_size=16)
-        with open(abs_path, 'rb') as f:
-            for chunk in iter(lambda: f.read(1 << 20), b""):
-                h.update(chunk)
-        return h.hexdigest()
+    def build_fonts(self, fonts: dict[str, str], manifest_dir: str | None = None):
+        """Bakes every given font (.ttf/.otf) into an MSDF atlas + `.fbfont`
+        in the shared asset cache - see _bake_into_cache() for
+        `manifest_dir` and the return value.
 
-    def build_models(self, meshes: dict[str, str], output_dir: str):
-        """Pre-bakes every project `.glb`/`.gltf` into a flat `.fbmesh` (see
+        Fonts under "engine://" (rel_path starting with "engine/") are
+        skipped - core/files/loaders/font.py's resolve_font() bakes those
+        into the cache on first use in dev, and generates them on the fly
+        in release."""
+        items = [(abs_path, rel_path) for abs_path, rel_path in fonts.items() if not rel_path.startswith("engine/")]
+        return self._bake_into_cache(asset_cache.FONTS, items, bake_font_file, "font", manifest_dir, FONT_MANIFEST_KEY,
+                                     font_cache_extra())
+
+    def build_models(self, meshes: dict[str, str], manifest_dir: str | None = None):
+        """Bakes every `.glb`/`.gltf` into a flat `.fbmesh` (see
         core/files/loaders/model.py's bake_gltf_to_fbmesh()) plus whatever
-        textures it embeds, extracted to real files alongside it - a
-        release build's runtime (AssetPackFileSystem) then never parses raw
-        glTF JSON/accessors at all, only `np.frombuffer()`s the baked
-        arrays straight out of the file.
-
-        Content-hash cached exactly like build_fonts() (same manifest +
-        cache-file shape, same "rebuild only what actually changed"
-        behavior) - baking a large/high-poly model isn't free, and most
-        builds change a handful of assets, not all of them.
+        textures it embeds, in the shared asset cache - a release build's
+        runtime then never parses raw glTF JSON/accessors at all, only
+        `np.frombuffer()`s the baked arrays straight out of the file. See
+        _bake_into_cache() for `manifest_dir` and the return value.
 
         `.fbx` meshes (MESH_FILE_TYPES) are left alone here - only
         MODEL_FILE_TYPES (glTF) has a baked path today - and stay in
         `meshes` for the caller's own raw `mesh.pak` bundling.
         """
-        manifest: dict[str, str] = {}
-        data_files: dict[str, str] = {}
-        image_files: dict[str, str] = {}
-
         items = [
             (abs_path, rel_path) for abs_path, rel_path in meshes.items()
             if rel_path.rsplit(".", 1)[-1].lower() in MODEL_FILE_TYPES
         ]
+        return self._bake_into_cache(asset_cache.MODELS, items, bake_model_file, "model", manifest_dir, MODEL_MANIFEST_KEY)
 
-        model_build_dir = os.path.join(output_dir, MODEL_BUILD_DIR)
-        cache_path = os.path.join(output_dir, MODEL_CACHE_NAME)
-        cache: dict = {}
-        if os.path.exists(cache_path):
-            with open(cache_path) as f:
-                cache = json.load(f)
-        new_cache: dict = {}
-
-        built_count = 0
-        skipped_count = 0
-
-        if items:
-            os.makedirs(model_build_dir, exist_ok=True)
-            self.progress.stage("Building models", total=len(items))
-
-        for i, (abs_path, rel_path) in enumerate(items, 1):
-            # Flattened so models of the same name in different asset
-            # subdirectories don't collide in the shared build_dir - same
-            # reasoning as build_fonts()'s safe_name.
-            safe_name = rel_path.replace("/", "__").rsplit(".", 1)[0]
-            fbmesh_abs = os.path.join(model_build_dir, f"{safe_name}.fbmesh")
-            built_rel = f"{MODEL_BUILD_DIR}/{safe_name}.fbmesh"
-
-            content_hash = self._model_content_hash(abs_path)
-            new_cache[rel_path] = content_hash
-
-            cached_images = cache.get(rel_path + ":images", [])
-            up_to_date = (
-                cache.get(rel_path) == content_hash
-                and os.path.exists(fbmesh_abs)
-                and all(os.path.exists(os.path.join(model_build_dir, name)) for name in cached_images)
-            )
-
-            if not up_to_date:
-                with open(abs_path, 'rb') as f:
-                    raw = f.read()
-
-                if rel_path.lower().endswith(".glb"):
-                    glb = GLBParser(raw)
-                    parser = GLTFParser(glb.get_json(), glb.get_binary_buffer())
-                else:
-                    parser = GLTFParser(json.loads(raw), b"", os.path.dirname(abs_path))
-
-                fbmesh_bytes, images = bake_gltf_to_fbmesh(parser, safe_name)
-
-                with open(fbmesh_abs, 'wb') as f:
-                    f.write(fbmesh_bytes)
-                for image_name, image_bytes in images.items():
-                    with open(os.path.join(model_build_dir, image_name), 'wb') as f:
-                        f.write(image_bytes)
-
-                new_cache[rel_path + ":images"] = list(images.keys())
-                built_count += 1
-            else:
-                new_cache[rel_path + ":images"] = cached_images
-                skipped_count += 1
-
-            manifest[rel_path] = built_rel
-            data_files[fbmesh_abs] = built_rel
-            for image_name in new_cache[rel_path + ":images"]:
-                image_files[os.path.join(model_build_dir, image_name)] = f"{MODEL_BUILD_DIR}/{image_name}"
-
-            self.progress.update(i)
-
-        # Always written, even if empty (matches build_fonts()'s manifest) -
-        # core/files/loaders/model.py's _load_model_manifest() treats a
-        # missing manifest file as "never built", but an *empty* one it can
-        # still fetch and cache in one request rather than warning on every
-        # miss against a file that was never going to exist.
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-        manifest_abs = os.path.join(output_dir, MODEL_MANIFEST_KEY)
-        with open(manifest_abs, 'w') as f:
-            json.dump(manifest, f)
-        data_files[manifest_abs] = MODEL_MANIFEST_KEY
-
-        with open(cache_path, 'w') as f:
-            json.dump(new_cache, f)
-
-        if items:
-            self.progress.done(f"Built {built_count} model(s), {skipped_count} unchanged")
-        return manifest, data_files, image_files
+    def _prebake_for_dev(self):
+        """Every dev build's first step: clears out output from older
+        engine versions and warms the asset cache with every project font
+        and model, so the first run doesn't stop to bake them. Dev mode
+        would bake them on first load anyway (see asset_cache.py) - this
+        just moves that wait to the build."""
+        self._remove_legacy_bake_output()
+        _, _, meshes, fonts = self.locate_assets()
+        self.build_fonts(fonts)
+        self.build_models(meshes)
 
     def build_for_web(self):
         """Placeholder for a *release* web build target - packaging a
@@ -898,13 +781,10 @@ class Builder:
         known-complete distribution from the CDN is what actually works
         today.
 
-        Pre-bakes project fonts straight into the project's own asset
-        directory first, same as build_for_dev() does for every other
-        platform, so project.zip picks up the baked files like any other
-        asset."""
+        Warms the shared asset cache first, same as build_for_dev(), and
+        ships it in project.zip so the browser doesn't bake anything."""
         self.progress.stage("Preparing web development build")
-        _, _, _, fonts = self.locate_assets()
-        self.build_fonts(fonts, self.asset_path)
+        self._prebake_for_dev()
 
         if os.path.exists(self.web_output_path):
             _rmtree(self.web_output_path)
@@ -1002,6 +882,12 @@ class Builder:
             code_rel = os.path.relpath(self.code_path, self.project_path_root).replace(os.sep, "/")
 
             self._add_dir_to_zip(zf, self.code_path, code_rel)
+
+            # Baked fonts/models - at the same place relative to the
+            # project root, where asset_cache.cache_root_for() looks.
+            if os.path.isdir(self.asset_cache.root):
+                cache_rel = os.path.relpath(self.asset_cache.root, self.project_path_root).replace(os.sep, "/")
+                self._add_dir_to_zip(zf, self.asset_cache.root, cache_rel)
 
     def _write_web_index_html(self):
         """Writes the page the dev server's URL actually points at: a
@@ -1172,12 +1058,11 @@ await run()
         dev/android/.buildozer is what actually keeps repeat builds fast,
         not anything on this side).
 
-        Bakes project fonts straight into the project's own asset
-        directory first, same as build_for_dev()/build_for_dev_web() do,
-        so the copy below picks up the baked files like any other asset."""
+        Warms the shared asset cache first, same as build_for_dev()/
+        build_for_dev_web() do, and copies it alongside the assets so the
+        device doesn't bake anything."""
         self.progress.stage("Preparing Android development build")
-        _, _, _, fonts = self.locate_assets()
-        self.build_fonts(fonts, self.asset_path)
+        self._prebake_for_dev()
 
         # .buildozer/ and bin/ (buildozer's own build cache and output
         # directory) are deliberately left alone across rebuilds - wiping
@@ -1213,6 +1098,9 @@ await run()
             self.code_path, os.path.join(self.android_output_path, code_rel),
             ignore=shutil.ignore_patterns("__pycache__"),
         )
+        if os.path.isdir(self.asset_cache.root):
+            cache_rel = os.path.relpath(self.asset_cache.root, self.project_path_root)
+            shutil.copytree(self.asset_cache.root, os.path.join(self.android_output_path, cache_rel))
 
         self._copy_engine_source_for_android()
         self._generate_native_sources_for_android()
@@ -1711,6 +1599,7 @@ log_level = 2
         self.progress.done("Scanned project assets")
 
         self.reset_dirs()
+        self._remove_legacy_bake_output()
 
         atlas_path = os.path.join(self.temp_path, '_ENGINE_atlas.png')
         atlas_data_path = os.path.join(self.temp_path, '_ENGINE_atlas.json')
@@ -1720,8 +1609,8 @@ log_level = 2
         self.atlas_generator.save(atlas_path, atlas_data_path)
         self.progress.done("Generated texture atlas")
 
-        _, font_data, font_images = self.build_fonts(fonts | engine_fonts, self.font_cache_path)
-        _, model_data, model_images = self.build_models(meshes | engine_meshes, self.model_cache_path)
+        _, font_data, font_images = self.build_fonts(fonts | engine_fonts, self.temp_path)
+        _, model_data, model_images = self.build_models(meshes | engine_meshes, self.temp_path)
 
         data[atlas_data_path] = "_ENGINE_atlas.json"
         data |= engine_data
@@ -1762,14 +1651,12 @@ log_level = 2
         self.progress.done(f"Successfully built game for release, platform: {self.platform}.")
 
     def build_for_dev(self):
-        """Prepares a development build: pre-bakes project fonts straight
-        into the project's own asset directory (loose files, since
-        `DevFileSystem` reads them directly rather than from a `.pak`).
-        No atlas, model baking, or code packaging happens here - dev mode
-        reads everything else directly off disk."""
+        """Prepares a development build: bakes project fonts and models
+        into the shared asset cache (see core/files/asset_cache.py), which
+        DevFileSystem reads them from. No atlas or code packaging happens
+        here - dev mode reads everything else directly off disk."""
         self.progress.stage("Preparing development build")
-        _, _, _, fonts = self.locate_assets()
-        self.build_fonts(fonts, self.asset_path)
+        self._prebake_for_dev()
         self.progress.done("Successfully built game for development.")
 
 

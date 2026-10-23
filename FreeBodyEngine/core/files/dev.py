@@ -4,6 +4,7 @@ from FreeBodyEngine.core.files import FileWatcher
 from FreeBodyEngine.core.files import FileSystem
 from FreeBodyEngine.core.files import ASSET_WRITES_PERMITTED
 from FreeBodyEngine.core.files.watcher.generic import FILE_CHANGE
+from FreeBodyEngine.core.files.asset_cache import KIND_DIRS
 import FreeBodyEngine.core.files.hot_reload as hot_reload
 from FreeBodyEngine import get_flag, NAME, DEFAULT_NAME, warning, error
 from FreeBodyEngine import register_service_update, unregister_service_update, register_event_callback, unregister_event_callback
@@ -40,11 +41,14 @@ class DevFileSystem(FileSystem):
     under `asset_directory` (rather than a bundled release `.pak`, see
     AssetPackFileSystem) and drives a FileWatcher so edits to those files
     trigger hot reload."""
-    def __init__(self, asset_directory: str):
+    def __init__(self, asset_directory: str, cache_directory: str | None = None):
         """Starts a FileWatcher polling `asset_directory` immediately -
         actually wiring its update() into the update loop happens later,
-        in on_initialize()."""
+        in on_initialize(). `cache_directory` is the project's asset cache
+        (see core/files/asset_cache.py) - paths under its folders
+        (`_ENGINE_fonts/`, `_ENGINE_models/`) are read from there."""
         super().__init__()
+        self.cache_directory = self.ensure_trailing_slash(self.sanitise_path(cache_directory)) if cache_directory else None
 
         self.user_files_path = self.sanitise_path(get_user_file_path())
         self.hot_reloading = True
@@ -112,6 +116,11 @@ class DevFileSystem(FileSystem):
             system_path = path.removeprefix("engine://")
             system_path = files('FreeBodyEngine.engine_assets').joinpath(system_path)
                                   
+            writes_permitted = False
+        elif self.cache_directory is not None and path.split("/", 1)[0] in KIND_DIRS.values():
+            # Baked fonts/models - see core/files/asset_cache.py. Never
+            # writable through here: only AssetCache.ensure() writes them.
+            system_path = self.cache_directory + self.sanitise_path(path)
             writes_permitted = False
         else:
             system_path = self.asset_directory + self.sanitise_path(path)

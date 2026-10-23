@@ -144,11 +144,16 @@ class GLTFParser:
         "MAT4": 16,
     }
 
-    def __init__(self, gltf_dict, bin_data, base_path=None):
-        """Stores the parsed inputs; does no work itself - see the class docstring."""
+    def __init__(self, gltf_dict, bin_data, base_path=None, read_external=None):
+        """Stores the parsed inputs; does no work itself - see the class
+        docstring. `read_external(path)` reads an external sibling file's
+        bytes given `base_path` joined with its `uri`; by default that's
+        an asset path read through get_file(), but baking a model straight
+        off disk (bake_model_file()) passes a real-filesystem reader."""
         self.gltf = gltf_dict
         self.bin_data = bin_data or b""
         self.base_path = base_path
+        self._read_external = read_external or (lambda path: get_file(path).read(bytes=True))
 
     # ------------------------------------------------------------
     # Buffer/accessor loading
@@ -179,7 +184,7 @@ class GLTFParser:
 
         path = str(PurePosixPath(self.base_path) / unquote(uri))
 
-        return get_file(path).read(bytes=True)
+        return self._read_external(path)
 
     def get_accessor_data(self, accessor_index):
         """Returns a (count, num_components) NumPy array for the accessor -
@@ -322,7 +327,7 @@ class GLTFParser:
             )
 
             try:
-                return get_file(image_path).read(bytes=True)
+                return self._read_external(image_path)
 
             except Exception as e:
                 raise RuntimeError(
@@ -1050,12 +1055,44 @@ def bake_gltf_to_fbmesh(parser: 'GLTFParser', image_name_prefix: str) -> tuple[b
     return bytes(out), images_out
 
 
+def bake_model_file(source_abs: str, name: str) -> tuple[str, dict[str, bytes]]:
+    """Bakes the `.glb`/`.gltf` at real path `source_abs` - the baker
+    core/files/asset_cache.py's AssetCache.ensure() runs for models, both
+    from a build and lazily in dev mode. Returns `(main_name, files)`:
+    the `.fbmesh` file name and every file to write (it plus its
+    extracted textures, all named after `name`)."""
+    with open(source_abs, 'rb') as f:
+        raw = f.read()
+
+    def read_external(path):
+        with open(path, 'rb') as f:
+            return f.read()
+
+    base_path = os.path.dirname(source_abs)
+    if source_abs.lower().endswith(".glb"):
+        glb = GLBParser(raw)
+        parser = GLTFParser(glb.get_json(), glb.get_binary_buffer(), base_path, read_external)
+    else:
+        parser = GLTFParser(json.loads(raw), b"", base_path, read_external)
+
+    fbmesh_bytes, images = bake_gltf_to_fbmesh(parser, name)
+    main = f"{name}.fbmesh"
+    return main, {main: fbmesh_bytes, **images}
+
+
 def load_baked_model(file: FileResource) -> Model:
     """Loads a `.fbmesh` written by bake_gltf_to_fbmesh() - every array is a
     direct `np.frombuffer()` view over the file's own bytes (no JSON
     accessor indirection, no per-element decode of any kind), and every
-    material's textures load through the normal load_file() path (so a
-    release build's shared texture atlas still applies to them)."""
+    material's textures load through load_texture() (so a release build's
+    shared texture atlas still applies to them).
+
+    Texture names in the file are bare filenames of images baked alongside
+    it, so they're resolved against the `.fbmesh`'s own folder - the same
+    `_ENGINE_models/` in dev (the asset cache) and release (the paks).
+    They're loaded with load_texture() directly rather than load_file(),
+    which dispatches on extension and doesn't know `.fbimg`."""
+    from FreeBodyEngine.core.files.loaders.texture import load_texture
     raw = file.read(bytes=True)
     if raw[:4] != b"FBMH":
         raise ValueError(f"'{file.file_path}' is not a valid .fbmesh file")
@@ -1065,13 +1102,22 @@ def load_baked_model(file: FileResource) -> Model:
     blob = raw[8 + header_length:]
 
     pipeline = get_service("graphics")
+    directory = os.path.dirname(file.file_path)
+    files_service = get_service("files")
+    textures = {}
+
+    def texture(name):
+        path = f"{directory}/{name}" if directory else name
+        if path not in textures:
+            textures[path] = load_texture(files_service.get_file(path))
+        return textures[path]
 
     materials = {}
     for name, props in header["materials"].items():
         data = {}
         for prop, value in props.items():
             if isinstance(value, dict) and "texture" in value:
-                data[prop] = load_file(value["texture"])
+                data[prop] = texture(value["texture"])
             else:
                 data[prop] = value
         materials[name] = pipeline.create_material(data, None)
@@ -1109,13 +1155,38 @@ def load_model(file: FileResource):
     one specific mesh out of a multi-mesh file go through
     GLTFParser.build_model() directly instead of this loader.
 
+    In dev mode the baked file comes from the project's asset cache
+    instead (see core/files/asset_cache.py), baked right here the first
+    time the model is loaded or after it changes - so dev and release
+    load models the same way, and a big model is only parsed once.
+
     Raises ValueError if `file`'s extension is neither `.gltf` nor `.glb`."""
-    manifest = _load_model_manifest()
-    built_path = manifest.get(file.file_path)
-    if built_path is not None:
-        baked_file = get_file(built_path)
-        if baked_file is not None:
-            return load_baked_model(baked_file)
+    from FreeBodyEngine.core.files import asset_cache
+
+    dev_cache = asset_cache.get_dev_cache()
+    if dev_cache is not None:
+        source = asset_cache.dev_source_path(file.file_path)
+        if source is not None:
+            key, source_abs = source
+            try:
+                entry, _ = dev_cache.ensure(asset_cache.MODELS, key, source_abs, bake_model_file)
+                baked_file = get_file(dev_cache.virtual_path(asset_cache.MODELS, entry["main"]))
+                if baked_file is not None:
+                    return load_baked_model(baked_file)
+            except Exception as e:
+                warning(f'Could not bake "{file.file_path}", loading it directly instead: {e}')
+    else:
+        manifest = _load_model_manifest()
+        # build_models() keys engine models as "engine/..." - the same
+        # spelling the paks use for an `engine://` path.
+        key = file.file_path
+        if key.startswith("engine://"):
+            key = "engine/" + key.removeprefix("engine://")
+        built_path = manifest.get(key)
+        if built_path is not None:
+            baked_file = get_file(built_path)
+            if baked_file is not None:
+                return load_baked_model(baked_file)
 
     # ------------------------------------------------------------
     # GLTF

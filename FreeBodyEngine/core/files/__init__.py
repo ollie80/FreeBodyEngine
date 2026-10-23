@@ -174,5 +174,7 @@ def get_file_system() -> FileSystem:
         if not get_flag(DEVMODE, False):
             return AssetPackFileSystem()
         else:
+            from FreeBodyEngine.core.files.asset_cache import cache_root_for
             return DevFileSystem(
-                join_paths(get_project().path, get_project().assets))
+                join_paths(get_project().path, get_project().assets),
+                cache_root_for(get_project().path))

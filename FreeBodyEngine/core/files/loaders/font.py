@@ -161,6 +161,76 @@ _FONT_CACHE: dict[tuple[str, int, float], 'Font'] = {}
 DEFAULT_FONT_ATLAS_SIZE = 48
 DEFAULT_FONT_RANGE_PX = 4.0
 
+
+def font_cache_extra(size: int = DEFAULT_FONT_ATLAS_SIZE, range_px: float = DEFAULT_FONT_RANGE_PX) -> str:
+    """The atlas settings folded into a font's asset-cache hash - one
+    place, so a build's bake and a dev-mode bake of the same font agree."""
+    return f"{size}:{range_px}"
+
+
+def bake_font_file(source_abs: str, name: str, size: int = DEFAULT_FONT_ATLAS_SIZE,
+                   range_px: float = DEFAULT_FONT_RANGE_PX) -> tuple[str, dict[str, bytes]]:
+    """Bakes the `.ttf`/`.otf` at real path `source_abs` into an MSDF atlas
+    + `.fbfont` sidecar - the baker core/files/asset_cache.py's
+    AssetCache.ensure() runs for fonts, both from a build and lazily in
+    dev mode. Returns `(main_name, files)`: the `.fbfont` file name and
+    both files to write, named after `name`."""
+    from FreeBodyEngine.font.atlasgen import generate_atlas
+
+    atlas_image, data = generate_atlas(source_abs, size, range_px=range_px)
+    image_name = f"{name}.png"
+    data["atlas"]["image"] = image_name
+
+    png_buffer = io.BytesIO()
+    atlas_image.save(png_buffer, format="PNG")
+
+    main = f"{name}.fbfont"
+    return main, {main: json.dumps(data).encode("utf-8"), image_name: png_buffer.getvalue()}
+
+
+def _resolve_dev_font(font_path: str, size: int, range_px: float) -> 'Font | None':
+    """Dev mode: loads `font_path` from the project's asset cache, baking
+    it there first if it's new or has changed since the last bake. None if
+    there's no dev cache, the font isn't a file on disk, or baking fails -
+    the caller then generates the atlas in memory instead."""
+    from FreeBodyEngine.core.files import asset_cache
+
+    cache = asset_cache.get_dev_cache()
+    if cache is None:
+        return None
+    source = asset_cache.dev_source_path(font_path)
+    if source is None:
+        return None
+    key, source_abs = source
+
+    # A non-default size gets its own entry and files, so two sizes of one
+    # font don't keep re-baking over each other.
+    suffix = ""
+    if (size, range_px) != (DEFAULT_FONT_ATLAS_SIZE, DEFAULT_FONT_RANGE_PX):
+        suffix = f"_{size}_{range_px:g}".replace(".", "p")
+        key = f"{key}#{suffix}"
+
+    def bake(abs_path, _name):
+        return bake_font_file(abs_path, asset_cache.safe_name(source[0]) + suffix, size, range_px)
+
+    try:
+        entry, _ = cache.ensure(asset_cache.FONTS, key, source_abs, bake, extra=font_cache_extra(size, range_px))
+    except Exception as e:
+        warning(f'Could not bake font "{font_path}": {e}')
+        return None
+    built_file = get_service('files').get_file(cache.virtual_path(asset_cache.FONTS, entry["main"]))
+    return load_font(built_file) if built_file is not None else None
+
+
+def _font_exists(font_path: str) -> bool:
+    """Whether `font_path` is a font that can be resolved - a file on disk
+    in dev mode, an entry in the font manifest in release."""
+    from FreeBodyEngine.core.files import asset_cache
+
+    if asset_cache.get_dev_cache() is not None:
+        return asset_cache.dev_source_path(font_path) is not None
+    return font_path in _load_font_manifest()
+
 # build/builder.py's build_fonts() pre-builds every project font it finds
 # into an MSDF atlas + `.fbfont` under this reserved folder, and records
 # {original_relative_path: built_relative_path} in this manifest file - both
@@ -207,30 +277,27 @@ def resolve_font(font_path: str, size: int = DEFAULT_FONT_ATLAS_SIZE, range_px: 
     bold synthesis - this only ever selects a real, separately-authored
     font file).
 
-    That lookup is deliberately manifest-only, never a live filesystem
-    probe: DevFileSystem.get_file() on a path that turns out not to exist
+    That lookup never goes through get_file(): DevFileSystem.get_file()
+    on a path that turns out not to exist
     - which a guessed weight-variant filename very often will - creates
     an empty stub file there when ASSET_WRITES_PERMITTED is set (true in
     dev mode), then FreeType fails on that empty "font" with an opaque
-    FT_Exception instead of a clean "not found". A guessed weight variant
-    that isn't in the manifest just isn't resolvable yet; if no matching
-    sibling file exists at all, warns once and falls back to `font_path`
-    at its base weight.
+    FT_Exception instead of a clean "not found". In dev mode it checks
+    the disk directly, in release the manifest (see _font_exists()); if
+    no matching sibling file exists, warns once and falls back to
+    `font_path` at its base weight.
 
-    Looks the (possibly weight-resolved) path up in the manifest
-    build_fonts() writes at build time - the normal path for any font
-    that's been through a `freebody build`/dev build since it was added
-    to the project - and loads the pre-built `.fbfont` it points at. If
-    the *base* `font_path` (not a weight variant) isn't in the manifest
-    either (the project hasn't been (re)built yet, or this is an
-    `engine://` font, which build_fonts() doesn't cover), falls back to
-    generating its atlas on the spot so nothing breaks; that result is
-    only cached in memory for this run, not written back to the
-    manifest - run the build to persist it."""
+    In dev mode the (possibly weight-resolved) font is loaded from the
+    project's asset cache, baked there first if it's new or changed (see
+    core/files/asset_cache.py). In release it's looked up in the manifest
+    build_fonts() bundles and loaded from the pre-built `.fbfont` that
+    points at. If neither finds it (a release `engine://` font, which
+    build_fonts() doesn't cover), its atlas is generated on the spot and
+    kept in memory for this run only."""
     weight_number, weight_name = normalize_font_weight(weight)
     if weight_number != DEFAULT_FONT_WEIGHT:
         candidate = _weight_variant_path(font_path, weight_name)
-        if candidate in _load_font_manifest():
+        if _font_exists(candidate):
             font_path = candidate
         elif (font_path, weight_name) not in _WARNED_MISSING_WEIGHTS:
             # UI text is redrawn every frame (see ui/renderer.py's
@@ -238,14 +305,20 @@ def resolve_font(font_path: str, size: int = DEFAULT_FONT_ATLAS_SIZE, range_px: 
             # requests an unavailable weight would print this warning 60
             # times a second forever instead of once.
             _WARNED_MISSING_WEIGHTS.add((font_path, weight_name))
-            warning(f'No pre-built "{weight_name}" weight variant found for "{font_path}" (looked for "{candidate}" in the font manifest - add the file and run a build) - using the base font instead.')
+            warning(f'No "{weight_name}" weight variant found for "{font_path}" (looked for "{candidate}") - using the base font instead.')
 
     cache_key = (font_path, size, range_px)
     cached = _FONT_CACHE.get(cache_key)
     if cached is not None:
         return cached
 
-    manifest = _load_font_manifest()
+    font = _resolve_dev_font(font_path, size, range_px)
+    if font is not None:
+        _FONT_CACHE[cache_key] = font
+        return font
+
+    from FreeBodyEngine.core.files import asset_cache
+    manifest = _load_font_manifest() if asset_cache.get_dev_cache() is None else {}
     built_path = manifest.get(font_path)
     if built_path is not None:
         built_file = get_service('files').get_file(built_path)
