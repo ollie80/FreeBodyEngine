@@ -549,4 +549,9 @@ class GL44Shader(Shader):
         if 'TIME' in self.uniforms:
             glUniform1f(self.uniforms['TIME'].location, get_time())
 
+        # Units restart from 0 for every program, not only in
+        # Renderer.draw_mesh(): the post passes and _present draw with
+        # use() + mesh.draw() directly, and without this each of them
+        # took fresh units every frame until all of them were gone.
+        get_service('renderer').texture_manager.begin_draw()
         self._bind_textures()

@@ -29,6 +29,8 @@ class GLTextureManager(TextureManager):
         # a frame is the size the storage was allocated for.
         self._stream_sizes = {}
         self.next_texture_slot = 0
+        # GL texture name -> the id wrap_external_texture() gave it.
+        self._external_ids = {}
         self.max_texture_slots = glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS)
 
     def begin_draw(self):
@@ -397,8 +399,15 @@ class GLTextureManager(TextureManager):
         a compute-dispatch FBO's color attachment) under a generated id, so it
         can flow through the same Texture/slot-binding machinery as any other
         texture - used by GLComputeShader.get_output_texture()."""
-        id = self.gen_id()
-        self.standalone_textures[id] = gl_texture_id
+        # One id per GL texture, reused: the pipelines wrap their
+        # framebuffer attachments again every frame, and a fresh id each
+        # time grew standalone_textures by several entries per frame.
+        gl_texture_id = int(gl_texture_id)
+        id = self._external_ids.get(gl_texture_id)
+        if id is None or self.standalone_textures.get(id) != gl_texture_id:
+            id = self.gen_id()
+            self._external_ids[gl_texture_id] = id
+            self.standalone_textures[id] = gl_texture_id
         return Texture(self, id, (0, 0, 1, 1))
 
     def _get_gl_texture(self, id):
