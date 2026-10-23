@@ -150,6 +150,174 @@ class _ContactConstraint:
             b.apply_impulse(impulse, cp.point)
 
 
+class StaticCollider:
+    """A Collider2D with no body of its own - a wall, a tilemap's collision -
+    standing in the world as a STATIC body. Rigid bodies used to see only
+    each other, so anything not wrapped in a RigidBody2D, every tilemap wall
+    included, was not there for them at all.
+
+    This is what a body's `on_collision_enter(other, ...)` gets as `other` for
+    one: `other.collider` (also `other.node`) is the Collider2D it hit, and
+    `other.collider.parent` whatever owns it.
+
+    One per collider, kept on it, so `touching` - how enter/exit are told
+    apart - carries over from step to step. Its own callbacks do nothing."""
+
+    body_type = BodyType.STATIC
+    mass = inertia = inv_mass = inv_inertia = 0.0
+    is_sleeping = False
+    allow_sleep = False
+    angular_velocity = 0.0
+    restitution = 0.0
+
+    def __init__(self, collider):
+        self.collider = collider
+        self.touching = set()
+        self.linear_velocity = Vector(0, 0)
+
+    @property
+    def node(self):
+        return self.collider
+
+    @property
+    def is_sensor(self) -> bool:
+        return getattr(self.collider, 'is_sensor', False)
+
+    @property
+    def friction(self) -> float:
+        return getattr(self.collider, 'friction', 0.3)
+
+    @property
+    def collision_layer(self) -> int:
+        return getattr(self.collider, 'collision_layer', 1)
+
+    @property
+    def collision_mask(self) -> int:
+        return getattr(self.collider, 'collision_mask', 0xFFFFFFFF)
+
+    @property
+    def world_position(self) -> Vector:
+        return self.collider.world_position
+
+    def velocity_at_point(self, point: Vector) -> Vector:
+        return Vector(0, 0)
+
+    def apply_impulse(self, impulse: Vector, world_point: Vector | None = None):
+        pass
+
+    def wake(self):
+        pass
+
+    def on_collision_enter(self, other, contact):
+        pass
+
+    def on_collision_stay(self, other, contact):
+        pass
+
+    def on_collision_exit(self, other):
+        pass
+
+    def on_trigger_enter(self, other):
+        pass
+
+    def on_trigger_exit(self, other):
+        pass
+
+    def __repr__(self):
+        return f"StaticCollider({self.collider})"
+
+
+def _static_colliders(scene) -> list[StaticCollider]:
+    """A StaticCollider for every Collider2D in `scene` that belongs to no
+    body. Colliders under an arcade PhysicsBody are left out: that system
+    still resolves its own collisions, and the two don't interact."""
+    statics = []
+    for collider in scene.root.find_nodes_with_type('Collider2D'):
+        if getattr(collider, 'rigid_body', None) is not None:
+            continue
+        parent = getattr(collider, 'parent', None)
+        if parent is not None and parent.inherits_from('PhysicsBody'):
+            continue
+        static = getattr(collider, '_static_body', None)
+        if static is None:
+            static = collider._static_body = StaticCollider(collider)
+        collider.apply_transform()
+        statics.append(static)
+    return statics
+
+
+def _layers_meet(a, b) -> bool:
+    return (a.collision_layer & b.collision_mask) != 0 and (b.collision_layer & a.collision_mask) != 0
+
+
+def _aabbs_overlap(a_min, a_max, b_min, b_max) -> bool:
+    return not (a_max.x < b_min.x or b_max.x < a_min.x or a_max.y < b_min.y or b_max.y < a_min.y)
+
+
+# A floor or ceiling is a surface whose normal is within ~45 degrees of
+# straight up or down; anything steeper is a wall.
+_FLOOR_COS = 0.7
+_SLIDE_PASSES = 4
+
+
+def _slide_character(body: RigidBody2D, solids: list, gravity: Vector):
+    """Pushes a CHARACTER body out of everything solid it has moved into and
+    takes the part of its velocity heading into each surface away, so it
+    stops against a wall and keeps moving along it. Sets on_floor/on_wall/
+    on_ceiling from the surfaces it ends up against.
+
+    Pushed out to LINEAR_SLOP short of clear, the same as the solver leaves a
+    resting contact: separated completely, the next step would find no
+    contact, report it as ended, and find it again the step after.
+
+    Another CHARACTER takes half the push, since it resolves its half itself.
+    """
+    body.on_floor = body.on_wall = body.on_ceiling = False
+    if body.collider is None:
+        return
+    up = (-gravity).normalized if gravity.magnitude > 0 else None
+
+    for _ in range(_SLIDE_PASSES):
+        body.collider.apply_transform()
+        shape = body.collider.collision_shape
+        own_min, own_max = shape.get_aabb()
+        moved = False
+        for other in solids:
+            if other is body or other.is_sensor or other.collider is None or not _layers_meet(body, other):
+                continue
+            other_min, other_max = other.collider.collision_shape.get_aabb()
+            if not _aabbs_overlap(own_min, own_max, other_min, other_max):
+                continue
+            manifold = generate_manifold(shape, other.collider.collision_shape)
+            if manifold is None:
+                continue
+
+            normal = manifold.normal  # from this body toward the other
+            push = manifold.penetration - LINEAR_SLOP
+            if other.body_type == BodyType.CHARACTER:
+                push *= 0.5
+            if push > 0:
+                body.transform.position -= normal * push
+                moved = True
+
+            into = body.linear_velocity.dot(normal)
+            if into > 0:
+                body.linear_velocity -= normal * into
+
+            facing = -normal  # the surface's normal, out toward this body
+            if up is None:
+                body.on_wall = True
+            elif facing.dot(up) > _FLOOR_COS:
+                body.on_floor = True
+            elif facing.dot(up) < -_FLOOR_COS:
+                body.on_ceiling = True
+            else:
+                body.on_wall = True
+        if not moved:
+            break
+    body.collider.apply_transform()
+
+
 def _flip_manifold(manifold: Manifold) -> Manifold:
     """Returns a copy of `manifold` with its normal reversed - handed to
     the second body in a colliding pair's `on_collision_*` callbacks, so
@@ -171,6 +339,10 @@ def step(scene: Scene, dt: float):
     if not bodies:
         return
 
+    statics = _static_colliders(scene)
+    gravity = getattr(scene, 'gravity', GRAVITY)
+    moving = (BodyType.DYNAMIC, BodyType.CHARACTER)
+
     for body in bodies:
         # A body whose subclass overrode on_initialize without calling super()
         # never resolved its collider or its mass. Left alone it would fall
@@ -185,9 +357,9 @@ def step(scene: Scene, dt: float):
             non_colliding_pairs.add(frozenset((id(joint.body_a), id(joint.body_b))))
 
     for body in bodies:
-        if body.body_type != BodyType.DYNAMIC or body.is_sleeping:
+        if body.body_type not in moving or body.is_sleeping:
             continue
-        body.linear_velocity += GRAVITY * body.gravity_scale * dt
+        body.linear_velocity += gravity * body.gravity_scale * dt
         body.linear_velocity += body._force * body.inv_mass * dt
         body.angular_velocity += math.degrees(body._torque * body.inv_inertia * dt)
         body.linear_velocity *= 1.0 / (1.0 + dt * body.linear_damping)
@@ -223,7 +395,11 @@ def step(scene: Scene, dt: float):
         aabb_min, aabb_max = body.collider.collision_shape.get_aabb()
         hash_grid.insert(body, aabb_min, aabb_max)
 
-    current_touching: dict[RigidBody2D, set] = {body: set() for body in bodies}
+    for static in statics:
+        aabb_min, aabb_max = static.collider.collision_shape.get_aabb()
+        hash_grid.insert(static, aabb_min, aabb_max)
+
+    current_touching: dict[RigidBody2D, set] = {body: set() for body in bodies + statics}
     contacts: list[_ContactConstraint] = []
     # Every touching pair with its manifold, for event dispatch - kept
     # separate from `contacts` because `contacts` deliberately excludes
@@ -233,9 +409,13 @@ def step(scene: Scene, dt: float):
     touching_pairs: list[tuple[RigidBody2D, RigidBody2D, Manifold]] = []
 
     for a, b in hash_grid.find_pairs():
-        if a.body_type != BodyType.DYNAMIC and b.body_type != BodyType.DYNAMIC:
+        # A CHARACTER's pairs are kept even against non-moving bodies: nothing
+        # is solved for them (see below), but they are what its collision and
+        # trigger callbacks come from - the sliding itself is
+        # _slide_character()'s.
+        if a.body_type not in moving and b.body_type not in moving:
             continue
-        if (a.collision_layer & b.collision_mask) == 0 or (b.collision_layer & a.collision_mask) == 0:
+        if not _layers_meet(a, b):
             continue
         if frozenset((id(a), id(b))) in non_colliding_pairs:
             continue
@@ -250,9 +430,9 @@ def step(scene: Scene, dt: float):
         # "awake" in the sense that matters here, so without this check
         # a body would wake back up the instant after falling asleep on
         # top of one, just for still touching it.
-        if a.is_sleeping and not b.is_sleeping and b.body_type == BodyType.DYNAMIC:
+        if a.is_sleeping and not b.is_sleeping and b.body_type in moving:
             a.wake()
-        elif b.is_sleeping and not a.is_sleeping and a.body_type == BodyType.DYNAMIC:
+        elif b.is_sleeping and not a.is_sleeping and a.body_type in moving:
             b.wake()
 
         current_touching[a].add(b)
@@ -266,7 +446,10 @@ def step(scene: Scene, dt: float):
         # resting-but-awake body gets, and apply_impulse() waking
         # whichever body it's applied to would immediately undo the sleep
         # this same step, on every single step, forever.
-        if not a.is_sensor and not b.is_sensor and not a.is_sleeping and not b.is_sleeping:
+        # Two bodies that can't be moved by an impulse (a CHARACTER against a
+        # wall) leave the solver nothing to do.
+        if (not a.is_sensor and not b.is_sensor and not a.is_sleeping and not b.is_sleeping
+                and (a.inv_mass > 0 or b.inv_mass > 0)):
             constraint = _ContactConstraint(a, b, manifold)
             constraint.init_velocity_constraint()
             contacts.append(constraint)
@@ -321,6 +504,12 @@ def step(scene: Scene, dt: float):
         body.transform.position += body.linear_velocity * dt
         body.transform.rotation += body.angular_velocity * dt
 
+    characters = [body for body in bodies if body.body_type == BodyType.CHARACTER and body.collider is not None]
+    if characters:
+        solids = statics + [body for body in bodies if body.collider is not None and body.body_type != BodyType.DYNAMIC]
+        for character in characters:
+            _slide_character(character, solids, gravity)
+
     # Position correction for joints, after integration and separately from
     # the velocity pass. The velocity constraints alone cannot hold a joint
     # together: each step's drift is only fed back as a bias velocity, capped
@@ -370,7 +559,7 @@ def step(scene: Scene, dt: float):
                 a.on_collision_stay(b, manifold_for_a)
                 b.on_collision_stay(a, manifold_for_b)
 
-    for body in bodies:
+    for body in bodies + statics:
         for other in body.touching:
             if other not in current_touching[body]:
                 if body.is_sensor or other.is_sensor:

@@ -504,6 +504,16 @@ class Collider2D(Node2D):
         # Scene._physics_process knows which colliders are not its to resolve.
         self.rigid_body = None
 
+        # How this collider behaves to rigid bodies when it has no body of its
+        # own - it then stands in the world as a solid, STATIC one (see
+        # physics/world.py's StaticCollider). `is_sensor` makes it detect
+        # rather than block (a bullet, a pickup zone); layer and mask work as
+        # RigidBody2D's do. A collider under a body uses the body's settings.
+        self.is_sensor = False
+        self.collision_layer = 1
+        self.collision_mask = 0xFFFFFFFF
+        self.friction = 0.3
+
     def on_update(self):
         """Keeps the collision shape's position/rotation/size in sync with the node's world transform every frame."""
         self.apply_transform()

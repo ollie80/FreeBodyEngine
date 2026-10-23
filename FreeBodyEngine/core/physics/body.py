@@ -27,10 +27,18 @@ class BodyType(Enum):
       collision response, but still pushes DYNAMIC bodies it touches.
     - DYNAMIC: fully simulated - forces, gravity, collision response, and
       joints all apply.
+    - CHARACTER: moves by its `linear_velocity`, which *you* set (gravity is
+      added for you), and slides along anything solid it runs into rather
+      than bouncing off or being knocked about - a player, an enemy. Pushes
+      DYNAMIC bodies the way a KINEMATIC one does. After each step,
+      `on_floor`/`on_wall`/`on_ceiling` say what it's resting against. This
+      is what the arcade PhysicsBody did, in the same world as everything
+      else.
     """
     STATIC = auto()
     KINEMATIC = auto()
     DYNAMIC = auto()
+    CHARACTER = auto()
 
 
 class RigidBody2D(Node2D):
@@ -117,6 +125,13 @@ class RigidBody2D(Node2D):
         # against the current step's fresh contact set to fire
         # on_collision_enter/stay/exit and on_trigger_enter/exit.
         self.touching: set['RigidBody2D'] = set()
+
+        # What a CHARACTER body ended the last step resting against, judged
+        # against the scene's gravity (a floor is under it). With no gravity
+        # there is no "down", and anything touched counts as a wall.
+        self.on_floor = False
+        self.on_wall = False
+        self.on_ceiling = False
 
     def on_initialize(self):
         """Finds this body's collider child and computes mass/inertia

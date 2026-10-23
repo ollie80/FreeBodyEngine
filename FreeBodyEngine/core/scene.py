@@ -6,7 +6,7 @@ from FreeBodyEngine.core.node import RootNode, Node
 from FreeBodyEngine.core.camera import Camera2D
 from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine.core.service import Service
-from FreeBodyEngine import register_service_update, unregister_service_update, get_service
+from FreeBodyEngine import register_service_update, unregister_service_update, get_service, warning
 
 
 if TYPE_CHECKING:
@@ -59,16 +59,28 @@ class SceneManager(Service):
         scene._initialize()
 
     def set_scene(self, name: str):
-        """Makes the scene named `name` the active one. Doesn't check that
-        a scene with that name has been added."""
+        """Makes the scene named `name` the active one, calling on_exit() on
+        the scene that was active and on_enter() on the new one. Warns and
+        changes nothing if no scene by that name has been added - it used to
+        switch to it anyway, leaving nothing active at all."""
+        if name not in self.scenes:
+            warning(f'Cannot set scene "{name}": no scene by that name has been added.')
+            return
+        if name == self.active_scene:
+            return
+        previous = self.get_active()
+        if previous is not None:
+            previous.on_exit()
         self.active_scene = name
+        self.scenes[name].on_enter()
 
     def remove_scene(self, name: str):
         """Unregisters the scene named `name`, clearing `active_scene` too
-        if it was the active one."""
-        self.scenes.pop(name, None)
-        if self.active_scene == name:
+        (with its on_exit()) if it was the active one."""
+        scene = self.scenes.pop(name, None)
+        if scene is not None and self.active_scene == name:
             self.active_scene = None
+            scene.on_exit()
 
     def physics_update(self):
         """Runs the active scene's physics step, if there is one."""
@@ -91,13 +103,64 @@ class Scene:
         """`name` is the key the scene is registered under with
         `SceneManager`/`add_scene`."""
         self.name = name
+        # Every node in the scene by every class name it has - see _index().
+        self._nodes_by_type: dict[str, dict] = {}
         self.root = RootNode(self)
         self.isinitialized: bool = False
         self.camera = None
+        # Applied to every DYNAMIC and CHARACTER RigidBody2D, times its own
+        # gravity_scale. Set Vector(0, 0) for a top-down game.
+        from FreeBodyEngine.core.physics.world import GRAVITY
+        self.gravity = GRAVITY.copy()
 
     def _initialize(self):
         self.isinitialized = True
         self.on_initialize()
+
+    def on_enter(self):
+        """Called each time this scene becomes the active one (set_scene()).
+        on_initialize() runs once, when the scene is added; this runs on every
+        switch to it. No-op by default."""
+        pass
+
+    def on_exit(self):
+        """Called each time this scene stops being the active one - another
+        was set, or it was removed. No-op by default."""
+        pass
+
+    # -- finding nodes ----------------------------------------------------
+
+    def _index(self, node):
+        """Records `node` under every class name in its hierarchy. Kept up to
+        date as nodes join (Node._initialize) and leave (GenericNode._detach),
+        so a whole-scene search is a lookup rather than a walk of the tree."""
+        for name in node.inheritance_hierarchy:
+            self._nodes_by_type.setdefault(name, {})[node.id] = node
+
+    def _unindex(self, node):
+        for name in node.inheritance_hierarchy:
+            nodes = self._nodes_by_type.get(name)
+            if nodes is not None:
+                nodes.pop(node.id, None)
+
+    def _indexed(self, name: str) -> list:
+        """Every node in the scene with class `name` in its hierarchy, in the
+        order they joined."""
+        return list(self._nodes_by_type.get(name, {}).values())
+
+    def find_all(self, kind) -> list:
+        """Every node in the scene that is a `kind` - a class (subclasses
+        included) or a class name."""
+        return self.root.find_all(kind)
+
+    def find(self, kind):
+        """The first node in the scene that is a `kind`, or None."""
+        return self.root.find(kind)
+
+    def get_node(self, path: str):
+        """The node at `path` from the scene root - "Player/Weapon". See
+        GenericNode.get_node()."""
+        return self.root.get_node(path)
 
     def on_initialize(self):
         """Called once, when the scene is added via `SceneManager.add_scene`;

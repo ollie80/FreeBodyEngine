@@ -9,6 +9,15 @@ if TYPE_CHECKING:
 
 import uuid
 
+
+def _is_kind(node, kind) -> bool:
+    """Whether `node` is a `kind`: an instance of it (subclasses included)
+    for a class, or a class in its hierarchy for a class name."""
+    if isinstance(kind, str):
+        return node.inherits_from(kind)
+    return isinstance(node, kind)
+
+
 class GenericNode:
     """
     Base class of the Node Tree Node. 
@@ -23,22 +32,91 @@ class GenericNode:
         self.is_initialized = False
         self.children: dict[uuid.UUID, Node] = {}
         self.id = 0
+        # What get_node() matches path segments against. The class name until
+        # set - `player.name = "player"` - and it need not be unique; the
+        # first child with a matching name wins.
+        self.name: str = self.__class__.__name__
 
     def remove(self, *ids):
-        """Removes the children with the given ids."""
+        """Removes the children with the given ids, telling each removed node
+        and everything under it - see Node.kill()."""
         for id in ids:
-            if id in self.children.keys():
-                del self.children[id]
+            child = self.children.get(id)
+            if child is not None:
+                self._detach(child)
+
+    def _detach(self, child: 'Node'):
+        """Takes `child` out of the tree. Every node in its subtree leaves the
+        scene's index and gets on_kill(), children before their parent, so a
+        node's teardown can still rely on its own children being there."""
+        del self.children[child.id]
+        child._left_tree()
+
+    def _left_tree(self):
+        for grandchild in list(self.children.values()):
+            grandchild._left_tree()
+        scene = getattr(self, 'scene', None)
+        if scene is not None and self.is_initialized:
+            scene._unindex(self)
+        self.is_initialized = False
+        self.on_kill()
+
+    def on_kill(self):
+        """Called once this node has left the tree - when it, or any node
+        above it, was killed or removed. Override to add teardown logic.
+        No-op by default."""
+        pass
 
     def add(self, *nodes: 'Node'):
         """
         Adds any amount of nodes to the given nodes children.
         """
         for node in nodes:
+            # Known straight away, not only once this node is in a scene - so
+            # get_node("..") and kill() work on a subtree being assembled
+            # before it's added.
+            node.parent = self
             if self.is_initialized:
                 node._initialize(self)
             self.children[node.id] = node
     
+    def get_node(self, path: str) -> 'Node | None':
+        """The node at `path`, relative to this one: names separated by "/"
+        ("Weapon/Muzzle"), with ".." for a parent. None if nothing matches.
+        Names are `node.name`, the class name unless set."""
+        node = self
+        for part in path.split('/'):
+            if part in ('', '.'):
+                continue
+            if part == '..':
+                node = getattr(node, 'parent', None)
+            else:
+                node = next((child for child in node.children.values() if child.name == part), None)
+            if node is None:
+                return None
+        return node
+
+    def find_all(self, kind) -> list['Node']:
+        """Every node under this one (not including it) that is a `kind` -
+        a class, subclasses included, or a class name as a string."""
+        found = []
+        for child in list(self.children.values()):
+            if _is_kind(child, kind):
+                found.append(child)
+            found += child.find_all(kind)
+        return found
+
+    def find(self, kind) -> 'Node | None':
+        """The first node under this one that is a `kind` - see find_all().
+        None if there is none."""
+        for child in list(self.children.values()):
+            if _is_kind(child, kind):
+                return child
+            match = child.find(kind)
+            if match is not None:
+                return match
+        return None
+
     def find_nodes_with_type(self, type: str) -> list['Node']:
         """Recursively collects every node in this subtree (self included)
         whose `inheritance_hierarchy` contains `type`."""
@@ -66,7 +144,9 @@ class GenericNode:
         """
         self.on_update()
         for node in list(self.children.values()):
-            node.update()
+            # Skipped if an earlier sibling's update removed it this frame.
+            if node.id in self.children:
+                node.update()
 
     def inherits_from(self, *type: str) -> bool:
         """Returns whether this node's class or any of its base classes
@@ -142,6 +222,26 @@ class RootNode(GenericNode):
         """Refuses to kill the root node, logging a warning instead."""
         warning("Cannot kill a root node.")
 
+    # The root answers whole-scene searches from the scene's type index rather
+    # than walking the tree - see Scene._index(). The engine asks the root for
+    # every collider and body several times a physics step.
+
+    def find_nodes_with_type(self, type: str) -> list['Node']:
+        if self.scene is None:
+            return super().find_nodes_with_type(type)
+        found = [self] if self.inherits_from(type) else []
+        return found + self.scene._indexed(type)
+
+    def find_all(self, kind) -> list['Node']:
+        if self.scene is None:
+            return super().find_all(kind)
+        name = kind if isinstance(kind, str) else kind.__name__
+        return [node for node in self.scene._indexed(name) if _is_kind(node, kind)]
+
+    def find(self, kind) -> 'Node | None':
+        found = self.find_all(kind)
+        return found[0] if found else None
+
     
 class Node(GenericNode):
     """
@@ -172,8 +272,12 @@ class Node(GenericNode):
         
         self.scene = parent.scene
         self.parent = parent
+        # A tree may have no scene at all (a bare RootNode, as tests and tools
+        # build) - it just isn't indexed.
+        if self.scene is not None:
+            self.scene._index(self)
 
-        for child in self.children:
+        for child in list(self.children):
             self.children[child]._initialize(self)
 
         self.parent.children[self.id] = self
@@ -188,17 +292,14 @@ class Node(GenericNode):
 
     def kill(self):
         """
-        Removes the node from its parent.
+        Removes the node from its parent. It and every node under it get
+        on_kill(), children first - children used to get nothing, and removing
+        a node with remove() skipped on_kill() even for the node itself. A
+        no-op for a node that isn't in a tree, so killing twice is safe.
         """
-        if self.id in self.parent.children.keys():
-            self.parent.remove(self.id)
-        self.on_kill()
-
-
-    def on_kill(self):
-        """Called after this node has been removed from its parent by
-        `kill`; override to add teardown logic. No-op by default."""
-        pass
+        parent = getattr(self, 'parent', None)
+        if parent is not None and parent.children.get(self.id) is self:
+            parent.remove(self.id)
 
     def on_update(self):
         """Called every frame during `update`; override to add per-frame
