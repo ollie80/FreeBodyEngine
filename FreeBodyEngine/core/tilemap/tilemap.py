@@ -350,6 +350,21 @@ class Tilemap(Node2D):
         if self.layers[layer].collision:
             self._collision_dirty = True
 
+    def remove_chunk(self, position: Vector, layer: str) -> Chunk | None:
+        """Drops the chunk at chunk-grid `position` from `layer`, with the
+        meshes the renderer built for it, and returns it (None if there was
+        none). For a map that loads chunks as something moves through it and
+        has to let go of the ones left behind - there was no way to, so such
+        a map only ever grew."""
+        chunk = self.layers[layer].chunks.pop(position, None)
+        if chunk is None:
+            return None
+        if self.renderer is not None:
+            self.renderer.forget_chunk(layer, position)
+        if self.layers[layer].collision:
+            self._collision_dirty = True
+        return chunk
+
     def solid_tiles(self) -> set:
         """Every tilemap position holding a tile on a layer marked
         `collision`, as `(x, y)` integer pairs."""

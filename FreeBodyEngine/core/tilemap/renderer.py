@@ -332,6 +332,15 @@ class TilemapRenderer(Node2D):
         finally:
             renderer.set_blend_mode(BlendMode.OPAQUE)
 
+    def forget_chunk(self, layer_name: str, chunk_pos):
+        """Destroys the meshes built for one chunk - see
+        Tilemap.remove_chunk(). Left cached, every chunk a map ever loaded
+        kept its GPU buffers for good."""
+        for key in [k for k in self._meshes if k[0] == layer_name and k[1] == chunk_pos]:
+            mesh = self._meshes.pop(key)
+            if mesh is not None:
+                mesh.destroy()
+
     def _build_mesh(self, tilemap, chunk, sheet, sheet_index, mesh_class):
         """Builds one (chunk, spritesheet) mesh, or None if that pair has no
         tiles."""

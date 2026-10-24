@@ -309,3 +309,36 @@ def test_collider_scales_with_tile_size():
     assert collider.transform.position.y == pytest.approx(-24.0)
     assert collider.transform.scale.x == pytest.approx(32.0)
     assert collider.transform.scale.y == pytest.approx(16.0)
+
+
+# -- removing chunks ---------------------------------------------------------
+
+def test_remove_chunk_drops_it_and_its_meshes():
+    """A map that streams chunks in had no way to let go of the ones left
+    behind, so it only ever grew - tiles and GPU meshes both."""
+    from FreeBodyEngine.core.tilemap.tilemap import Tilemap
+    from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
+
+    class Mesh:
+        destroyed = False
+
+        def destroy(self):
+            self.destroyed = True
+
+    tilemap = Tilemap(chunk_size=4)
+    tilemap.add_layer('ground')
+    tilemap.add_chunk(Vector(0, 0), 'ground')
+    tilemap.add_chunk(Vector(1, 0), 'ground')
+
+    renderer = object.__new__(TilemapRenderer)
+    kept, dropped = Mesh(), Mesh()
+    renderer._meshes = {('ground', Vector(0, 0), 1): dropped, ('ground', Vector(1, 0), 1): kept,
+                        ('ground', Vector(0, 0), 2): None}
+    tilemap.renderer = renderer
+
+    assert tilemap.remove_chunk(Vector(0, 0), 'ground') is not None
+    assert tilemap.get_chunk(Vector(0, 0), 'ground') is None
+    assert tilemap.get_chunk(Vector(1, 0), 'ground') is not None
+    assert dropped.destroyed and not kept.destroyed
+    assert list(renderer._meshes) == [('ground', Vector(1, 0), 1)]
+    assert tilemap.remove_chunk(Vector(0, 0), 'ground') is None
