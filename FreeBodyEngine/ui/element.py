@@ -1,17 +1,28 @@
-from dataclasses import dataclass
+"""The pure-Python UI backend - see ui/__init__.py for when it's used
+rather than ui/native_element.py. What both backends share (flags, handlers,
+animation, the styles/style/visible/rect properties, Layout, ElementStates,
+...) lives in ui/base.py; this file is layout, measuring and the Python
+side of the element tree."""
 import uuid
-from enum import Enum
 from typing import Callable
-from FreeBodyEngine.graphics.color import Color
-from FreeBodyEngine.math import Curve, Linear
-from FreeBodyEngine import warning, delta, get_service
-import re
+from FreeBodyEngine import warning, get_service
+from FreeBodyEngine.ui.base import (  # noqa: F401 - re-exported, imported from here by older code
+    STATE_STYLE_KEYS, INTERACTION_FLAGS, VALID_ANCHORS, VALID_OVERFLOWS, DEFAULT_STYLES,
+    style_keys_for, StyleView, _copy_styles, _content_scale,
+    ElementStates, Layout, TreeBehaviour, ElementBehaviour, UIAnimation,
+)
 
 
 """
 ===============================================================================
 UI STYLE DOCUMENTATION
 ===============================================================================
+
+Elements can be built with UIElement(tag, styles={...}) as below, or with
+the shorthand in ui/builders.py (Column, Row, Text, Button, Input, ...),
+which builds the same UIElements from keyword styles. Shared, live style
+sets - a theme's "button" - are ui.Style objects (ui/style.py), given to an
+element as `style=` underneath its own styles.
 
 SIZE
 -------------------------------------------------------------------------------
@@ -92,10 +103,10 @@ auto
             "layout": "vertical",
         }
 
-    A child that's itself "auto" along the same axis can't be
-    measured without laying it out for real first, so it's treated as
-    contributing 0 rather than recursing indefinitely - auto-inside-
-    auto (on the same axis) isn't supported.
+    A child that's itself "auto" is measured the same way, so "auto"
+    nests to any depth. An element with no children fits its own text
+    instead - its words in its font and size, one line tall - so a label
+    or button needs no size of its own.
 
 
 PADDING
@@ -175,6 +186,76 @@ gap
         }
 
 
+grow
+    Set on a child: how much of the space its parent has left along the
+    layout direction it takes, on top of its own size. Children share
+    the leftover space in proportion to their grow values; 0 (the
+    default) takes none. The usual header / content / footer:
+
+        panel = UIElement(styles={"width": "100w", "height": "100h"})
+        panel.add(header)                                   # fixed height
+        panel.add(UIElement(styles={"grow": 1, "width": "100w"}))  # the rest
+        panel.add(footer)                                   # fixed height
+
+    Children never shrink: if they don't fit, grow children get nothing
+    extra and the rest overflow as before.
+
+
+justify
+    Set on a container: where its children sit along the layout direction
+    when they don't fill it - "start" (default), "center", "end", or
+    "space_between" (first and last at the edges, the rest spread evenly
+    between them). Has no effect while any child has grow, since that
+    space is then taken.
+
+
+align
+    Set on a container: where each child sits across the layout direction
+    - "start" (default), "center", "end", or "stretch" (as wide as the
+    container in a vertical layout, as tall in a horizontal one - for a
+    child with no width/height of its own on that axis).
+
+        styles={"layout": "vertical", "align": "center", "justify": "center"}
+
+    centers every child in the container.
+
+
+align_self
+    Set on a child: overrides its parent's align for just this child.
+    "auto" (default) uses the parent's.
+
+
+VISIBILITY
+-------------------------------------------------------------------------------
+
+visible
+    False hides an element and its whole subtree: it takes no space in
+    its parent's layout, isn't drawn, and can't be hovered, clicked or
+    typed into (a hidden focused field loses focus). Also settable as
+    `element.visible = False`. Default True.
+
+
+ROOT
+-------------------------------------------------------------------------------
+
+safe_area
+    Set on the root (UIManager's styles): pads it by the window's
+    safe-area insets (Window.safe_area_insets - a phone's status bar,
+    notch and gesture bar), on top of its own padding, so nothing laid
+    out inside it ends up underneath them. Zero on every desktop/web
+    window, so harmless to leave on. Default False.
+
+
+READING LAYOUT
+-------------------------------------------------------------------------------
+
+element.rect
+    The element's position and size from the last layout pass, as a
+    Layout(x, y, width, height), in the same units as its styles. Use it
+    instead of `_layout`, which is the same rect in raw pixels (multiplied
+    by the window's content_scale).
+
+
 ANCHORS
 -------------------------------------------------------------------------------
 
@@ -200,39 +281,49 @@ anchor
     With parent_anchor="top_left", the parent origin is its top-left
     corner. anchor="center" places the element's center at that origin.
 
-    x and y are offsets from the resulting anchor position.
+    Setting only one of the two uses it for both: "parent_anchor":
+    "top_right" alone pins the element's top-right corner to the parent's.
+
+    x and y are offsets from the resulting anchor position (or from the
+    normal flow position, for an element that isn't anchored). They take
+    the same units as a size: "x": "10w" is 10% of the parent's width.
 
     Anchored children do not consume space in normal flow.
 
-STATE STYLES
+FLAGS
 -------------------------------------------------------------------------------
 
-Styles can also be overridden based on the element's state.
-
-Available state names:
-
-    "normal"
-    "clicked"
-    "hover"
-    "selected"
-
-Example:
+An element has a set of flags, any number at once, and a style can be
+overridden while a flag is set by giving the flag's name a dict of styles:
 
     styles={
-        "width": 100,
-        "height": 50,
-
-        "hover": {
-            "width": 120
-        },
-
-        "clicked": {
-            "height": 40
-        }
+        "base_color": GREY,
+        "hover":    {"base_color": LIGHT_GREY},
+        "pressed":  {"base_color": DARK_GREY},
+        "selected": {"border_color": ACCENT, "border_width": 2},
     }
 
-State-specific values override the normal values returned by
-get_current_styles().
+UIManager sets three of them from input:
+
+    "hover"     the pointer is over the element (never on a touchscreen)
+    "pressed"   the mouse button / finger went down on it and is still down
+    "focused"   it's the text field keyboard input goes to
+
+Any other name is the app's own, set with element.set_flag(name) /
+set_flag(name, False) and read with has_flag(name):
+
+    tab.selected = True                 # the "selected" flag
+    track_row.set_flag("playing")       # styles["playing"] applies now
+
+When several are set, their tables apply in this order, later winning:
+the app's own flags (in the order they were set), "selected", "hover",
+"focused", "pressed". "normal" applies only while no flag is set.
+
+"clicked" (for pressed) and "selected" while focused are still honoured
+from when an element had a single state, in which "selected" meant
+focused - so a field styled {"selected": {...}} still shows it while
+being typed into. element.state / set_state() / ElementStates are that
+single-state form, kept for older code.
 
 
 INTERACTION
@@ -264,12 +355,18 @@ Example:
 
     button.on("click", lambda: play_track(track))
 
-Registered callbacks stay registered until off()/clear() removes them,
-including across re-renders of the same element - re-running the same
-on() call (e.g. to reflect new state on a "Follow"/"Unfollow" toggle)
-adds a second, third, ... callback rather than replacing the first.
-clear(event) removes every callback on `event` at once, for exactly
-that "about to re-attach the current handler" case.
+on() adds a callback, alongside any already registered, and returns a
+function that removes it again. To *replace* what an event does - a
+"Follow"/"Unfollow" toggle re-wired every time it changes - set its
+handler instead, which removes every earlier callback for that event:
+
+    button.on_click = follow            # or set_handler("click", follow)
+    button.on_click = unfollow          # follow no longer runs
+    button.on_click = None              # nothing does
+
+on_click, on_press, on_release, on_hover_enter, on_hover_exit and
+on_submit exist as properties; set_handler(event, callback) works for
+any event.
 
 editable
     Marks this element as a text field. Clicking it focuses it (see
@@ -413,7 +510,294 @@ is not compatible because the non-numeric parts differ.
 """
 
 
-class GenericElement:
+def _safe_area_insets() -> tuple:
+    """The window's (top, right, bottom, left) safe-area insets, in pixels -
+    Window.safe_area_insets reports them in UI units."""
+    window = get_service("window")
+    insets = getattr(window, "safe_area_insets", None) if window is not None else None
+    if not insets:
+        return (0.0, 0.0, 0.0, 0.0)
+    scale = window.content_scale or 1.0
+    return tuple(inset * scale for inset in insets)
+
+
+_text_size_cache: dict = {}
+
+
+def measure_text(styles: dict) -> tuple | None:
+    """(width, height) in pixels of an element's text - its "text" (or, for
+    a "secret" field, the bullets drawn instead) in its font, size and
+    weight - or None if there's nothing to measure it with (no font set, no
+    text renderer running). Height is one line, so an empty field still
+    gets the height of the text it will hold.
+
+    What "auto" sizes an element with text and no children to - so a label
+    or button fits its words without being given a size. Cached by
+    font/weight/size/text, since layout asks every frame."""
+    font_path = styles.get("font")
+    if font_path is None:
+        return None
+
+    text = styles.get("text") or ""
+    if styles.get("secret", False):
+        text = "•" * len(text)
+    weight = styles.get("font_weight", "regular")
+    size = styles.get("font_size", 24) * _content_scale()
+
+    key = (font_path, weight, size, text)
+    cached = _text_size_cache.get(key)
+    if cached is not None:
+        return cached
+
+    text_renderer = get_service("text_renderer")
+    if text_renderer is None:
+        return None
+    from FreeBodyEngine.core.files.loaders.font import resolve_font  # lazy - see UIRenderer._draw_text
+    font = resolve_font(font_path, weight=weight)
+    if font is None:
+        return None
+
+    measured = (text_renderer.measure_text(font, text, size), (font.ascender - font.descender) * size)
+    if len(_text_size_cache) > 4096:
+        _text_size_cache.clear()
+    _text_size_cache[key] = measured
+    return measured
+
+
+def parse_size(size, parent_layout: 'Layout', root_layout: 'Layout') -> int:
+    """
+    Convert a style size into pixels.
+
+    Supported formats:
+
+        200
+            Fixed pixels.
+
+        "200"
+            Fixed pixels.
+
+        "69w"
+            69% of parent content width.
+
+        "69h"
+            69% of parent content height.
+
+        "69ww"
+            69% of root/window width.
+
+        "69hw"
+            69% of root/window height.
+
+    "auto" is a valid *style* value (see the SIZE UNITS docs) but is
+    never passed here - calculate_layout() and _measure_flow_extent() both
+    special-case it first. Anything unrecognized warns and is treated as 0
+    rather than raising: one malformed style shouldn't be able to crash
+    the whole layout pass.
+    """
+
+    s = str(size).strip().lower()
+
+    if not s:
+        return 0
+
+    #
+    # Plain numeric value - scaled by the window's content_scale so a
+    # fixed pixel count stays the same physical size across devices.
+    #
+    try:
+        return int(float(s) * _content_scale())
+
+    except ValueError:
+        pass
+
+    try:
+        if s[-2:] in ("ww", "hw"):
+            num = float(s[:-2])
+            suffix = s[-2:]
+        else:
+            num = float(s[:-1])
+            suffix = s[-1]
+    except ValueError:
+        warning(f'Could not parse size "{size}" - expected a number, or one of the w/h/ww/hw suffixes.')
+        return 0
+
+    if suffix == "w":
+        return int(parent_layout.width * (num / 100.0))
+
+    if suffix == "h":
+        return int(parent_layout.height * (num / 100.0))
+
+    if suffix == "ww":
+        return int(root_layout.width * (num / 100.0))
+
+    if suffix == "hw":
+        return int(root_layout.height * (num / 100.0))
+
+    warning(f'Could not parse size "{size}" - unknown unit suffix "{suffix}".')
+    return 0
+
+
+VALID_ALIGNS = {"start", "center", "end", "stretch"}
+VALID_JUSTIFIES = {"start", "center", "end", "space_between"}
+
+
+def _is_anchored(element) -> bool:
+    # _has_own_style, not the merged styles: those always contain
+    # "anchor"/"parent_anchor" because of DEFAULT_STYLES.
+    return element._has_own_style("anchor") or element._has_own_style("parent_anchor")
+
+
+def _is_visible(element) -> bool:
+    return bool(element.get_current_styles().get("visible", True))
+
+
+def _choice(value, valid: set, name: str) -> str:
+    if value in valid:
+        return value
+    warning(f'Unknown {name} "{value}". Expected one of: {", ".join(sorted(valid))}')
+    return "start"
+
+
+def _grow_of(element) -> float:
+    try:
+        return max(0.0, float(element.get_current_styles().get("grow", 0) or 0))
+    except (TypeError, ValueError):
+        warning(f'Could not parse grow "{element.get_current_styles().get("grow")}" - expected a number.')
+        return 0.0
+
+
+def _translate(element, dx: float, dy: float):
+    """Moves an already laid-out element and its whole subtree."""
+    if not dx and not dy:
+        return
+    layout = element._layout
+    layout.x += dx
+    layout.y += dy
+    for child in element.children.values():
+        _translate(child, dx, dy)
+
+
+def layout_flow(container_styles: dict, children: dict, root: 'RootElement',
+                flow_area: 'Layout', anchor_area: 'Layout', layout_dir: str, gap: float):
+    """Lays out a container's children - shared by RootElement and UIElement.
+
+    Anchored children are placed against `anchor_area` (the content box)
+    and take no part in the flow. Hidden ("visible": False) children are
+    skipped entirely. The rest are stacked along `layout_dir` starting at
+    `flow_area`'s origin (the content box, moved by any scroll offset):
+
+        grow          each child's share of the space left along the
+                      layout direction, added to its own size
+        justify       where the children sit along the layout direction
+                      when there's space left: start/center/end/
+                      space_between
+        align         where each child sits across it: start/center/end/
+                      stretch (fill the cross axis, for a child with no
+                      size of its own on that axis); align_self overrides
+                      it per child
+
+    The common case - no grow, justify and align at "start" - lays each
+    child out once at its final position. Otherwise every child is laid out
+    once at the content origin, then moved into place with its subtree.
+    """
+    if layout_dir not in ("vertical", "horizontal"):
+        warning(f'Unknown layout direction "{layout_dir}". Expected "vertical" or "horizontal".')
+        layout_dir = "vertical"
+    vertical = layout_dir == "vertical"
+
+    justify = _choice(container_styles.get("justify", "start"), VALID_JUSTIFIES, "justify")
+    align = _choice(container_styles.get("align", "start"), VALID_ALIGNS, "align")
+
+    flow = []
+    for child in children.values():
+        # The scrollbar track/thumb are positioned by their owner's
+        # _update_scrollbar(), not by flow or anchoring.
+        if getattr(child, "_is_scrollbar_part", False):
+            continue
+        if not _is_visible(child):
+            child._layout = Layout(0, 0, 0, 0)
+            continue
+        if _is_anchored(child):
+            child.calculate_layout(root, anchor_area)
+            continue
+        flow.append(child)
+
+    if not flow:
+        return
+
+    grows = [_grow_of(child) for child in flow]
+    aligns = []
+    for child in flow:
+        own = child.get_current_styles().get("align_self", "auto")
+        aligns.append(align if own in (None, "auto") else _choice(own, VALID_ALIGNS, "align_self"))
+
+    if justify == "start" and not any(grows) and all(a == "start" for a in aligns):
+        offset = flow_area.y if vertical else flow_area.x
+        for child in flow:
+            if vertical:
+                child.calculate_layout(root, Layout(flow_area.x, offset, flow_area.width, flow_area.height))
+                offset += child._layout.height + gap
+            else:
+                child.calculate_layout(root, Layout(offset, flow_area.y, flow_area.width, flow_area.height))
+                offset += child._layout.width + gap
+        return
+
+    main_key, cross_key = ("height", "width") if vertical else ("width", "height")
+    main_extent = flow_area.height if vertical else flow_area.width
+    cross_extent = flow_area.width if vertical else flow_area.height
+
+    def main_of(child):
+        return child._layout.height if vertical else child._layout.width
+
+    def cross_of(child):
+        return child._layout.width if vertical else child._layout.height
+
+    def lay_out(child, main_size, child_align):
+        forced = {}
+        if main_size is not None:
+            forced["forced_" + main_key] = main_size
+        if child_align == "stretch" and not child._has_own_style(cross_key):
+            forced["forced_" + cross_key] = cross_extent
+        child.calculate_layout(root, flow_area, **forced)
+
+    used = gap * (len(flow) - 1)
+    bases = {}
+    for child, grow, child_align in zip(flow, grows, aligns):
+        if grow:
+            # Its own size along the layout direction is where it grows
+            # from (for "auto", what it would fit).
+            bases[child] = child._measure_size(main_key, flow_area, root)
+            used += bases[child]
+        else:
+            lay_out(child, None, child_align)
+            used += main_of(child)
+
+    leftover = main_extent - used
+    total_grow = sum(grows)
+    for child, grow, child_align in zip(flow, grows, aligns):
+        if grow:
+            lay_out(child, bases[child] + max(0.0, leftover) * grow / total_grow, child_align)
+
+    free = max(0.0, leftover) if total_grow == 0 else 0.0
+    position, between = 0.0, 0.0
+    if justify == "center":
+        position = free / 2
+    elif justify == "end":
+        position = free
+    elif justify == "space_between" and len(flow) > 1:
+        between = free / (len(flow) - 1)
+
+    for child, child_align in zip(flow, aligns):
+        spare = cross_extent - cross_of(child)
+        cross = spare / 2 if child_align == "center" else spare if child_align == "end" else 0.0
+        if vertical:
+            _translate(child, cross, position)
+        else:
+            _translate(child, position, cross)
+        position += main_of(child) + gap + between
+
+
+class GenericElement(TreeBehaviour):
     """Base for anything that can parent `UIElement`s - shared by `RootElement`
     and `UIElement` itself so elements nest arbitrarily deep."""
 
@@ -423,14 +807,21 @@ class GenericElement:
         """
         self.children: dict[uuid.UUID, 'UIElement'] = {}
         self.tag = tag
-        self.styles: dict[str, any] = {}
+        self._styles: dict[str, any] = {}
+
+    def _raw_styles(self) -> dict:
+        return self._styles
+
+    def _set_raw_styles(self, styles: dict):
+        self._styles = styles
 
     def add(self, element: 'UIElement') -> None:
         """Adds `element` as a child of this element."""
         element._initialize(self)
 
     def _remove(self, element_id: uuid.UUID) -> None:
-        del self.children[element_id]
+        element = self.children.pop(element_id)
+        element.parent = None
 
     def remove(self, element: 'UIElement') -> None:
         """Removes `element` from this element's children."""
@@ -438,10 +829,6 @@ class GenericElement:
 
     def _draw(self):
         pass
-
-    def _update(self):
-        pass
-
 
 class RootElement(GenericElement):
     """
@@ -470,7 +857,7 @@ class RootElement(GenericElement):
         """
         super().__init__()
 
-        self.styles = dict(styles) if styles else {}  # own copy - see UIElement.__init__
+        self.styles = styles  # copied by the setter - see UIElement.__init__
         self.layout = Layout(0, 0, width, height)
 
     @property
@@ -506,24 +893,34 @@ class RootElement(GenericElement):
     def height(self, value: int):
         self.layout.height = value
 
-    def set_styles(self, styles: dict[str, any]):
-        """Replaces the root's styles wholesale."""
-        self.styles = dict(styles)
-
     def calculate_layout(self):
         """
         Calculate the root content area and recursively calculate
         the layout of all children.
         """
 
-        styles = self.styles
+        styles = self._styles
+        # Same units and content scaling as any element's padding/gap -
+        # these used to go through int(), so "2w" raised and a plain
+        # number wasn't scaled. The native root already did this.
+        window_layout = self.layout
 
-        pad = int(styles.get("padding", 0))
+        def size(key, fallback):
+            return parse_size(styles[key], window_layout, window_layout) if key in styles else fallback
 
-        pad_left = int(styles.get("padding_left", pad))
-        pad_right = int(styles.get("padding_right", pad))
-        pad_top = int(styles.get("padding_top", pad))
-        pad_bottom = int(styles.get("padding_bottom", pad))
+        pad = size("padding", 0)
+
+        pad_left = size("padding_left", pad)
+        pad_right = size("padding_right", pad)
+        pad_top = size("padding_top", pad)
+        pad_bottom = size("padding_bottom", pad)
+
+        if styles.get("safe_area", False):
+            inset_top, inset_right, inset_bottom, inset_left = _safe_area_insets()
+            pad_top += inset_top
+            pad_right += inset_right
+            pad_bottom += inset_bottom
+            pad_left += inset_left
 
         content_x = self.layout.x + pad_left
         content_y = self.layout.y + pad_top
@@ -532,77 +929,13 @@ class RootElement(GenericElement):
         content_h = max(0, self.height - pad_top - pad_bottom)
 
         layout_dir = styles.get("layout", "vertical")
-        gap = int(styles.get("gap", 0))
-
-        child_offset_x = content_x
-        child_offset_y = content_y
+        gap = size("gap", 0)
 
         root_content_layout = Layout(content_x, content_y, content_w, content_h)
-
-        for child in self.children.values():
-
-            #
-            # Checked via _has_own_style rather than
-            # get_current_styles(): the merged result always contains
-            # "anchor"/"parent_anchor" because of DEFAULT_STYLES, so
-            # checking presence there would always be true and this
-            # check would never distinguish an anchored child from a
-            # non-anchored one - including one anchored only through
-            # a state override (e.g. `"hover": {"anchor": ...}`).
-            #
-            anchored = (
-                child._has_own_style("anchor") or
-                child._has_own_style("parent_anchor")
-            )
-
-            #
-            # Anchored elements use the entire root content area as their
-            # positioning area.
-            #
-            # Normal elements use the current flow position.
-            #
-            if anchored:
-                child.calculate_layout(self, root_content_layout)
-
-            else:
-                child_layout = Layout(child_offset_x, child_offset_y, content_w, content_h)
-                child.calculate_layout(self, child_layout)
-
-                #
-                # Only non-anchored children participate in normal flow.
-                #
-                if layout_dir == "vertical":
-                    child_offset_y += child._layout.height + gap
-
-                elif layout_dir == "horizontal":
-                    child_offset_x += child._layout.width + gap
-
-                else:
-                    warning(
-                        f'Unknown layout direction "{layout_dir}". '
-                        f'Expected "vertical" or "horizontal".'
-                    )
+        layout_flow(styles, self.children, self, root_content_layout, root_content_layout, layout_dir, gap)
 
 
-class ElementStates(Enum):
-    """The interaction states a `UIElement` can be in, matching the state-style
-    override keys documented above (note `FOCUSED`'s value is `"selected"`, not `"focused"`)."""
-    NORMAL = "normal"
-    CLICKED = "clicked"
-    HOVER = "hover"
-    FOCUSED = "selected"
-
-
-@dataclass
-class Layout:
-    """A computed screen-space rectangle: top-left `(x, y)` plus `width`/`height`, in pixels."""
-    x: int
-    y: int
-    width: int
-    height: int
-
-
-class UIElement(GenericElement):
+class UIElement(ElementBehaviour, GenericElement):
     """
     Generic UI element.
 
@@ -622,6 +955,13 @@ class UIElement(GenericElement):
     Child layout:
         layout
         gap
+        justify
+        align
+
+    As a child:
+        grow
+        align_self
+        visible
 
     Positioning:
         parent_anchor
@@ -680,14 +1020,6 @@ class UIElement(GenericElement):
         selected
     """
 
-    VALID_ANCHORS = {
-        "top_left", "top_center", "top_right",
-        "center_left", "center", "center_right",
-        "bottom_left", "bottom_center", "bottom_right",
-    }
-
-    VALID_OVERFLOWS = {"visible", "hidden", "scroll", "auto"}
-
     # Base appearance for the two internal UIElements every "scroll"/"auto"
     # overflow element manages (see _update_scrollbar()) - deliberately
     # understated (a thin, mostly-invisible track; a plain translucent grey
@@ -705,66 +1037,30 @@ class UIElement(GenericElement):
         "clicked": {"base_color": (0.8, 0.8, 0.8, 0.85)},
     }
 
-    DEFAULT_STYLES = {
-        "width": 0,
-        "height": 0,
-        "padding": 0,
-        "layout": "vertical",
-        "gap": 0,
-        "x": 0,
-        "y": 0,
-        "parent_anchor": "center",
-        "anchor": "bottom_left",
-
-        # Transparent, not opaque white - matching how every other UI
-        # system defaults a plain container's background, and so a
-        # layout-only wrapper (a row/column that just positions children)
-        # doesn't render as a surprise solid box the moment it's given a
-        # concrete width/height for layout purposes.
-        "base_color": (0.0, 0.0, 0.0, 0.0),
-        "border_radius": 0,
-        "border_width": 0,
-        "border_color": (0.0, 0.0, 0.0, 1.0),
-        "image": None,
-
-        "text": "",
-        "font": None,
-        "font_size": 24,
-        "font_weight": "regular",
-        "text_color": (1.0, 1.0, 1.0, 1.0),
-        "text_align": "left",
-
-        "editable": False,
-        "secret": False,
-
-        # "scroll" predates "overflow" and is kept only as a back-compat
-        # alias for "overflow": "auto" (see get_overflow()) - every element
-        # written against the old boolean keeps working unchanged.
-        "scroll": False,
-        "overflow": "visible",
-        "scrollbar_width": 8,
-        "scrollbar_margin": 2,
-        "scrollbar_min_thumb": 24,
-        "scrollbar_track": {},
-        "scrollbar_thumb": {},
-    }
-
-    def __init__(self, tag: str = None, styles=None):
+    def __init__(self, tag: str = None, styles=None, style: 'Style' = None):
         """Args:
             tag: Optional identifier for this element, not used by the layout/draw code itself.
             styles: This element's styles - see the style documentation above.
+            style: A shared ui.Style underneath `styles` - see the `style`
+                property.
         """
         super().__init__(tag)
 
-        self.state = ElementStates.NORMAL
-        # An element's own copy. set_style() writes into this dict, and it
-        # used to be whatever was passed - the `{}` default (one dict for every
-        # call) or a style dict reused across elements - so styling one element
-        # restyled every other element sharing it. The copy is shallow: a
-        # per-state table ('hover', ...) is still the caller's, and only ever
-        # read here.
-        self.styles: dict[str, any] = dict(styles) if styles else {}
-        self.parent: GenericElement
+        # The shared Style layer (see the `style` property) - its live
+        # merged dict, read by get_current_styles(), and the Style itself.
+        self._style_base: dict = {}
+        self._style = None
+
+        self._flags: list[str] = []
+        self._handlers: dict[str, Callable] = {}
+        self._style_keys: list[str] = ["normal"]
+        # An element's own copy (made by the `styles` setter, state tables
+        # included). set_style() writes into it, and it used to be whatever
+        # was passed - the `{}` default (one dict for every call) or a style
+        # dict reused across elements - so styling one element restyled
+        # every other element sharing it.
+        self.styles = styles
+        self.parent: GenericElement | None = None
         self.id = uuid.uuid4()
         self.animations: list[UIAnimation] = []
         self._layout = Layout(0, 0, 0, 0)
@@ -794,6 +1090,9 @@ class UIElement(GenericElement):
         # pay for two extra UIElements it'll never use.
         self._scrollbar_track: 'UIElement | None' = None
         self._scrollbar_thumb: 'UIElement | None' = None
+
+        if style is not None:
+            self.style = style
         # Snapshot of this element's own scroll geometry, refreshed every
         # layout pass it's actually scrollable - read by UIManager while
         # dragging this element's thumb (see manager.py's _handle_mouse),
@@ -804,11 +1103,7 @@ class UIElement(GenericElement):
         self._scroll_viewport_extent = 0.0
         self._scroll_content_extent = 0.0
 
-    def on(self, event: str, callback: Callable) -> None:
-        """Registers `callback` to run when `event` fires on this element -
-        "hover_enter", "hover_exit", "press", "release", "click", or
-        "submit" (editable elements only) - see the INTERACTION style docs
-        above. Multiple callbacks may be registered for the same event."""
+    def _register(self, event: str, callback: Callable) -> None:
         self._event_callbacks.setdefault(event, []).append(callback)
 
     def off(self, event: str, callback: Callable) -> None:
@@ -816,20 +1111,10 @@ class UIElement(GenericElement):
         if callback in self._event_callbacks.get(event, ()):
             self._event_callbacks[event].remove(callback)
 
-    def clear(self, event: str) -> None:
-        """Removes every callback registered for `event` via on() - for
-        re-rendering a element whose behavior changes with some state (a
-        follow button toggling between "Follow"/"Unfollow", say) without
-        accumulating a duplicate callback on it every time."""
-        self._event_callbacks.pop(event, None)
-
     def clear_event(self, event: str) -> None:
-        """Same as clear(event), under the name the native backend
-        (ui/native_element.py) uses - it has no clear(). Projects written
-        against the native API called this and crashed with an
-        AttributeError whenever _fbcpp wasn't built and the engine fell
-        back to this class."""
-        self.clear(event)
+        """Removes every callback registered for `event` - see
+        ElementBehaviour.clear()."""
+        self._event_callbacks.pop(event, None)
 
     def _emit(self, event: str, *args) -> None:
         """Calls every callback registered for `event` via `on()`, in
@@ -846,34 +1131,20 @@ class UIElement(GenericElement):
         ui/manager.py's cursor-shape check uses this on both backends."""
         return bool(self._event_callbacks.get(event))
 
-    def scroll_by(self, delta_px: float) -> None:
-        """Adjusts this element's scroll offset by `delta_px` (only has any
-        visible effect if this element's "scroll" style is on). Clamped to
-        the valid range on the next layout pass, so over-scrolling here just
-        settles back to the nearest edge next frame rather than needing to
-        be clamped here against content it hasn't measured yet."""
-        self._scroll_offset += delta_px
-
     def _initialize(self, parent: GenericElement):
         self.parent = parent
         self.parent.children[self.id] = self
 
-    def set_state(self, state: ElementStates) -> None:
-        """
-        Transition this element to a new interaction state (normal,
-        hover, clicked, selected). This is the only place self.state
-        should be assigned from outside the class - input handling
-        (mouse-over/click detection against self._layout) should call
-        this rather than setting element.state directly, so behavior
-        stays consistent if this method grows validation/callbacks
-        later.
-        """
+    def get_parent(self) -> GenericElement | None:
+        """The element this one was added to, or None - the same accessor
+        the native backend has, which UIManager walks up through."""
+        return self.parent
 
-        if not isinstance(state, ElementStates):
-            warning(f'set_state expected an ElementStates, got {type(state)}.')
-            return
+    def _invalidate_styles(self):
+        self._styles_cache = None
 
-        self.state = state
+    def _apply_style_keys(self, keys: list):
+        self._style_keys = keys
         self._styles_cache = None
 
     def _has_own_style(self, key: str) -> bool:
@@ -889,13 +1160,13 @@ class UIElement(GenericElement):
         this" from "this is just the default".
         """
 
-        if key in self.styles:
-            return True
-
-        state_name = self.state.value
-
-        if state_name in self.styles and key in self.styles[state_name]:
-            return True
+        for styles in (self._styles, self._style_base):
+            if key in styles:
+                return True
+            for name in self._style_keys:
+                table = styles.get(name)
+                if isinstance(table, dict) and key in table:
+                    return True
 
         return False
 
@@ -955,102 +1226,24 @@ class UIElement(GenericElement):
         if self._styles_cache is not None:
             return self._styles_cache
 
+        styles = self._styles
+        base = self._style_base
         current_styles = dict(self.DEFAULT_STYLES)
-        current_styles.update(self.styles)
+        current_styles.update(base)
+        current_styles.update(styles)
 
-        state_name = self.state.value
-
-        if state_name in self.styles:
-            for k, v in self.styles[state_name].items():
-                current_styles[k] = v
+        for name in self._style_keys:
+            for layer in (base, styles):
+                table = layer.get(name)
+                if isinstance(table, dict):
+                    current_styles.update(table)
 
         self._styles_cache = current_styles
         return current_styles
 
     def _parse_size(self, size, parent_layout: Layout, root_layout: Layout) -> int:
-        """
-        Convert a style size into pixels.
-
-        Supported formats:
-
-            200
-                Fixed pixels.
-
-            "200"
-                Fixed pixels.
-
-            "69w"
-                69% of parent content width.
-
-            "69h"
-                69% of parent content height.
-
-            "69ww"
-                69% of root/window width.
-
-            "69hw"
-                69% of root/window height.
-
-        "auto" is a valid *style* value (see the SIZE UNITS docs) but is
-        never passed to this method - calculate_layout() and
-        _measure_flow_extent() both special-case it before ever calling
-        _parse_size(). Reaching here with "auto" (or any other string this
-        doesn't recognize) is always a caller bug, not a legitimate size -
-        warned and treated as 0 rather than raising, consistent with how
-        the rest of this class handles bad style input (see
-        _apply_anchor's unknown-anchor handling, for instance) - one
-        malformed style shouldn't be able to crash the whole layout pass.
-        """
-
-        s = str(size).strip().lower()
-
-        if not s:
-            return 0
-
-        #
-        # Plain numeric value - scaled by the window's content_scale (see
-        # its own docstring) so a fixed pixel count stays the same
-        # physical size across devices, rather than rendering tiny on a
-        # high-density phone screen. 1.0 on every desktop display this
-        # currently runs on, so this is a no-op there - only changes
-        # anything on a backend/display where content_scale != 1.
-        #
-        try:
-            window = get_service("window")
-            scale = window.content_scale if window is not None else 1.0
-            return int(float(s) * scale)
-
-        except ValueError:
-            pass
-
-        #
-        # Window-relative unit.
-        #
-        try:
-            if s[-2:] in ("ww", "hw"):
-                num = float(s[:-2])
-                suffix = s[-2:]
-            else:
-                num = float(s[:-1])
-                suffix = s[-1]
-        except ValueError:
-            warning(f'Could not parse size "{size}" - expected a number, or one of the w/h/ww/hw suffixes.')
-            return 0
-
-        if suffix == "w":
-            return int(parent_layout.width * (num / 100.0))
-
-        if suffix == "h":
-            return int(parent_layout.height * (num / 100.0))
-
-        if suffix == "ww":
-            return int(root_layout.width * (num / 100.0))
-
-        if suffix == "hw":
-            return int(root_layout.height * (num / 100.0))
-
-        warning(f'Could not parse size "{size}" - unknown unit suffix "{suffix}".')
-        return 0
+        """Converts a style size into pixels - see parse_size()."""
+        return parse_size(size, parent_layout, root_layout)
 
     def get_style(self, name: str):
         """Gets the raw, un-merged value of style `name` set directly on this
@@ -1062,36 +1255,24 @@ class UIElement(GenericElement):
         warning(f'Style "{name}" does not exist.')
 
     def _set_style(self, name: str, val: any):
-        self.styles[name] = val
+        self._styles[name] = val
         self._styles_cache = None
 
-    def set_style(self, name: str, val: any, duration=0, curve=Linear):
-        """
-        Set or animate a style.
-
-        Immediate:
-
-            element.set_style(
-                "width",
-                200
-            )
-
-        Animated:
-
-            element.set_style(
-                "width",
-                200,
-                duration=0.5
-            )
-        """
-
-        if duration == 0:
-            self._set_style(name, val)
-
-        else:
-            self.animations.append(
-                UIAnimation(self, name, val, duration, curve)
-            )
+    def _resolve_anchors(self, styles: dict) -> tuple[str, str]:
+        """(parent_anchor, anchor) for an anchored element. Setting only one
+        of the two uses it for both - "parent_anchor": "top_left" alone
+        pins this element's top-left corner to the parent's, rather than
+        pairing it with DEFAULT_STYLES' "bottom_left" anchor and putting the
+        element just above the parent, off its edge."""
+        own_parent = self._has_own_style("parent_anchor")
+        own_anchor = self._has_own_style("anchor")
+        parent_anchor = styles.get("parent_anchor", "center")
+        anchor = styles.get("anchor", "center")
+        if own_parent and not own_anchor:
+            anchor = parent_anchor
+        elif own_anchor and not own_parent:
+            parent_anchor = anchor
+        return parent_anchor, anchor
 
     def _apply_anchor(
         self,
@@ -1160,15 +1341,68 @@ class UIElement(GenericElement):
         self._layout.x = int(origin_x - ((anchor_x + 1) / 2) * self._layout.width + x)
         self._layout.y = int(origin_y - ((1 - anchor_y) / 2) * self._layout.height + y)
 
+    def _padding(self, styles: dict, parent_layout: Layout, root: 'RootElement') -> tuple:
+        """(left, right, top, bottom) padding in pixels. A side that isn't
+        set uses "padding" - already in pixels, so not run through
+        _parse_size() a second time (which scaled it by content_scale
+        twice)."""
+        pad = self._parse_size(styles.get("padding", 0), parent_layout, root.layout)
+        return tuple(
+            self._parse_size(styles[key], parent_layout, root.layout) if key in styles else pad
+            for key in ("padding_left", "padding_right", "padding_top", "padding_bottom")
+        )
+
+    def _flow_children(self) -> list:
+        return [
+            child for child in self.children.values()
+            if not _is_anchored(child) and not getattr(child, "_is_scrollbar_part", False) and _is_visible(child)
+        ]
+
+    def _measure_size(self, key: str, parent_layout: Layout, root: 'RootElement') -> float:
+        """This element's size along `key` ("width" or "height") without
+        laying it out: its own size style, or for "auto" what it would fit -
+        its children, measured the same way (so "auto" inside "auto" works),
+        or with none, its text. What a parent's "auto" size, scroll range
+        and grow measure their children with."""
+        styles = self.get_current_styles()
+        value = styles.get(key, 0)
+        if value != "auto":
+            return self._parse_size(value, parent_layout, root.layout)
+
+        left, right, top, bottom = self._padding(styles, parent_layout, root)
+        padding = left + right if key == "width" else top + bottom
+
+        children = self._flow_children()
+        if not children:
+            text_size = measure_text(styles)
+            if text_size is None:
+                return padding
+            return (text_size[0] if key == "width" else text_size[1]) + padding
+
+        # The content box of an "auto" element isn't known yet - the same
+        # zero-sized box calculate_layout() measures its children against.
+        content = Layout(0, 0, 0, 0)
+        sizes = [child._measure_size(key, content, root) for child in children]
+        along = (key == "height") == (styles.get("layout", "vertical") == "vertical")
+        if along:
+            gap = self._parse_size(styles.get("gap", 0), content, root.layout)
+            return sum(sizes) + gap * (len(sizes) - 1) + padding
+        return max(sizes) + padding
+
+    def _has_flow_children(self) -> bool:
+        return any(
+            not _is_anchored(child) and not getattr(child, "_is_scrollbar_part", False) and _is_visible(child)
+            for child in self.children.values()
+        )
+
     def _measure_flow_extent(self, content_layout: Layout, root: 'RootElement', layout_dir: str, gap: float) -> float:
         """Sum of non-anchored children's own size along `layout_dir`, plus
-        the gaps between them - a lightweight pass (just each child's own
-        size, not a full layout) shared by "auto" sizing and "scroll"
+        the gaps between them - shared by "auto" sizing and "scroll"
         clamping, both of which need "how much space would my children
-        take up if I just laid them out." Doesn't depend on this element's
-        own size (only `content_layout`'s cross-axis and `root.layout`),
-        so computing it more than once a frame is cheap and always gives
-        the same answer."""
+        take up if I just laid them out." Each child is measured without
+        being laid out (see _measure_size()) - an "auto" child used to be
+        given last frame's size instead, so anything nested in "auto"s was
+        wrong on its first frame."""
         total_extent = 0.0
         seen_first = False
 
@@ -1185,35 +1419,10 @@ class UIElement(GenericElement):
             # children take up" (that would make an element's own overflow
             # measurement depend on whether it has a scrollbar yet, which
             # depends on that same measurement - a feedback loop).
-            if child_anchored or getattr(child, "_is_scrollbar_part", False):
+            if child_anchored or getattr(child, "_is_scrollbar_part", False) or not _is_visible(child):
                 continue
 
-            child_styles = child.get_current_styles()
-            child_size_style = child_styles.get("height" if layout_dir == "vertical" else "width", "0")
-
-            if child_size_style == "auto":
-                # Can't resolve "auto" here without laying the child out
-                # for real first - this pass is deliberately lighter than
-                # that (see the docstring). Falls back to the child's own
-                # _layout from the *last* full layout pass instead of
-                # hardcoding 0: calculate_layout() runs every frame, and
-                # this measurement itself runs before this element's own
-                # children are laid out for the current frame (needed
-                # first, to clamp the scroll offset / size this element
-                # before positioning them) - so "last frame's value" is
-                # one frame stale at worst, and self-corrects every frame
-                # after, the same tradeoff "auto" sizing itself already
-                # makes elsewhere. Hardcoding 0 instead made any scrollable
-                # element with an "auto"-sized child (a plain vertical list
-                # of rows, the single most common scrollable content there
-                # is) measure as having virtually no content to scroll to,
-                # regardless of how much it actually overflowed - scroll
-                # clamping silently locked to ~0 rather than a real bug
-                # anyone could point at, since the *label* said "auto" and
-                # "auto" resolved fine everywhere else it was used.
-                extent = child._layout.height if layout_dir == "vertical" else child._layout.width
-            else:
-                extent = self._parse_size(child_size_style, content_layout, root.layout)
+            extent = child._measure_size("height" if layout_dir == "vertical" else "width", content_layout, root)
 
             if seen_first:
                 total_extent += gap
@@ -1226,29 +1435,29 @@ class UIElement(GenericElement):
         """Largest non-anchored child's own size along `axis` ("vertical"
         for height, "horizontal" for width) - the cross-axis counterpart
         to _measure_flow_extent, used for "auto" on the axis a layout
-        *doesn't* stack along. Same "auto" child fallback (last frame's
-        _layout) and same anchored/scrollbar exclusions."""
+        *doesn't* stack along. Same exclusions."""
         largest = 0.0
         key = "height" if axis == "vertical" else "width"
 
         for child in self.children.values():
             if (child._has_own_style("anchor") or child._has_own_style("parent_anchor")
-                    or getattr(child, "_is_scrollbar_part", False)):
+                    or getattr(child, "_is_scrollbar_part", False) or not _is_visible(child)):
                 continue
 
-            child_size_style = child.get_current_styles().get(key, "0")
-            if child_size_style == "auto":
-                extent = child._layout.height if axis == "vertical" else child._layout.width
-            else:
-                extent = self._parse_size(child_size_style, content_layout, root.layout)
+            extent = child._measure_size(key, content_layout, root)
             largest = max(largest, extent)
 
         return largest
 
-    def calculate_layout(self, root: 'RootElement', parent_layout: Layout = None):
+    def calculate_layout(self, root: 'RootElement', parent_layout: Layout = None,
+                         forced_width: float = None, forced_height: float = None):
         """
         Calculate this element's size and position, then recursively
         calculate the layout of its children.
+
+        `forced_width`/`forced_height` replace the size this element's own
+        styles would give it - how the parent's flow layout applies "grow"
+        and "align": "stretch" (see layout_flow()).
         """
 
         styles = self.get_current_styles()
@@ -1271,37 +1480,24 @@ class UIElement(GenericElement):
         layout_dir = styles.get("layout", "vertical")
         width_style = styles.get("width", "0")
         height_style = styles.get("height", "0")
-        auto_width = width_style == "auto"
-        auto_height = height_style == "auto"
+        auto_width = width_style == "auto" and forced_width is None
+        auto_height = height_style == "auto" and forced_height is None
 
-        self._layout.width = 0 if auto_width else self._parse_size(
-            width_style, parent_layout, root.layout
-        )
+        if forced_width is not None:
+            self._layout.width = forced_width
+        else:
+            self._layout.width = 0 if auto_width else self._parse_size(
+                width_style, parent_layout, root.layout
+            )
 
-        self._layout.height = 0 if auto_height else self._parse_size(
-            height_style, parent_layout, root.layout
-        )
+        if forced_height is not None:
+            self._layout.height = forced_height
+        else:
+            self._layout.height = 0 if auto_height else self._parse_size(
+                height_style, parent_layout, root.layout
+            )
 
-        #
-        # Padding
-        #
-        pad = self._parse_size(styles.get("padding", 0), parent_layout, root.layout)
-
-        pad_left = self._parse_size(
-            styles.get("padding_left", pad), parent_layout, root.layout
-        )
-
-        pad_right = self._parse_size(
-            styles.get("padding_right", pad), parent_layout, root.layout
-        )
-
-        pad_top = self._parse_size(
-            styles.get("padding_top", pad), parent_layout, root.layout
-        )
-
-        pad_bottom = self._parse_size(
-            styles.get("padding_bottom", pad), parent_layout, root.layout
-        )
+        pad_left, pad_right, pad_top, pad_bottom = self._padding(styles, parent_layout, root)
 
         #
         # Resolve any deferred "auto" dimension - using a *position-less*
@@ -1350,6 +1546,17 @@ class UIElement(GenericElement):
                 self._layout.width = cross + pad_left + pad_right
                 content_w = max(0, self._layout.width - pad_left - pad_right)
 
+            # No children to fit - fit the element's own text instead.
+            if not self._has_flow_children():
+                text_size = measure_text(styles)
+                if text_size is not None:
+                    if auto_width:
+                        self._layout.width = text_size[0] + pad_left + pad_right
+                        content_w = max(0, self._layout.width - pad_left - pad_right)
+                    if auto_height:
+                        self._layout.height = text_size[1] + pad_top + pad_bottom
+                        content_h = max(0, self._layout.height - pad_top - pad_bottom)
+
         #
         # Default flow position.
         #
@@ -1368,18 +1575,17 @@ class UIElement(GenericElement):
             self._has_own_style("parent_anchor")
         )
 
-        # Raw pixel offsets - bypass _parse_size (where content_scale
-        # normally applies), so scaled here directly for the same reason
-        # every other raw-pixel style read in this file now is.
-        window = get_service("window")
-        offset_scale = window.content_scale if window is not None else 1.0
-        x_offset = styles.get("x", 0) * offset_scale
-        y_offset = styles.get("y", 0) * offset_scale
+        # Same units as a size ("10w" is 10% of the parent's width), and
+        # content-scaled the same way - a plain multiply here used to raise
+        # on any string.
+        x_offset = self._parse_size(styles.get("x", 0), parent_layout, root.layout)
+        y_offset = self._parse_size(styles.get("y", 0), parent_layout, root.layout)
 
         if anchored:
+            parent_anchor, anchor = self._resolve_anchors(styles)
             self._apply_anchor(
-                styles.get("parent_anchor", "center"),
-                styles.get("anchor", "center"),
+                parent_anchor,
+                anchor,
                 parent_layout,
                 x_offset,
                 y_offset
@@ -1435,57 +1641,9 @@ class UIElement(GenericElement):
             self._scroll_viewport_extent = content_h if layout_dir == "vertical" else content_w
             self._scroll_content_extent = self._scroll_viewport_extent
 
-        #
-        # Calculate children.
-        #
-        for child in self.children.values():
-
-            # The scrollbar track/thumb (see _update_scrollbar(), called
-            # after this loop) are real children for draw/hit-test
-            # purposes, but they're positioned directly from this
-            # element's own scroll state, not through flow or anchoring -
-            # skipped here the same way _measure_flow_extent skips them.
-            if getattr(child, "_is_scrollbar_part", False):
-                continue
-
-            #
-            # See the comment in RootElement.calculate_layout - this
-            # has to check _has_own_style, not the merged styles dict,
-            # or every child would register as anchored.
-            #
-            child_anchored = (
-                child._has_own_style("anchor") or
-                child._has_own_style("parent_anchor")
-            )
-
-            #
-            # Anchored children are positioned against the entire
-            # content rectangle and do not participate in normal flow.
-            #
-            if child_anchored:
-                child.calculate_layout(root, content_layout)
-                continue
-
-            #
-            # Normal child.
-            #
-            child_layout = Layout(child_offset_x, child_offset_y, content_w, content_h)
-            child.calculate_layout(root, child_layout)
-
-            #
-            # Advance flow position.
-            #
-            if layout_dir == "vertical":
-                child_offset_y += child._layout.height + gap
-
-            elif layout_dir == "horizontal":
-                child_offset_x += child._layout.width + gap
-
-            else:
-                warning(
-                    f'Unknown layout direction "{layout_dir}". '
-                    f'Expected "vertical" or "horizontal".'
-                )
+        layout_flow(styles, self.children, root,
+                    Layout(child_offset_x, child_offset_y, content_w, content_h),
+                    content_layout, layout_dir, gap)
 
         if overflow in ("scroll", "auto"):
             self._update_scrollbar(styles, overflow, layout_dir, content_x, content_y, content_w, content_h)
@@ -1593,190 +1751,3 @@ class UIElement(GenericElement):
             thumb._layout = Layout(track_x + fraction * travel, track_y, thumb_w, width)
 
         track._layout = Layout(track_x, track_y, track_w, track_h)
-
-    def _update(self):
-        for animation in self.animations:
-            animation.update()
-
-
-class UIAnimation:
-    """An in-progress animation of one style on one `UIElement`, created by
-    `UIElement.set_style(..., duration=...)` and driven forward by
-    `UIElement._update()` each frame until it reaches `duration` and removes itself."""
-
-    def __init__(
-        self,
-        element: 'UIElement',
-        style: str,
-        end_value: any,
-        duration: float,
-        curve: Curve = Linear()
-    ):
-        """Args:
-            element: The element whose style is being animated.
-            style: Name of the style to animate.
-            end_value: The value `style` should reach once the animation finishes.
-            duration: How long the animation takes, in seconds.
-            curve: Easing curve applied to the 0-1 progress before interpolating.
-
-        Raises:
-            ValueError: If `style`'s current value isn't an animatable type,
-                or if it isn't compatible with `end_value` (see `_validate_animatable`).
-        """
-        self.style = style
-        self.element = element
-        self.curve = curve
-        self.end_value = end_value
-        self.duration = duration
-        self.elapsed = 0.0
-        self.finished = False
-
-        self.start_value = self._capture_start_value()
-
-        self._validate_animatable()
-
-        if isinstance(self.start_value, str):
-            self.start_nums, self.start_parts = self._extract_numbers(self.start_value)
-            self.end_nums, self.end_parts = self._extract_numbers(self.end_value)
-
-        elif isinstance(self.start_value, (tuple, list)):
-            self.start_shape = self._get_shape(self.start_value)
-            self.end_shape = self._get_shape(self.end_value)
-
-    def _capture_start_value(self):
-        val = self.element.get_style(self.style)
-
-        if isinstance(val, (int, float, tuple, list, str)):
-            return val
-
-        raise ValueError(f"Unsupported type for animation: {type(val)}")
-
-    def _extract_numbers(self, s: str):
-        parts = re.split(r'(-?\d+\.?\d*)', s)
-
-        nums = [
-            float(p)
-            for p in parts
-            if re.fullmatch(r'-?\d+\.?\d*', p)
-        ]
-
-        return nums, parts
-
-    def _get_shape(self, iterable):
-        """
-        Return the nested shape of tuples/lists.
-        """
-
-        if isinstance(iterable, (list, tuple)):
-            return tuple(
-                self._get_shape(x) if isinstance(x, (list, tuple)) else 0
-                for x in iterable
-            )
-
-        return 0
-
-    def _validate_animatable(self):
-        """
-        Ensure the start and end animation values are compatible.
-        """
-
-        end = self.end_value
-        start = self.start_value
-
-        if type(start) != type(end):
-            raise ValueError(
-                f"Start ({type(start)}) and end ({type(end)}) types do not match"
-            )
-
-        if isinstance(start, str):
-            start_nums, start_parts = self._extract_numbers(start)
-            end_nums, end_parts = self._extract_numbers(end)
-
-            non_numeric_start = [
-                p for p in start_parts if not re.fullmatch(r'-?\d+\.?\d*', p)
-            ]
-
-            non_numeric_end = [
-                p for p in end_parts if not re.fullmatch(r'-?\d+\.?\d*', p)
-            ]
-
-            if non_numeric_start != non_numeric_end:
-                warning("Non-numeric parts of start/end string do not match")
-                self.remove()
-                return
-
-            if len(start_nums) != len(end_nums):
-                warning("Number of numeric parts in start/end string do not match")
-                self.remove()
-                return
-
-        elif isinstance(start, (tuple, list)):
-            start_shape = self._get_shape(start)
-            end_shape = self._get_shape(end)
-
-            if start_shape != end_shape:
-                warning("Start and end iterables have different shapes")
-                self.remove()
-
-    def _interpolate(self, start, end, t: float):
-        if isinstance(start, (int, float)):
-            return start + (end - start) * t
-
-        elif isinstance(start, (tuple, list)):
-            return type(start)(
-                self._interpolate(s, e, t) for s, e in zip(start, end)
-            )
-
-        elif isinstance(start, Color):
-            return
-
-        elif isinstance(start, str):
-            interpolated_nums = [
-                s + (e - s) * t
-                for s, e in zip(self.start_nums, self.end_nums)
-            ]
-
-            result = []
-            num_idx = 0
-
-            for p in self.start_parts:
-                if re.fullmatch(r'-?\d+\.?\d*', p):
-                    result.append(str(interpolated_nums[num_idx]))
-                    num_idx += 1
-
-                else:
-                    result.append(p)
-
-            return ''.join(result)
-
-        else:
-            warning("Could not interpolate between animation values.")
-            self.remove()
-
-    def update(self):
-        """Advances the animation by one frame's delta time, writing the
-        interpolated value straight into the element's style, and removes
-        itself from the element once `duration` has elapsed."""
-        delta_time = delta()
-
-        if self.finished:
-            return
-
-        self.elapsed += delta_time
-
-        t = min(self.elapsed / self.duration, 1.0)
-        t = self.curve(t)
-
-        new_value = self._interpolate(self.start_value, self.end_value, t)
-
-        self.element._set_style(self.style, new_value)
-
-        if self.elapsed >= self.duration:
-            self.finished = True
-
-            if self in self.element.animations:
-                self.remove()
-
-    def remove(self):
-        """Detaches this animation from its element, stopping it from being updated further."""
-        self.element.animations.remove(self)

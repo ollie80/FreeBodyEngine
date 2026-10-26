@@ -1,13 +1,11 @@
-"""Native (C++/pybind11) backing for UIElement/RootElement - thin Python
-subclasses of the compiled Node class (see ui/native/node.hpp) that exist
-*only* to reconcile a handful of naming/shape differences from the old
-pure-Python ui.element implementation, so every existing call site
-(phonon included) keeps working completely unchanged. Every method NOT
-overridden here resolves straight through to Node's own C++ binding with
-no extra Python dispatch in between - that's the entire reason option (a)
-(bind the class directly) was chosen over a wrapper class in the first
-place; a subclass that only overrides __init__ and a few glue methods
-doesn't undo that for anything else.
+"""Native (C++/pybind11) backing for UIElement/RootElement - Python
+subclasses of the compiled Node class (see ui/native/node.hpp). Layout and
+style merging run in C++; flags, handlers, animation and the styles/style/
+visible/rect properties come from ui/base.py, shared with the pure-Python
+backend (ui/element.py), and this file supplies only the primitives those
+build on (see ui/base.py's docstring) plus the few places Node's shape
+differs. Every method not defined here or in ui/base.py resolves straight
+through to Node's own C++ binding with no extra Python dispatch.
 
 Only importable where the compiled extension actually exists - see
 ui/__init__.py's own flag/platform resolution for when this is chosen
@@ -15,16 +13,18 @@ over ui/element.py's pure-Python implementation (used unconditionally on
 web, where no compiled extension can exist at all, and as an automatic
 fallback anywhere the native module hasn't been built).
 
-Imports the compiled `_fbcpp` extension directly (`_fbcpp.node.Node`)
+Imports the compiled `_fbengine_ui` extension directly
+(`_fbengine_ui.node.Node` - named by scripts/build_native.py so it can't
+collide with a project's own `_fbcpp`)
 rather than through cli/cpp/compile.py's generated `node.py` convenience
 shim (`from node import Node`, relying on sys.path containing
 ui/native/cpp_scripts/) - that shim exists so *project* C++ scripts can
 be imported by bare file name, but this module already knows exactly
 which extension and submodule it wants, and the shim's own sys.path
 requirement doesn't hold on every platform this needs to work on: a
-desktop dev build's `_fbcpp` sits at ui/native/cpp_scripts/ and needs the
+desktop dev build's `_fbengine_ui` sits at ui/native/cpp_scripts/ and needs the
 sys.path insertion below to be found at all, but an Android build's
-`_fbcpp` is installed by python-for-android's own `pip install .` step
+`_fbengine_ui` is installed by python-for-android's own `pip install .` step
 (build/android_recipes/freebodyengine_native/__init__.py) straight into
 its normal global site-packages, already importable with no path
 insertion needed - and unlike desktop, that directory doesn't exist
@@ -45,12 +45,14 @@ _NATIVE_DIR = os.path.join(os.path.dirname(__file__), "native", "cpp_scripts")
 if _NATIVE_DIR not in sys.path:
     sys.path.insert(0, _NATIVE_DIR)
 
-import _fbcpp  # noqa: E402 - the compiled extension itself, see the module docstring
-Node = _fbcpp.node.Node  # noqa: E402
+import _fbengine_ui  # noqa: E402 - the compiled extension itself, see the module docstring
+Node = _fbengine_ui.node.Node  # noqa: E402
 
-from FreeBodyEngine.ui.element import UIElement as _PyUIElement  # noqa: E402
-from FreeBodyEngine.ui.element import UIAnimation, Layout  # noqa: E402
-from FreeBodyEngine.math import Linear  # noqa: E402
+from FreeBodyEngine.ui import element as _element  # noqa: E402
+from FreeBodyEngine.ui.element import _safe_area_insets  # noqa: E402
+from FreeBodyEngine.ui.base import (  # noqa: E402
+    DEFAULT_STYLES, Layout, TreeBehaviour, ElementBehaviour, UIAnimation,
+)
 from FreeBodyEngine import get_service  # noqa: E402
 
 
@@ -106,7 +108,7 @@ class _ChildrenView:
         return len(self) > 0
 
 
-class _ScrollbarPartProxy:
+class _ScrollbarPartProxy(ElementBehaviour):
     """Thin, cold-path wrapper around a scrollbar track/thumb - the two
     Node children Node::update_scrollbar() creates *inside* C++ (see its
     own comment in node.hpp on why pybind11 has no way to hand those back
@@ -117,14 +119,9 @@ class _ScrollbarPartProxy:
     (CPython refuses it - UIElement's __dict__ gives it a different
     deallocator than plain Node) got around that).
 
-    Delegates every UIElement method/property not explicitly listed here
-    straight to the wrapped Node via __getattr__, and supplies just the
-    handful of UIElement-only names ui/manager.py and ui/renderer.py
-    actually read on a scrollbar part (.children/._layout/.state/
-    get_overflow) - the same "no processing layer" principle UIElement
-    itself follows, just accepted as a real (if rare: at most 2 elements
-    per scrollable container, never the bulk of the tree) exception here
-    rather than pretended away.
+    Gets everything an element does from ui/base.py's ElementBehaviour,
+    like UIElement, by supplying its primitives onto the wrapped Node;
+    anything else is delegated to the Node via __getattr__.
 
     Cached per underlying Node (see _wrap_child below) rather than
     reconstructed on every access - ui/manager.py's scrollbar-thumb drag
@@ -146,9 +143,42 @@ class _ScrollbarPartProxy:
         # yet), track/thumb included.
         self._cursor_index = 0
         self._text_view_offset = 0.0
+        # What ElementBehaviour needs set up - UIManager hovers and presses
+        # a thumb like any other element.
+        self._flags = []
+        self._handlers = {}
+        self._style = None
+        self.animations: list[UIAnimation] = []
 
     def __getattr__(self, name):
         return getattr(self._node, name)
+
+    # -- ElementBehaviour's primitives, onto the wrapped Node ----------------
+    def _raw_styles(self) -> dict:
+        return Node.styles.__get__(self._node)
+
+    def _set_raw_styles(self, styles: dict):
+        Node.styles.__set__(self._node, styles)
+
+    def _invalidate_styles(self):
+        self._node.invalidate_styles()
+
+    def _set_style(self, name, val):
+        self._node.set_style(name, val)
+
+    @property
+    def _style_base(self) -> dict:
+        return self._node._base_styles
+
+    @_style_base.setter
+    def _style_base(self, value: dict):
+        self._node._base_styles = value
+
+    def _apply_style_keys(self, keys):
+        self._node.set_style_keys(keys)
+
+    def _register(self, event, callback):
+        self._node.on(event, callback)
 
     def __eq__(self, other):
         other_node = other._node if isinstance(other, _ScrollbarPartProxy) else other
@@ -165,27 +195,10 @@ class _ScrollbarPartProxy:
     def _layout(self) -> Layout:
         return Layout(self._node.x, self._node.y, self._node.width, self._node.height)
 
-    @property
-    def state(self):
-        from FreeBodyEngine.ui.element import ElementStates
-        return ElementStates(self._node.get_state())
-
     def get_overflow(self, styles: dict = None) -> str:
         if styles is None:
             styles = self._node.get_current_styles()
         return self._node.get_overflow(styles)
-
-    def set_state(self, state) -> None:
-        # A scrollbar thumb/track is a real, hit-testable element -
-        # ui/manager.py's ordinary hover/press/click dispatch calls this
-        # on it exactly like any other element (ElementStates enum
-        # member, not a plain string - see UIElement.set_state's own
-        # comment on why).
-        self._node.set_state(state.value if hasattr(state, "value") else state)
-
-    def get_state(self):
-        from FreeBodyEngine.ui.element import ElementStates
-        return ElementStates(self._node.get_state())
 
     def _emit(self, event: str, *args) -> None:
         self._node.emit(event, *args)
@@ -193,13 +206,15 @@ class _ScrollbarPartProxy:
     def add(self, element) -> None:
         self._node.add_child(element)
 
-    def scroll_by(self, delta_px: float) -> None:
-        self._node._scroll_offset += delta_px
+    @property
+    def _scroll_offset(self) -> float:
+        return self._node._scroll_offset
+
+    @_scroll_offset.setter
+    def _scroll_offset(self, value: float):
+        self._node._scroll_offset = value
 
     def _draw(self):
-        pass
-
-    def _update(self):
         pass
 
     @property
@@ -222,6 +237,15 @@ class _ScrollbarPartProxy:
 _scrollbar_proxy_cache: dict = {}
 
 
+def _measure_text(styles):
+    # Looked up on each call, not bound once, so it can be replaced (tests
+    # stand one in for the real font pipeline).
+    return _element.measure_text(styles)
+
+
+Node(DEFAULT_STYLES).set_text_measurer(_measure_text)
+
+
 def _wrap_child(child):
     """Returns `child` unchanged if it's already a real UIElement, or the
     cached _ScrollbarPartProxy for it otherwise - see that class's own
@@ -237,114 +261,42 @@ def _wrap_child(child):
     return proxy
 
 
-class UIElement(Node):
-    """Drop-in replacement for ui.element.UIElement - same constructor
-    shape, same public method names/behavior. This class *is* the
-    compiled Node (see the module docstring); every method below exists
-    only to bridge a real naming/shape difference from the old
-    implementation, not to add a processing layer in front of Node's own
-    bindings."""
+class _NativeTree(TreeBehaviour):
+    """What UIElement and RootElement here both are on top of Node: the
+    TreeBehaviour primitives (see ui/base.py) over Node's own style dict,
+    and a children list whose Python wrappers stay alive."""
 
-    # Re-exposed for any code that references these on the class itself
-    # (documentation, validation) rather than through an instance - kept
-    # as the single source of truth in ui.element rather than duplicated
-    # here, so the two implementations' defaults can't silently drift
-    # apart from each other over time.
-    VALID_ANCHORS = _PyUIElement.VALID_ANCHORS
-    VALID_OVERFLOWS = _PyUIElement.VALID_OVERFLOWS
-    DEFAULT_STYLES = _PyUIElement.DEFAULT_STYLES
-
-    def __init__(self, tag: str = None, styles: dict = None):
-        super().__init__(self.DEFAULT_STYLES)
-        self.tag = tag
-        self.animations: list[UIAnimation] = []
-        # Editable-field cursor state - see ui/manager.py's _on_key() and
-        # ui/renderer.py's _draw_text(), neither of which is being touched
-        # by this rewrite (see the class-bind design discussion on why
-        # text stays entirely Python-side) - plain Python attributes here
-        # since Node has no notion of either.
-        self._cursor_index = 0
-        self._text_view_offset = 0.0
+    def _init_tree(self, styles):
         # Keeps every added child's *Python* wrapper alive for as long as
-        # it's actually attached here - see add()'s own comment on why
-        # this exists (a real, confirmed bug otherwise, not a
-        # precaution): pybind11's identity registry only holds a *weak*
-        # association between a C++ object and its Python wrapper. The
-        # C++ side's own shared_ptr (in this element's children_) keeps
-        # the underlying object alive fine on its own, but once nothing
-        # on the *Python* side still references a child (its only
-        # variable went out of scope, say - an ordinary, common pattern:
-        # `row = UIElement(...); container.add(row)` in a loop, never
-        # keeping `row` around afterward), CPython collects that wrapper
-        # immediately. The next get_children() call then has to build a
-        # brand new wrapper for the same underlying object - and a
-        # C++-side-constructed wrapper always comes back as plain Node,
-        # never UIElement (see node.hpp's own comment on why pybind11
-        # can't preserve a Python subclass through that path) - silently
-        # losing every UIElement-only behavior (state, event callbacks,
-        # .children, everything ui/manager.py's hit-testing/scroll-target
-        # walk depends on) on whatever child happened to get collected.
-        # Confirmed via a real repro, not theorized - this is what was
-        # actually causing "scrolling doesn't work a lot of the time".
+        # it's attached - pybind11 only holds a *weak* association between
+        # a C++ object and its Python wrapper. Node's own shared_ptr keeps
+        # the child alive, but once nothing on the Python side references
+        # its wrapper (`row = UIElement(...); container.add(row)` in a loop,
+        # the common case), CPython collects it, and the next
+        # get_children() builds a fresh wrapper that comes back as plain
+        # Node, not UIElement (see node.hpp on why pybind11 can't preserve
+        # a Python subclass that way) - losing flags, handlers, .children
+        # and everything else Python-side on whatever child got collected.
+        # This is what was causing "scrolling doesn't work a lot of the
+        # time".
         self._py_children: list = []
+        self.styles = styles
 
-        for key, value in (styles or {}).items():
-            self.set_style(key, value)
+    # -- TreeBehaviour's primitives -------------------------------------------
+    # The StyleView `styles` returns is over Node's own dict, so a write
+    # into it invalidates Node's memoized get_current_styles().
+    def _raw_styles(self) -> dict:
+        return Node.styles.__get__(self)
 
-    # -- styles / animation ------------------------------------------------
-    # Animations stay Python-side permanently (see node.hpp's own class
-    # docstring on why) - set_style(duration=...) still creates the same
-    # UIAnimation the pure-Python implementation always did, it just lands
-    # each frame's interpolated value via Node.set_style() (aliased below
-    # as _set_style, the private name UIAnimation.update() calls) instead
-    # of the old UIElement's.
-    def set_style(self, name, val, duration: float = 0, curve=Linear):
-        if duration == 0:
-            super().set_style(name, val)
-        else:
-            self.animations.append(UIAnimation(self, name, val, duration, curve))
+    def _set_raw_styles(self, styles: dict):
+        Node.styles.__set__(self, styles)
 
-    def _set_style(self, name, val):
-        super().set_style(name, val)
+    def _invalidate_styles(self):
+        self.invalidate_styles()
 
-    def get_overflow(self, styles: dict = None) -> str:
-        # Node.get_overflow() takes a required argument (see its own
-        # comment in node.hpp on why) - this restores the old optional-
-        # argument shape ui/manager.py and ui/renderer.py both call it
-        # with.
-        if styles is None:
-            styles = self.get_current_styles()
-        return super().get_overflow(styles)
-
-    def _update(self):
-        for animation in self.animations:
-            animation.update()
-
-    def set_state(self, state) -> None:
-        # ui/manager.py calls this with an ElementStates enum member
-        # (element.py's own ElementStates, shared by both backends - see
-        # its docstring on why FOCUSED's value is "selected" not
-        # "focused") everywhere it sets state - Node.set_state() only
-        # takes the plain string itself.
-        super().set_state(state.value if hasattr(state, "value") else state)
-
-    def get_state(self):
-        from FreeBodyEngine.ui.element import ElementStates
-        return ElementStates(super().get_state())
-
-    @property
-    def state(self):
-        # UIRenderer reads element.state directly (`element.state ==
-        # ElementStates.FOCUSED`, for caret visibility) rather than
-        # through get_state() - deliberately left untouched by this
-        # rewrite, so this has to exist as a plain attribute too.
-        return self.get_state()
-
-    # -- tree / event naming compatibility ----------------------------------
+    # -- tree --------------------------------------------------------------------
     def add(self, element: 'UIElement') -> None:
-        # Order matters: append to the Python-side keepalive list *before*
-        # add_child() - see __init__'s own comment on why this list exists
-        # at all.
+        # Order matters: kept alive *before* add_child() - see _init_tree().
         self._py_children.append(element)
         self.add_child(element)
 
@@ -355,14 +307,68 @@ class UIElement(Node):
                 del self._py_children[i]
                 break
 
-    def _emit(self, event: str, *args) -> None:
-        self.emit(event, *args)
-
-    def scroll_by(self, delta_px: float) -> None:
-        self._scroll_offset += delta_px
+    @property
+    def children(self):
+        # A live view (_ChildrenView, see its own docstring), not a
+        # snapshot: phonon calls `.children.clear()` in over a dozen places
+        # to empty a container before rebuilding it.
+        return _ChildrenView(self)
 
     def _draw(self):
         pass
+
+
+class UIElement(ElementBehaviour, _NativeTree, Node):
+    """The native backend's UIElement - the compiled Node itself, with
+    ui/base.py's ElementBehaviour on top. Same constructor and public
+    surface as ui/element.py's; what's here is only the primitives
+    ElementBehaviour builds on, and the few places Node's shape differs."""
+
+    def __init__(self, tag: str = None, styles: dict = None, style=None):
+        super().__init__(DEFAULT_STYLES)
+        self.tag = tag
+        self._style = None
+        self._flags = []
+        self._handlers = {}
+        self.animations: list[UIAnimation] = []
+        # Editable-field cursor state - see ui/manager.py's _on_key() and
+        # ui/renderer.py's _draw_text(); text stays Python-side, so Node has
+        # no notion of either.
+        self._cursor_index = 0
+        self._text_view_offset = 0.0
+        self._init_tree(styles)
+        if style is not None:
+            self.style = style
+
+    # -- ElementBehaviour's primitives --------------------------------------------
+    def _set_style(self, name, val):
+        Node.set_style(self, name, val)
+
+    @property
+    def _style_base(self) -> dict:
+        return self._base_styles
+
+    @_style_base.setter
+    def _style_base(self, value: dict):
+        self._base_styles = value
+
+    def _apply_style_keys(self, keys):
+        self.set_style_keys(keys)
+
+    def _register(self, event, callback):
+        Node.on(self, event, callback)
+
+    def _emit(self, event: str, *args) -> None:
+        self.emit(event, *args)
+
+    # -- where Node's shape differs --------------------------------------------------
+    def get_overflow(self, styles: dict = None) -> str:
+        # Node.get_overflow() takes a required argument (see node.hpp) -
+        # this restores the optional one ui/manager.py and ui/renderer.py
+        # call it with.
+        if styles is None:
+            styles = self.get_current_styles()
+        return super().get_overflow(styles)
 
     @property
     def parent(self):
@@ -373,88 +379,32 @@ class UIElement(Node):
         return self.scrollbar_owner()
 
     @property
-    def children(self):
-        # A live view (_ChildrenView, see its own docstring), not a
-        # uuid-keyed dict the way the old GenericElement.children was -
-        # nothing outside ui/element.py's own internals ever indexes it
-        # by key, only .values()/.clear()/truthiness (checked via a real
-        # grep across this engine and phonon, not guessed) - but it does
-        # have to be *live*: phonon calls `.children.clear()` in over a
-        # dozen places to empty a container before rebuilding it, and a
-        # snapshot dict makes that silently do nothing.
-        return _ChildrenView(self)
-
-    @property
     def _layout(self) -> Layout:
-        # UIRenderer reads element._layout.x/.y/.width/.height for every
-        # element it draws - deliberately left untouched by this rewrite
-        # (see the class-bind design discussion), so this reconstructs
-        # the same Layout shape it expects from Node's flat x/y/width/
-        # height attributes, fresh on each read.
+        # UIRenderer/UIManager read element._layout.x/.y/.width/.height -
+        # rebuilt from Node's flat attributes on each read.
         return Layout(self.x, self.y, self.width, self.height)
 
 
-class RootElement(Node):
-    """Drop-in replacement for ui.element.RootElement - see UIElement's
-    own docstring above for the "thin subclass, not a wrapper" reasoning,
-    which applies identically here."""
+class RootElement(_NativeTree, Node):
+    """The native backend's RootElement - see UIElement above."""
 
     def __init__(self, width: int, height: int, styles: dict = None):
-        super().__init__(UIElement.DEFAULT_STYLES)
+        super().__init__(DEFAULT_STYLES)
         self.x = 0.0
         self.y = 0.0
         self.width = float(width)
         self.height = float(height)
-        # See UIElement.__init__'s own (much longer) comment on why this
-        # exists - the same real, confirmed GC-identity bug applies to the
-        # root's own direct children (main_panel, every _open_modal()
-        # backdrop) exactly as much as to any other element.
-        self._py_children: list = []
-        for key, value in (styles or {}).items():
-            self.set_style(key, value)
-
-    def set_styles(self, styles: dict):
-        for key, value in styles.items():
-            self.set_style(key, value)
-
-    def add(self, element: 'UIElement') -> None:
-        self._py_children.append(element)
-        self.add_child(element)
-
-    def remove(self, element: 'UIElement') -> None:
-        self.remove_child(element)
-        for i, child in enumerate(self._py_children):
-            if child is element:
-                del self._py_children[i]
-                break
-
-    def _draw(self):
-        pass
-
-    def _update(self):
-        # See GenericElement._update()'s own no-op in ui/element.py -
-        # matched here rather than "fixed": ui/manager.py's update() only
-        # ever calls this on the root, and RootElement never overrode it
-        # to cascade into children there either, so per-element animation
-        # ticking (UIElement._update()) isn't actually reachable from
-        # anywhere in the existing pure-Python implementation - a
-        # pre-existing gap in that system, not something this rewrite
-        # should silently start doing differently.
-        pass
+        self._init_tree(styles)
 
     def calculate_layout(self):
         window = get_service("window")
         scale = window.content_scale if window is not None else 1.0
-        self.calculate_root_layout(self.width, self.height, scale)
+        insets = _safe_area_insets() if self.get_current_styles().get("safe_area", False) else (0.0, 0.0, 0.0, 0.0)
+        self.calculate_root_layout(self.width, self.height, scale, *insets)
 
     @property
     def layout(self) -> Layout:
-        # Read-only - see ui/manager.py's resize(), which was updated to
-        # write self.root.width/height directly instead of through
-        # self.root.layout.width/height (a write through this property
-        # would silently mutate a throwaway Layout and have no effect).
+        # Read-only - see ui/manager.py's resize(), which writes
+        # self.root.width/height directly (a write through this would
+        # mutate a throwaway Layout and have no effect).
         return Layout(self.x, self.y, self.width, self.height)
-
-    @property
-    def children(self):
-        return _ChildrenView(self)

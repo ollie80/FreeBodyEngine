@@ -24,7 +24,6 @@ here.
 from FreeBodyEngine.core.service import Service
 from FreeBodyEngine import register_service_update, unregister_service_update, get_service
 from FreeBodyEngine.core.update import UpdatePhase
-from FreeBodyEngine.ui.element import ElementStates
 
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
@@ -111,6 +110,9 @@ class TerminalUIRenderer(Service):
         GPU scissor rect)."""
         layout = element._layout
         rect = _cell_rect(layout)
+
+        if not element.get_current_styles().get("visible", True):
+            return
 
         if scissor is not None and rect[2] > 0 and rect[3] > 0:
             sx, sy, sw, sh = scissor
@@ -255,7 +257,7 @@ class TerminalUIRenderer(Service):
 
     def _draw_text(self, element: 'UIElement', styles: dict, scissor: tuple):
         text = styles.get('text') or ''
-        show_cursor = styles.get('editable', False) and element.state == ElementStates.FOCUSED
+        show_cursor = styles.get('editable', False) and element.has_flag("focused")
         if not text and not show_cursor:
             return
 

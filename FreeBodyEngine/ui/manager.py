@@ -8,10 +8,8 @@ from FreeBodyEngine.core.service import Service
 # early, since this module loads as a side effect of `import
 # FreeBodyEngine` itself (via ui/__init__.py's own eager `from
 # FreeBodyEngine.ui.manager import UIManager`), before any project gets a
-# chance to call fb.set_flag(fb.NATIVE_UI, ...). ElementStates has no such
-# problem - it's a plain enum, identical and shared across both backends,
-# not something the flag chooses between.
-from FreeBodyEngine.ui.element import RootElement, UIElement, ElementStates
+# chance to call fb.set_flag(fb.NATIVE_UI, ...).
+from FreeBodyEngine.ui.element import RootElement, UIElement
 from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine import register_event_callback, unregister_event_callback, register_service_update, unregister_service_update, get_service
 from FreeBodyEngine.core.window import FRAMEBUFFER_RESIZE
@@ -58,7 +56,7 @@ class UIManager(Service):
     # roughly like a native scrollable list under a standard mouse wheel.
     SCROLL_SPEED = 40.0
 
-    def __init__(self, styles: dict[str, any] = {}):
+    def __init__(self, styles: dict[str, any] = None):
         """Args:
             styles: Root-level styles, sized to the current framebuffer.
         """
@@ -192,24 +190,100 @@ class UIManager(Service):
 
     # -- hit-testing / mouse -----------------------------------------------
 
-    def _hit_test(self, children: dict, point: Vector) -> UIElement:
+    @staticmethod
+    def _contains(rect: tuple, point: Vector) -> bool:
+        x, y, w, h = rect
+        return w > 0 and h > 0 and x <= point.x < x + w and y <= point.y < y + h
+
+    def _hit_test(self, children: dict, point: Vector, clip: tuple = None) -> UIElement:
         """Returns the most specific (deepest) element under `point`, or
         None. Siblings are checked topmost-first (later-added = drawn last
-        = on top, matching UIRenderer's draw order), and a matched
-        element's own children are always checked before falling back to
-        the element itself, so a button inside a row is hit before the row
-        is."""
+        = on top, matching UIRenderer's draw order), and an element's own
+        children are checked before the element itself, so a button inside
+        a row is hit before the row is.
+
+        `clip` is the (x, y, w, h) rect inherited from the nearest ancestor
+        whose overflow isn't "visible" - the same clip UIRenderer draws
+        with, so nothing it cut off (a row scrolled out of a list) can be
+        hovered or clicked. Children are searched whether or not the point
+        is inside their parent: an element can draw outside it (a dropdown
+        anchored below its button, or anything inside a zero-size layout
+        wrapper), and used to be unclickable there. A clipped subtree the
+        point is outside of is skipped whole, which is what keeps this
+        cheap on long scrolled lists."""
         for element in reversed(list(children.values())):
+            if not element.get_current_styles().get("visible", True):
+                continue
+
             layout = element._layout
-            if (
-                layout.width > 0 and layout.height > 0 and
-                layout.x <= point.x < layout.x + layout.width and
-                layout.y <= point.y < layout.y + layout.height
-            ):
-                child_hit = self._hit_test(element.children, point)
-                return child_hit if child_hit is not None else element
+            rect = (layout.x, layout.y, layout.width, layout.height)
+
+            child_clip = clip
+            if element.children and element.get_overflow() != "visible":
+                child_clip = self._intersect(clip, rect)
+
+            if element.children and (child_clip is None or self._contains(child_clip, point)):
+                child_hit = self._hit_test(element.children, point, child_clip)
+                if child_hit is not None:
+                    return child_hit
+
+            if self._contains(rect, point) and (clip is None or self._contains(clip, point)):
+                return element
 
         return None
+
+    @staticmethod
+    def _intersect(a: tuple, b: tuple) -> tuple:
+        if a is None:
+            return b
+        x = max(a[0], b[0])
+        y = max(a[1], b[1])
+        right = min(a[0] + a[2], b[0] + b[2])
+        bottom = min(a[1] + a[3], b[1] + b[3])
+        return (x, y, max(0, right - x), max(0, bottom - y))
+
+    def _is_attached(self, element) -> bool:
+        """True if `element` is still in this manager's tree and shown.
+        Removing an element (remove(), or a container's children.clear())
+        or hiding it or an ancestor ("visible": False) doesn't tell the
+        manager, which kept hovering, pressing and - for a focused text
+        field - typing into it."""
+        node = element
+        while node is not None and node is not self.root:
+            if not node.get_current_styles().get("visible", True):
+                return False
+            # `.parent`, not get_parent(): on the native backend a
+            # scrollbar thumb's get_parent() is the bare track Node, which
+            # has no `.children` - `.parent` wraps it (see
+            # _ScrollbarPartProxy).
+            parent = getattr(node, "parent", None)
+            if parent is None or not any(child is node or child == node for child in parent.children.values()):
+                return False
+            node = parent
+        return node is self.root
+
+    def _forget_detached(self):
+        """Drops every reference to an element no longer in the tree - see
+        _is_attached()."""
+        # Its flags cleared, so an element shown (or re-added) again later
+        # doesn't come back still looking hovered/pressed/focused.
+        if self._focused is not None and not self._is_attached(self._focused):
+            self._set_focus(None)
+        if self._hovered is not None and not self._is_attached(self._hovered):
+            self._hovered.set_flag("hover", False)
+            self._hovered = None
+        if self._pressed is not None and not self._is_attached(self._pressed):
+            self._pressed.set_flag("pressed", False)
+            self._pressed = None
+        if self._dragging_thumb is not None and not self._is_attached(self._dragging_thumb):
+            self._dragging_thumb = None
+        if self._gesture_element is not None and not self._is_attached(self._gesture_element):
+            self._gesture_element = None
+            self._gesture_event = None
+            self._gesture_origin = None
+        if self._touch_scroll_hit is not None and not self._is_attached(self._touch_scroll_hit):
+            self._touch_scroll_hit = None
+            self._touch_scroll_target = None
 
     def _claim_gesture(self, element: UIElement, horizontal: bool) -> tuple:
         """The nearest ancestor wanting to handle a drag on this axis.
@@ -234,7 +308,9 @@ class UIManager(Service):
         # three are delivered under suffixed names.
         probe = f"{wanted}_move"
         node = element
-        while node is not None:
+        # Stops at the root, the same way _find_scroll_target does - the
+        # pure-Python RootElement has no has_event().
+        while isinstance(node, self._UIElement):
             if node.has_event(probe):
                 return node, wanted
             node = node.get_parent()
@@ -274,8 +350,9 @@ class UIManager(Service):
             node = node.parent
         return None
 
-    def _hover_state(self) -> ElementStates:
-        """HOVER on a pointer device, NORMAL on a touch one.
+    def _shows_hover(self) -> bool:
+        """Whether entering an element sets its "hover" flag - on a pointer
+        device, not a touch one.
 
         A touchscreen has no hover: the pointer is simply wherever the
         last finger touched, and it stays there once the finger lifts. So
@@ -284,21 +361,19 @@ class UIManager(Service):
         trail of permanently highlighted buttons behind every tap, which
         on a list of rows reads as the app having lost track of what's
         selected."""
-        return ElementStates.NORMAL if get_platform() == "android" else ElementStates.HOVER
+        return get_platform() != "android"
 
     def _set_focus(self, element: UIElement):
         if element is self._focused:
             return
 
         if self._focused is not None:
-            self._focused.set_state(
-                self._hover_state() if self._focused is self._hovered else ElementStates.NORMAL
-            )
+            self._focused.set_flag("focused", False)
 
         self._focused = element
 
         if element is not None:
-            element.set_state(ElementStates.FOCUSED)
+            element.set_flag("focused", True)
             # Cursor starts at the end of whatever's already there, same
             # as clicking into a browser's address bar - not at the start,
             # which would put the very next character typed in the middle
@@ -306,6 +381,8 @@ class UIManager(Service):
             element._cursor_index = len(element.get_current_styles().get("text", ""))
 
     def _handle_mouse(self):
+        self._forget_detached()
+
         if not self.root.children:
             return
 
@@ -316,16 +393,18 @@ class UIManager(Service):
         #
         # Hover.
         #
+        # Hover, pressed and focused are separate flags (see ui/element.py's
+        # FLAGS docs), so each is just set and cleared on its own - an
+        # element can be focused and hovered and pressed at once.
         if hit is not self._hovered:
             if self._hovered is not None:
                 self._hovered._emit("hover_exit")
-                if self._hovered not in (self._pressed, self._focused):
-                    self._hovered.set_state(ElementStates.NORMAL)
+                self._hovered.set_flag("hover", False)
 
             if hit is not None:
                 hit._emit("hover_enter")
-                if hit not in (self._pressed, self._focused):
-                    hit.set_state(self._hover_state())
+                if self._shows_hover():
+                    hit.set_flag("hover", True)
 
             self._hovered = hit
 
@@ -359,7 +438,7 @@ class UIManager(Service):
             self._pressed = hit
 
             if hit is not None:
-                hit.set_state(ElementStates.CLICKED)
+                hit.set_flag("pressed", True)
                 hit._emit("press")
 
                 if hit.get_current_styles().get("editable", False):
@@ -549,12 +628,7 @@ class UIManager(Service):
                 if self._pressed is hit and not self._touch_scroll_engaged:
                     self._pressed._emit("click")
 
-                if self._pressed is self._focused:
-                    self._pressed.set_state(ElementStates.FOCUSED)
-                elif self._pressed is hit:
-                    self._pressed.set_state(self._hover_state())
-                else:
-                    self._pressed.set_state(ElementStates.NORMAL)
+                self._pressed.set_flag("pressed", False)
 
                 self._pressed = None
                 self._touch_scroll_engaged = False
@@ -573,6 +647,9 @@ class UIManager(Service):
     # -- keyboard / text input ----------------------------------------------
 
     def _on_key(self, key: Key):
+        if self._focused is not None and not self._is_attached(self._focused):
+            self._set_focus(None)
+
         if self._focused is None:
             return
 
@@ -663,4 +740,3 @@ class UIManager(Service):
         pasted = pasted.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
         field.set_style("text", text[:cursor] + pasted + text[cursor:])
         field._cursor_index = cursor + len(pasted)
-        field._cursor_index = cursor + 1

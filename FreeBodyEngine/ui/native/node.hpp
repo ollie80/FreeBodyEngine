@@ -62,9 +62,16 @@ public:
     void set_style(std::string name, pybind11::object value);
     pybind11::object get_style(std::string name);
     pybind11::dict get_current_styles();
+    // Drops the memoized get_current_styles() result - for a write that
+    // went straight into `styles` rather than through set_style() (see
+    // ui/element.py's StyleView, which calls this on every such write).
+    void invalidate_styles();
 
-    void set_state(std::string state);
-    std::string get_state();
+    // The style override tables ("hover", "pressed", "selected", an app's
+    // own flag...) that currently apply, lowest precedence first - worked
+    // out from the element's flags Python-side (ui/element.py's
+    // style_keys_for()) and handed here whenever they change.
+    void set_style_keys(std::vector<std::string> keys);
 
     void on(std::string event, pybind11::function callback);
     void off(std::string event, pybind11::function callback);
@@ -72,8 +79,27 @@ public:
     void emit(std::string event, pybind11::args args);
     bool has_event(std::string event);
 
-    void calculate_layout(double parent_x, double parent_y, double parent_w, double parent_h, double root_w, double root_h, double scale);
-    void calculate_root_layout(double width, double height, double scale);
+    // forced_w/forced_h replace the size this node's own styles would give
+    // it (negative means "not forced") - how a parent's flow layout applies
+    // "grow" and "align": "stretch". See layout_flow_children().
+    void calculate_layout(double parent_x, double parent_y, double parent_w, double parent_h, double root_w, double root_h, double scale, double forced_w, double forced_h);
+    // inset_* are the window's safe-area insets in pixels, added to the
+    // root's padding when its "safe_area" style is on (see
+    // ui/native_element.py's RootElement.calculate_layout).
+    void calculate_root_layout(double width, double height, double scale, double inset_top, double inset_right, double inset_bottom, double inset_left);
+
+    // Moves this node and its whole subtree - see layout_flow_children().
+    void translate(double dx, double dy);
+
+    // The "visible" style - a hidden node is skipped by layout, and by
+    // UIRenderer/UIManager's draw and hit-test walks.
+    bool is_visible();
+
+    // Sets the Python callable "auto" sizing measures a childless node's
+    // text with - element.py's measure_text(), (styles) -> (w, h) or None.
+    // Process-wide (every Node shares it); called on any instance once, by
+    // ui/native_element.py at import.
+    void set_text_measurer(pybind11::object measurer);
 
     std::shared_ptr<Node> hit_test(double px, double py);
 
@@ -104,6 +130,11 @@ public:
     double width = 0.0;
     double height = 0.0;
     pybind11::dict styles;
+    // The shared ui.Style layer underneath `styles` - the Style's own live
+    // merged dict, set by ui/native_element.py's `style` property. See
+    // element.py's UIElement.style for the precedence get_current_styles()
+    // applies between the two.
+    pybind11::dict _base_styles;
 
     double _scroll_offset = 0.0;
     double _scroll_max = 0.0;
@@ -127,7 +158,7 @@ private:
     Node* parent_ = nullptr;
     pybind11::dict default_styles_;
     pybind11::object styles_cache_ = pybind11::none();
-    std::string state_ = "normal";
+    std::vector<std::string> style_keys_ = {"normal"};
     std::unordered_map<std::string, std::vector<pybind11::function>> event_callbacks_;
 
     Node* scrollbar_owner_ = nullptr;
@@ -136,8 +167,11 @@ private:
 
     bool has_own_style(const std::string& key);
     double measure_flow_extent(double content_w, double content_h, double root_w, double root_h, double scale, const std::string& layout_dir, double gap);
+    double measure_cross_extent(double content_w, double content_h, double root_w, double root_h, double scale, const std::string& axis);
+    double measure_size(bool width_axis, double parent_w, double parent_h, double root_w, double root_h, double scale);
+    bool has_flow_children();
     void apply_anchor(const std::string& parent_anchor, const std::string& anchor, double container_x, double container_y, double container_w, double container_h, double offset_x, double offset_y);
-    void layout_flow_children(double content_x, double content_y, double content_w, double content_h, double root_w, double root_h, double scale, const std::string& layout_dir, double gap);
+    void layout_flow_children(pybind11::dict& container_styles, double flow_x, double flow_y, double anchor_x, double anchor_y, double content_w, double content_h, double root_w, double root_h, double scale, const std::string& layout_dir, double gap);
     void update_scrollbar(pybind11::dict& current_styles, const std::string& overflow, const std::string& layout_dir, double content_x, double content_y, double content_w, double content_h, double scale);
 };
 
@@ -212,12 +246,37 @@ inline std::string style_str(pybind11::dict& styles, const char* key, const std:
     return fallback;
 }
 
+// `key`'s value if it's one of `valid`, else "start" - element.py's
+// _choice(), minus the warning (no logger binding on this side yet).
+inline std::string style_choice(pybind11::dict& styles, const char* key, const std::vector<std::string>& valid) {
+    std::string value = style_str(styles, key, "start");
+    return std::find(valid.begin(), valid.end(), value) != valid.end() ? value : std::string("start");
+}
+
+inline double style_number(pybind11::dict& styles, const char* key, double fallback) {
+    pybind11::str k(key);
+    if (styles.contains(k)) {
+        pybind11::object value = styles[k];
+        if (pybind11::isinstance<pybind11::int_>(value) || pybind11::isinstance<pybind11::float_>(value)) {
+            return value.cast<double>();
+        }
+    }
+    return fallback;
+}
+
 inline double style_size(pybind11::dict& styles, const char* key, double fallback_px, double parent_w, double parent_h, double root_w, double root_h, double scale) {
     pybind11::str k(key);
     if (styles.contains(k)) {
         return parse_size(styles[k], parent_w, parent_h, root_w, root_h, scale);
     }
     return fallback_px * scale;
+}
+
+// Never destroyed: a pybind11::object destructed after the interpreter has
+// shut down (a plain static would be) crashes on exit.
+inline pybind11::object& text_measurer_slot() {
+    static pybind11::object* slot = new pybind11::object();
+    return *slot;
 }
 
 inline std::shared_ptr<Node> hit_test_search(const std::vector<std::shared_ptr<Node>>& siblings, double px, double py) {
@@ -269,6 +328,10 @@ inline void Node::set_style(std::string name, pybind11::object value) {
     styles_cache_ = pybind11::none();
 }
 
+inline void Node::invalidate_styles() {
+    styles_cache_ = pybind11::none();
+}
+
 inline pybind11::object Node::get_style(std::string name) {
     pybind11::str key(name);
     if (styles.contains(key)) {
@@ -284,8 +347,8 @@ inline pybind11::dict Node::get_current_styles() {
     // (calculate_layout, measure_flow_extent for an auto-sized parent,
     // plus whatever the still-Python UIManager/UIRenderer call it for),
     // so rebuilding the merged dict from scratch every time is real,
-    // avoidable work. Invalidated by the only two things that can change
-    // its result - set_style() and set_state() - same as the original.
+    // avoidable work. Invalidated by everything that can change its
+    // result - set_style(), set_style_keys(), invalidate_styles().
     if (!styles_cache_.is_none()) {
         return styles_cache_.cast<pybind11::dict>();
     }
@@ -294,16 +357,23 @@ inline pybind11::dict Node::get_current_styles() {
     for (auto item : default_styles_) {
         current[item.first] = item.second;
     }
+    for (auto item : _base_styles) {
+        current[item.first] = item.second;
+    }
     for (auto item : styles) {
         current[item.first] = item.second;
     }
 
-    pybind11::str state_key(state_);
-    if (styles.contains(state_key)) {
-        pybind11::object override_obj = styles[state_key];
-        if (pybind11::isinstance<pybind11::dict>(override_obj)) {
-            for (auto item : override_obj.cast<pybind11::dict>()) {
-                current[item.first] = item.second;
+    for (const auto& name : style_keys_) {
+        pybind11::str state_key(name);
+        for (pybind11::dict* layer : {&_base_styles, &styles}) {
+            if (layer->contains(state_key)) {
+                pybind11::object override_obj = (*layer)[state_key];
+                if (pybind11::isinstance<pybind11::dict>(override_obj)) {
+                    for (auto item : override_obj.cast<pybind11::dict>()) {
+                        current[item.first] = item.second;
+                    }
+                }
             }
         }
     }
@@ -312,16 +382,12 @@ inline pybind11::dict Node::get_current_styles() {
     return current;
 }
 
-inline void Node::set_state(std::string state) {
-    if (state == state_) {
+inline void Node::set_style_keys(std::vector<std::string> keys) {
+    if (keys == style_keys_) {
         return;
     }
-    state_ = std::move(state);
+    style_keys_ = std::move(keys);
     styles_cache_ = pybind11::none();
-}
-
-inline std::string Node::get_state() {
-    return state_;
 }
 
 inline void Node::on(std::string event, pybind11::function callback) {
@@ -371,14 +437,18 @@ inline bool Node::has_event(std::string event) {
 
 inline bool Node::has_own_style(const std::string& key) {
     pybind11::str k(key);
-    if (styles.contains(k)) {
-        return true;
-    }
-    pybind11::str state_key(state_);
-    if (styles.contains(state_key)) {
-        pybind11::object override_obj = styles[state_key];
-        if (pybind11::isinstance<pybind11::dict>(override_obj) && override_obj.cast<pybind11::dict>().contains(k)) {
+    for (pybind11::dict* layer : {&styles, &_base_styles}) {
+        if (layer->contains(k)) {
             return true;
+        }
+        for (const auto& name : style_keys_) {
+            pybind11::str state_key(name);
+            if (layer->contains(state_key)) {
+                pybind11::object override_obj = (*layer)[state_key];
+                if (pybind11::isinstance<pybind11::dict>(override_obj) && override_obj.cast<pybind11::dict>().contains(k)) {
+                    return true;
+                }
+            }
         }
     }
     return false;
@@ -412,28 +482,13 @@ inline double Node::measure_flow_extent(double content_w, double content_h, doub
             continue;
         }
         bool child_anchored = child->has_own_style("anchor") || child->has_own_style("parent_anchor");
-        if (child_anchored) {
+        if (child_anchored || !child->is_visible()) {
             continue;
         }
 
-        pybind11::dict child_styles = child->get_current_styles();
-        const char* size_key = layout_dir == "vertical" ? "height" : "width";
-        pybind11::str key(size_key);
-        pybind11::object size_style = child_styles.contains(key) ? child_styles[key] : pybind11::cast(std::string("0"));
-
-        double extent;
-        std::string size_str = pybind11::isinstance<pybind11::str>(size_style) ? size_style.cast<std::string>() : std::string();
-        if (size_str == "auto") {
-            // Falls back to the child's own size from the *last* full
-            // layout pass, same reasoning as element.py's own comment on
-            // this exact line: this measurement runs before this
-            // element's children are laid out for the current frame, so
-            // "last frame's value" is one frame stale at worst and
-            // self-corrects every frame after.
-            extent = layout_dir == "vertical" ? child->height : child->width;
-        } else {
-            extent = parse_size(size_style, content_w, content_h, root_w, root_h, scale);
-        }
+        // Measured without laying it out - see measure_size(). An "auto"
+        // child used to be given last frame's size here instead.
+        double extent = child->measure_size(layout_dir != "vertical", content_w, content_h, root_w, root_h, scale);
 
         if (seen_first) {
             total_extent += gap;
@@ -443,6 +498,102 @@ inline double Node::measure_flow_extent(double content_w, double content_h, doub
     }
 
     return total_extent;
+}
+
+inline double Node::measure_cross_extent(double content_w, double content_h, double root_w, double root_h, double scale, const std::string& axis) {
+    // element.py's _measure_cross_extent: the largest flow child along
+    // `axis`, for "auto" on the axis a layout doesn't stack along. This
+    // backend used to have no cross-axis "auto" at all.
+    double largest = 0.0;
+
+    for (auto& child : children_) {
+        if (child->_is_scrollbar_part || child->has_own_style("anchor") || child->has_own_style("parent_anchor") || !child->is_visible()) {
+            continue;
+        }
+        largest = std::max(largest, child->measure_size(axis != "vertical", content_w, content_h, root_w, root_h, scale));
+    }
+
+    return largest;
+}
+
+inline double Node::measure_size(bool width_axis, double parent_w, double parent_h, double root_w, double root_h, double scale) {
+    // element.py's _measure_size(): this node's size along one axis
+    // without laying it out - its own size style, or for "auto" what it
+    // would fit (its children, measured the same way, or its text).
+    pybind11::dict current = get_current_styles();
+    pybind11::str key(width_axis ? "width" : "height");
+    pybind11::object value = current.contains(key) ? current[key] : pybind11::cast(0);
+    bool is_auto = pybind11::isinstance<pybind11::str>(value) && value.cast<std::string>() == "auto";
+    if (!is_auto) {
+        return parse_size(value, parent_w, parent_h, root_w, root_h, scale);
+    }
+
+    double pad = style_size(current, "padding", 0.0, parent_w, parent_h, root_w, root_h, scale);
+    double padding = width_axis
+        ? style_size(current, "padding_left", pad / scale, parent_w, parent_h, root_w, root_h, scale)
+          + style_size(current, "padding_right", pad / scale, parent_w, parent_h, root_w, root_h, scale)
+        : style_size(current, "padding_top", pad / scale, parent_w, parent_h, root_w, root_h, scale)
+          + style_size(current, "padding_bottom", pad / scale, parent_w, parent_h, root_w, root_h, scale);
+
+    if (!has_flow_children()) {
+        pybind11::object& measurer = text_measurer_slot();
+        if (measurer.ptr() != nullptr && !measurer.is_none()) {
+            pybind11::object measured = measurer(current);
+            if (!measured.is_none()) {
+                pybind11::tuple text_size = measured.cast<pybind11::tuple>();
+                return text_size[width_axis ? 0 : 1].cast<double>() + padding;
+            }
+        }
+        return padding;
+    }
+
+    // An "auto" node's content box isn't known yet - the same zero-sized
+    // box calculate_layout() measures its children against.
+    std::string layout_dir = style_str(current, "layout", "vertical");
+    bool along = width_axis == (layout_dir == "horizontal");
+    double gap = style_size(current, "gap", 0.0, 0.0, 0.0, root_w, root_h, scale);
+    double total = 0.0, largest = 0.0;
+    bool seen_first = false;
+    for (auto& child : children_) {
+        if (child->_is_scrollbar_part || child->has_own_style("anchor") || child->has_own_style("parent_anchor") || !child->is_visible()) {
+            continue;
+        }
+        double size = child->measure_size(width_axis, 0.0, 0.0, root_w, root_h, scale);
+        total += (seen_first ? gap : 0.0) + size;
+        largest = std::max(largest, size);
+        seen_first = true;
+    }
+    return (along ? total : largest) + padding;
+}
+
+inline void Node::set_text_measurer(pybind11::object measurer) {
+    text_measurer_slot() = std::move(measurer);
+}
+
+inline bool Node::has_flow_children() {
+    for (auto& child : children_) {
+        if (!child->_is_scrollbar_part && !child->has_own_style("anchor") && !child->has_own_style("parent_anchor") && child->is_visible()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool Node::is_visible() {
+    pybind11::dict current = get_current_styles();
+    pybind11::str key("visible");
+    return !current.contains(key) || pybind11::bool_(current[key]).cast<bool>();
+}
+
+inline void Node::translate(double dx, double dy) {
+    if (dx == 0.0 && dy == 0.0) {
+        return;
+    }
+    x += dx;
+    y += dy;
+    for (auto& child : children_) {
+        child->translate(dx, dy);
+    }
 }
 
 inline void Node::apply_anchor(const std::string& parent_anchor, const std::string& anchor, double container_x, double container_y, double container_w, double container_h, double offset_x, double offset_y) {
@@ -473,32 +624,134 @@ inline void Node::apply_anchor(const std::string& parent_anchor, const std::stri
     y = origin_y - ((1 - anchor_y) / 2.0) * height + offset_y;
 }
 
-inline void Node::layout_flow_children(double content_x, double content_y, double content_w, double content_h, double root_w, double root_h, double scale, const std::string& layout_dir, double gap) {
-    double child_offset_x = content_x;
-    double child_offset_y = content_y;
+inline void Node::layout_flow_children(pybind11::dict& container_styles, double flow_x, double flow_y, double anchor_x, double anchor_y, double content_w, double content_h, double root_w, double root_h, double scale, const std::string& layout_dir, double gap) {
+    // A port of element.py's layout_flow() - see its docstring for what
+    // grow/justify/align do. Anchored children are placed against the
+    // content box (anchor_x/anchor_y - not moved by scrolling); flow
+    // children start at flow_x/flow_y (the content box, moved by any
+    // scroll offset).
+    static const std::vector<std::string> valid_justify = {"start", "center", "end", "space_between"};
+    static const std::vector<std::string> valid_align = {"start", "center", "end", "stretch"};
+
+    bool vertical = layout_dir != "horizontal";
+    std::string justify = style_choice(container_styles, "justify", valid_justify);
+    std::string align = style_choice(container_styles, "align", valid_align);
+
+    std::vector<std::shared_ptr<Node>> flow;
+    std::vector<double> grows;
+    std::vector<std::string> aligns;
 
     for (auto& child : children_) {
         if (child->_is_scrollbar_part) {
             continue;
         }
-
-        bool child_anchored = child->has_own_style("anchor") || child->has_own_style("parent_anchor");
-        if (child_anchored) {
-            child->calculate_layout(content_x, content_y, content_w, content_h, root_w, root_h, scale);
+        if (!child->is_visible()) {
+            child->x = child->y = child->width = child->height = 0.0;
             continue;
         }
 
-        child->calculate_layout(child_offset_x, child_offset_y, content_w, content_h, root_w, root_h, scale);
-
-        if (layout_dir == "vertical") {
-            child_offset_y += child->height + gap;
-        } else if (layout_dir == "horizontal") {
-            child_offset_x += child->width + gap;
+        bool child_anchored = child->has_own_style("anchor") || child->has_own_style("parent_anchor");
+        if (child_anchored) {
+            child->calculate_layout(anchor_x, anchor_y, content_w, content_h, root_w, root_h, scale, -1.0, -1.0);
+            continue;
         }
+
+        pybind11::dict child_styles = child->get_current_styles();
+        flow.push_back(child);
+        grows.push_back(std::max(0.0, style_number(child_styles, "grow", 0.0)));
+        std::string own_align = style_str(child_styles, "align_self", "auto");
+        if (own_align == "auto" || own_align == "None") {
+            aligns.push_back(align);
+        } else {
+            aligns.push_back(std::find(valid_align.begin(), valid_align.end(), own_align) != valid_align.end() ? own_align : std::string("start"));
+        }
+    }
+
+    if (flow.empty()) {
+        return;
+    }
+
+    bool simple = justify == "start";
+    for (size_t i = 0; i < flow.size() && simple; ++i) {
+        simple = grows[i] == 0.0 && aligns[i] == "start";
+    }
+
+    if (simple) {
+        double offset = vertical ? flow_y : flow_x;
+        for (auto& child : flow) {
+            if (vertical) {
+                child->calculate_layout(flow_x, offset, content_w, content_h, root_w, root_h, scale, -1.0, -1.0);
+                offset += child->height + gap;
+            } else {
+                child->calculate_layout(offset, flow_y, content_w, content_h, root_w, root_h, scale, -1.0, -1.0);
+                offset += child->width + gap;
+            }
+        }
+        return;
+    }
+
+    const char* main_key = vertical ? "height" : "width";
+    const char* cross_key = vertical ? "width" : "height";
+    double main_extent = vertical ? content_h : content_w;
+    double cross_extent = vertical ? content_w : content_h;
+
+    auto main_of = [&](const std::shared_ptr<Node>& child) { return vertical ? child->height : child->width; };
+    auto cross_of = [&](const std::shared_ptr<Node>& child) { return vertical ? child->width : child->height; };
+
+    auto lay_out = [&](const std::shared_ptr<Node>& child, double main_size, const std::string& child_align) {
+        double cross_size = (child_align == "stretch" && !child->has_own_style(cross_key)) ? cross_extent : -1.0;
+        double forced_w = vertical ? cross_size : main_size;
+        double forced_h = vertical ? main_size : cross_size;
+        child->calculate_layout(flow_x, flow_y, content_w, content_h, root_w, root_h, scale, forced_w, forced_h);
+    };
+
+    double used = gap * static_cast<double>(flow.size() - 1);
+    std::vector<double> bases(flow.size(), 0.0);
+    double total_grow = 0.0;
+
+    for (size_t i = 0; i < flow.size(); ++i) {
+        if (grows[i] > 0.0) {
+            // Its own size along the layout direction is where it grows
+            // from (for "auto", what it would fit).
+            bases[i] = flow[i]->measure_size(!vertical, content_w, content_h, root_w, root_h, scale);
+            used += bases[i];
+            total_grow += grows[i];
+        } else {
+            lay_out(flow[i], -1.0, aligns[i]);
+            used += main_of(flow[i]);
+        }
+    }
+
+    double leftover = main_extent - used;
+    for (size_t i = 0; i < flow.size(); ++i) {
+        if (grows[i] > 0.0) {
+            lay_out(flow[i], bases[i] + std::max(0.0, leftover) * grows[i] / total_grow, aligns[i]);
+        }
+    }
+
+    double free_space = total_grow == 0.0 ? std::max(0.0, leftover) : 0.0;
+    double position = 0.0, between = 0.0;
+    if (justify == "center") {
+        position = free_space / 2.0;
+    } else if (justify == "end") {
+        position = free_space;
+    } else if (justify == "space_between" && flow.size() > 1) {
+        between = free_space / static_cast<double>(flow.size() - 1);
+    }
+
+    for (size_t i = 0; i < flow.size(); ++i) {
+        double spare = cross_extent - cross_of(flow[i]);
+        double cross = aligns[i] == "center" ? spare / 2.0 : aligns[i] == "end" ? spare : 0.0;
+        if (vertical) {
+            flow[i]->translate(cross, position);
+        } else {
+            flow[i]->translate(position, cross);
+        }
+        position += main_of(flow[i]) + gap + between;
     }
 }
 
-inline void Node::calculate_layout(double parent_x, double parent_y, double parent_w, double parent_h, double root_w, double root_h, double scale) {
+inline void Node::calculate_layout(double parent_x, double parent_y, double parent_w, double parent_h, double root_w, double root_h, double scale, double forced_w, double forced_h) {
     pybind11::dict current = get_current_styles();
 
     std::string layout_dir = style_str(current, "layout", "vertical");
@@ -507,11 +760,19 @@ inline void Node::calculate_layout(double parent_x, double parent_y, double pare
     pybind11::object width_style = current.contains(width_key) ? current[width_key] : pybind11::cast(std::string("0"));
     pybind11::object height_style = current.contains(height_key) ? current[height_key] : pybind11::cast(std::string("0"));
 
-    bool auto_width = pybind11::isinstance<pybind11::str>(width_style) && width_style.cast<std::string>() == "auto";
-    bool auto_height = pybind11::isinstance<pybind11::str>(height_style) && height_style.cast<std::string>() == "auto";
+    bool auto_width = forced_w < 0.0 && pybind11::isinstance<pybind11::str>(width_style) && width_style.cast<std::string>() == "auto";
+    bool auto_height = forced_h < 0.0 && pybind11::isinstance<pybind11::str>(height_style) && height_style.cast<std::string>() == "auto";
 
-    width = auto_width ? 0.0 : parse_size(width_style, parent_w, parent_h, root_w, root_h, scale);
-    height = auto_height ? 0.0 : parse_size(height_style, parent_w, parent_h, root_w, root_h, scale);
+    if (forced_w >= 0.0) {
+        width = forced_w;
+    } else {
+        width = auto_width ? 0.0 : parse_size(width_style, parent_w, parent_h, root_w, root_h, scale);
+    }
+    if (forced_h >= 0.0) {
+        height = forced_h;
+    } else {
+        height = auto_height ? 0.0 : parse_size(height_style, parent_w, parent_h, root_w, root_h, scale);
+    }
 
     double pad = style_size(current, "padding", 0.0, parent_w, parent_h, root_w, root_h, scale);
     double pad_left = style_size(current, "padding_left", pad / scale, parent_w, parent_h, root_w, root_h, scale);
@@ -532,6 +793,35 @@ inline void Node::calculate_layout(double parent_x, double parent_y, double pare
             width = measured + pad_left + pad_right;
             content_w = std::max(0.0, width - pad_left - pad_right);
         }
+
+        // "auto" on the cross axis fits the tallest/widest child, as in
+        // element.py.
+        if (auto_height && layout_dir != "vertical") {
+            height = measure_cross_extent(content_w, content_h, root_w, root_h, scale, "vertical") + pad_top + pad_bottom;
+            content_h = std::max(0.0, height - pad_top - pad_bottom);
+        }
+        if (auto_width && layout_dir == "vertical") {
+            width = measure_cross_extent(content_w, content_h, root_w, root_h, scale, "horizontal") + pad_left + pad_right;
+            content_w = std::max(0.0, width - pad_left - pad_right);
+        }
+
+        // No children to fit - fit the node's own text instead (see
+        // element.py's measure_text()).
+        pybind11::object& measurer = text_measurer_slot();
+        if (measurer.ptr() != nullptr && !measurer.is_none() && !has_flow_children()) {
+            pybind11::object measured = measurer(current);
+            if (!measured.is_none()) {
+                pybind11::tuple text_size = measured.cast<pybind11::tuple>();
+                if (auto_width) {
+                    width = text_size[0].cast<double>() + pad_left + pad_right;
+                    content_w = std::max(0.0, width - pad_left - pad_right);
+                }
+                if (auto_height) {
+                    height = text_size[1].cast<double>() + pad_top + pad_bottom;
+                    content_h = std::max(0.0, height - pad_top - pad_bottom);
+                }
+            }
+        }
     }
 
     x = parent_x;
@@ -539,19 +829,23 @@ inline void Node::calculate_layout(double parent_x, double parent_y, double pare
 
     bool anchored = has_own_style("anchor") || has_own_style("parent_anchor");
 
-    // Raw pixel offsets, deliberately not run through parse_size/
-    // style_size (which would treat "x"/"y" as parseable sizes,
-    // percentages included) - element.py only ever treats "x"/"y" as a
-    // plain number of pixels multiplied by content_scale directly.
-    pybind11::str x_key("x"), y_key("y");
-    double raw_x = current.contains(x_key) && !pybind11::isinstance<pybind11::str>(current[x_key]) ? current[x_key].cast<double>() : 0.0;
-    double raw_y = current.contains(y_key) && !pybind11::isinstance<pybind11::str>(current[y_key]) ? current[y_key].cast<double>() : 0.0;
-    double x_offset = raw_x * scale;
-    double y_offset = raw_y * scale;
+    // Same units as a size ("10w" is 10% of the parent's width), matching
+    // element.py - a string here used to be silently treated as 0.
+    double x_offset = style_size(current, "x", 0.0, parent_w, parent_h, root_w, root_h, scale);
+    double y_offset = style_size(current, "y", 0.0, parent_w, parent_h, root_w, root_h, scale);
 
     if (anchored) {
+        // Setting only one of the two uses it for both - see element.py's
+        // _resolve_anchors().
+        bool own_parent = has_own_style("parent_anchor");
+        bool own_anchor = has_own_style("anchor");
         std::string parent_anchor = style_str(current, "parent_anchor", "center");
-        std::string anchor = style_str(current, "anchor", "bottom_left");
+        std::string anchor = style_str(current, "anchor", "center");
+        if (own_parent && !own_anchor) {
+            anchor = parent_anchor;
+        } else if (own_anchor && !own_parent) {
+            parent_anchor = anchor;
+        }
         apply_anchor(parent_anchor, anchor, parent_x, parent_y, parent_w, parent_h, x_offset, y_offset);
     } else {
         x += x_offset;
@@ -560,6 +854,11 @@ inline void Node::calculate_layout(double parent_x, double parent_y, double pare
 
     double content_x = x + pad_left;
     double content_y = y + pad_top;
+    // Where flow children start - the content box moved by any scroll
+    // offset. Anchored children and the scrollbar use the unmoved box:
+    // both used to be given this one, so they scrolled with the content.
+    double flow_x = content_x;
+    double flow_y = content_y;
 
     std::string overflow = get_overflow(current);
     _scroll_dir = layout_dir;
@@ -574,9 +873,9 @@ inline void Node::calculate_layout(double parent_x, double parent_y, double pare
         _scroll_content_extent = measured_extent;
 
         if (layout_dir == "vertical") {
-            content_y -= _scroll_offset;
+            flow_y -= _scroll_offset;
         } else {
-            content_x -= _scroll_offset;
+            flow_x -= _scroll_offset;
         }
     } else {
         _scroll_offset = 0.0;
@@ -585,7 +884,7 @@ inline void Node::calculate_layout(double parent_x, double parent_y, double pare
         _scroll_content_extent = _scroll_viewport_extent;
     }
 
-    layout_flow_children(content_x, content_y, content_w, content_h, root_w, root_h, scale, layout_dir, gap);
+    layout_flow_children(current, flow_x, flow_y, content_x, content_y, content_w, content_h, root_w, root_h, scale, layout_dir, gap);
 
     if (overflow == "scroll" || overflow == "auto") {
         update_scrollbar(current, overflow, layout_dir, content_x, content_y, content_w, content_h, scale);
@@ -599,7 +898,7 @@ inline void Node::calculate_layout(double parent_x, double parent_y, double pare
     }
 }
 
-inline void Node::calculate_root_layout(double win_width, double win_height, double scale) {
+inline void Node::calculate_root_layout(double win_width, double win_height, double scale, double inset_top, double inset_right, double inset_bottom, double inset_left) {
     // The root panel's own size is always exactly the window size, never
     // read from styles - see the old RootElement.calculate_layout, which
     // never calls _parse_size for its own width/height either.
@@ -618,12 +917,17 @@ inline void Node::calculate_root_layout(double win_width, double win_height, dou
     double pad_bottom = style_size(current, "padding_bottom", pad / scale, win_width, win_height, win_width, win_height, scale);
     double gap = style_size(current, "gap", 0.0, win_width, win_height, win_width, win_height, scale);
 
+    pad_top += inset_top;
+    pad_right += inset_right;
+    pad_bottom += inset_bottom;
+    pad_left += inset_left;
+
     double content_x = pad_left;
     double content_y = pad_top;
     double content_w = std::max(0.0, win_width - pad_left - pad_right);
     double content_h = std::max(0.0, win_height - pad_top - pad_bottom);
 
-    layout_flow_children(content_x, content_y, content_w, content_h, win_width, win_height, scale, layout_dir, gap);
+    layout_flow_children(current, content_x, content_y, content_x, content_y, content_w, content_h, win_width, win_height, scale, layout_dir, gap);
 }
 
 inline std::shared_ptr<Node> Node::hit_test(double px, double py) {

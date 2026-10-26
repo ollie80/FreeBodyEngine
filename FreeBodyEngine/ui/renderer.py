@@ -6,7 +6,6 @@ from FreeBodyEngine.math import Transform, Vector
 from FreeBodyEngine.core.camera import Camera, CAMERA_PROJECTION
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.core.files import load_file
-from FreeBodyEngine.ui.element import ElementStates
 from FreeBodyEngine.graphics.material import BlendMode
 from FreeBodyEngine.graphics.framebuffer import AttachmentType, AttachmentFormat
 import numpy as np
@@ -449,6 +448,22 @@ class UIRenderer(Service):
         for child in element.children.values():
             self._invalidate_subtree(child)
 
+    def _forget_subtree(self, element: 'UIElement'):
+        """_invalidate_subtree() for a hidden element: also dirties each
+        node's last drawn rect on the way down, since nothing will be drawn
+        over it. A subtree that stays hidden is skipped after the first
+        frame: once forgotten, the whole subtree below has no rects left,
+        and anything added under it since has never been drawn."""
+        prev_rect = getattr(element, '_ui_prev_rect', None)
+        if prev_rect is None and getattr(element, '_ui_prev_signature', None) is None:
+            return
+        if prev_rect is not None:
+            self._mark_dirty(prev_rect)
+        element._ui_prev_signature = None
+        element._ui_prev_rect = None
+        for child in element.children.values():
+            self._forget_subtree(child)
+
     def _compute_dirty_rect(self, element: 'UIElement', scissor: tuple):
         """The diff half of draw()'s damage-tracking scheme: walks the
         tree the same way _draw_element does (same cull, same
@@ -473,6 +488,16 @@ class UIRenderer(Service):
         didn't actually change."""
         layout = element._layout
         rect = (layout.x, layout.y, layout.width, layout.height)
+        styles = element.get_current_styles()
+
+        if not styles.get('visible', True):
+            # Hidden - like being culled below, except its children may
+            # have drawn outside its own rect (layout no longer moves
+            # them, so their last rects are exactly where their pixels
+            # still are). Each one's old rect is dirtied so the redraw
+            # wipes it.
+            self._forget_subtree(element)
+            return
 
         if scissor is not None and layout.width > 0 and layout.height > 0 and self._rect_outside(rect, scissor):
             # Culled - the redraw pass (_draw_element) will skip this
@@ -508,8 +533,7 @@ class UIRenderer(Service):
             self._invalidate_subtree(element)
             return
 
-        styles = element.get_current_styles()
-        show_cursor = styles.get('editable', False) and element.state == ElementStates.FOCUSED
+        show_cursor = styles.get('editable', False) and element.has_flag('focused')
         blink_phase = (int(get_time() * 2) % 2) if show_cursor else None
 
         signature = (
@@ -606,6 +630,10 @@ class UIRenderer(Service):
         layout = element._layout
         rect = (layout.x, layout.y, layout.width, layout.height)
 
+        styles = element.get_current_styles()
+        if not styles.get('visible', True):
+            return
+
         if layout.width > 0 and layout.height > 0:
             if scissor is not None and self._rect_outside(rect, scissor):
                 return
@@ -619,8 +647,6 @@ class UIRenderer(Service):
                 return
 
         self._apply_scissor(scissor)
-
-        styles = element.get_current_styles()
 
         self._draw_background(element, styles)
 
@@ -641,7 +667,7 @@ class UIRenderer(Service):
         # background flushes any pending text first) - so which one gets
         # flushed first here, or at the end of draw()/on a scissor change,
         # never actually matters for paint order.
-        show_cursor = styles.get('editable', False) and element.state == ElementStates.FOCUSED
+        show_cursor = styles.get('editable', False) and element.has_flag('focused')
         if styles.get('font') is not None and (styles.get('text') or show_cursor):
             self._flush_instances()
 
@@ -845,7 +871,7 @@ class UIRenderer(Service):
         # most common case) - so this can't bail out just because `text`
         # is empty the way it used to; only a missing font (nothing at all
         # could be drawn) or "neither text nor a cursor to draw" bails.
-        show_cursor = styles.get('editable', False) and element.state == ElementStates.FOCUSED
+        show_cursor = styles.get('editable', False) and element.has_flag('focused')
         if font_path is None or (not text and not show_cursor):
             return
 
