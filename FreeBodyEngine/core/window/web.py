@@ -25,7 +25,7 @@ from pyodide.ffi import create_proxy, create_once_callable
 
 from FreeBodyEngine.core.window.generic import Window, Cursor
 from FreeBodyEngine.core.mouse import Mouse
-from FreeBodyEngine.core.input import Key, KeyCallbackType
+from FreeBodyEngine.core.input import Key, KeyCallbackType, GamepadButton, GamepadAxis
 from FreeBodyEngine.math import Vector
 from FreeBodyEngine import get_service, warning
 from typing import TYPE_CHECKING
@@ -304,8 +304,11 @@ class WebWindow(Window):
 
     def _get_gamepad_state(self, id: int):
         """Not yet implemented - the Gamepad API needs an explicit poll
-        (`navigator.getGamepads()`) this backend doesn't hook up yet."""
-        return None
+        (`navigator.getGamepads()`) this backend doesn't hook up yet. Until
+        then, reports what GLFWWindow does for an unplugged pad: every
+        button and axis at 0.0. Returning None instead made Input.update()
+        raise on every frame for any action bound to a gamepad input."""
+        return {button: 0.0 for button in GamepadButton} | {axis: 0.0 for axis in GamepadAxis}
 
     def _create_cursor(self, image: 'Image'):
         """Not yet implemented - a custom CSS cursor would be built from a

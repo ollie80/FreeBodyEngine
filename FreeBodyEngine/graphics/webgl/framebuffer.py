@@ -49,6 +49,9 @@ class WebGL2Framebuffer(Framebuffer):
         self._attachments = attachments.copy()
         self.depth_texture_name = None
         self.depth_renderbuffer = None
+        # One extra FBO per draw-buffer set set_draw_buffers() has been
+        # asked for, holding only those attachments - see its docstring.
+        self._subset_fbos = {}
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, self.fbo)
         self._create_attachments(attachments)
@@ -165,16 +168,22 @@ class WebGL2Framebuffer(Framebuffer):
             raise RuntimeError(f"Framebuffer incomplete: status {status}")
 
     def clear_color_attachment(self, name: str, value=(0.0, 0.0, 0.0, 0.0)):
-        """See GLFramebuffer.clear_color_attachment() - `clearBufferfv`
-        targets one draw-buffer index at a time, same as desktop GL."""
+        """See GLFramebuffer.clear_color_attachment(). Cleared through the
+        single-attachment FBO from _subset_fbo(), so it is cleared whatever
+        set_draw_buffers() last selected - `clearBufferfv` silently skips a
+        draw buffer that is NONE in the bound FBO. The previous binding is
+        restored."""
         gl = self.gl
         if name not in self.attachments:
             raise ValueError(f"No attachment named '{name}'")
         if self._attachments[name][0] != AttachmentType.COLOR:
             raise ValueError(f"Attachment '{name}' is not a color attachment")
 
+        previous = gl.getParameter(gl.DRAW_FRAMEBUFFER_BINDING)
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, self._subset_fbo((name,)))
         draw_buffer_index = self.attachments[name] - gl.COLOR_ATTACHMENT0
         gl.clearBufferfv(gl.COLOR, draw_buffer_index, to_typed_array(np.array(value, dtype=np.float32)))
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, previous)
 
     def draw(self, attachment, size: tuple[int, int] = None):
         """Blits a named color attachment to the currently bound
@@ -213,19 +222,27 @@ class WebGL2Framebuffer(Framebuffer):
         if att_type != AttachmentType.COLOR:
             raise ValueError(f"Attachment '{attachment_name}' is not a color attachment")
 
-        _internal, fmt, _typ = self._FORMAT_INFO[att_format]
+        _internal, fmt, typ = self._FORMAT_INFO[att_format]
         channels = {gl.RED: 1, gl.RG: 2, gl.RGB: 3, gl.RGBA: 4}[fmt]
 
         gl.bindFramebuffer(gl.READ_FRAMEBUFFER, self.fbo)
         gl.readBuffer(self.attachments[attachment_name])
 
+        # WebGL2 only guarantees readPixels as RGBA, with UNSIGNED_BYTE for
+        # 8-bit attachments and FLOAT for float ones - reading an RGBA8
+        # attachment as FLOAT (what this used to do for every format) is
+        # INVALID_OPERATION and left the buffer all zeros. Read RGBA and
+        # keep the attachment's own channels.
         import js
-        out = js.Float32Array.new(self.width * self.height * channels)
-        gl.readPixels(0, 0, self.width, self.height, fmt, gl.FLOAT, out)
+        is_float = typ == gl.FLOAT
+        out = (js.Float32Array if is_float else js.Uint8Array).new(self.width * self.height * 4)
+        gl.readPixels(0, 0, self.width, self.height, gl.RGBA, gl.FLOAT if is_float else gl.UNSIGNED_BYTE, out)
         gl.bindFramebuffer(gl.READ_FRAMEBUFFER, None)
 
         raw = np.asarray(out.to_py(), dtype=np.float32)
-        return raw.reshape(self.height, self.width, channels)
+        if not is_float:
+            raw /= 255.0
+        return raw.reshape(self.height, self.width, 4)[..., :channels]
 
     def get_attachment_texture(self, attachment_name):
         """Returns the raw WebGLTexture backing the named color
@@ -240,6 +257,11 @@ class WebGL2Framebuffer(Framebuffer):
         texture/renderbuffer's storage in place)."""
         gl = self.gl
         self.width, self.height = size[0], size[1]
+
+        # Still attached to the old textures - rebuilt lazily on next use.
+        for fbo in self._subset_fbos.values():
+            gl.deleteFramebuffer(fbo)
+        self._subset_fbos = {}
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, self.fbo)
 
@@ -262,30 +284,64 @@ class WebGL2Framebuffer(Framebuffer):
         gl.viewport(0, 0, self.width, self.height)
 
     def set_draw_buffers(self, names: list[str]):
-        """See Framebuffer.set_draw_buffers(). Assumes this FBO is already
-        bound.
+        """See Framebuffer.set_draw_buffers(). Binds a separate FBO holding
+        only `names` (plus the depth attachment) - rebinding the main one
+        with bind() restores every attachment.
 
-        Unlike desktop GL (glDrawBuffers there can list attachments in any
-        order or subset - array index N just means "fragment output N
-        goes to whichever attachment is listed here"), WebGL2 requires
-        array index i to be either NONE or *exactly* COLOR_ATTACHMENTi -
-        the array position IS the attachment index, and can't reorder or
-        compact them. So this can't just be `gl.drawBuffers([self.
-        attachments[n] for n in names])` the way GLFramebuffer's desktop
-        equivalent is (that mapped straight through and failed the
-        instant `names` requested a non-contiguous-from-zero subset, e.g.
-        a G-buffer's attachments 1-3 without attachment 0 - the WebGL2
-        error is literally "drawBuffers: COLOR_ATTACHMENTi_EXT or NONE").
-        Building a full-width array covering every color attachment this
-        FBO has, with NONE at every index not in `names`, satisfies that
-        restriction regardless of which subset was requested."""
+        WebGL2 treats sampling a texture that is attached to the bound draw
+        framebuffer as a feedback loop and rejects the draw with
+        INVALID_OPERATION - even when that attachment's draw buffer is
+        NONE, which desktop GL allows. Every pass that reads one attachment
+        while writing another (a pipeline's light, composite and combine
+        passes) was dropped that way, so nothing ever reached 'lit' and
+        the window showed only the clear colour. In the subset FBO the
+        attachments being read simply aren't attached.
+
+        Each attachment keeps its own COLOR_ATTACHMENTi slot there, with
+        NONE in every other draw buffer (WebGL2 requires index i to be NONE
+        or exactly COLOR_ATTACHMENTi), so a fragment output's location is
+        still its attachment's index - the convention the engine's shaders
+        are written to (see the `_padN` outputs in lite/combine.fbfrag)."""
         gl = self.gl
+        gl.bindFramebuffer(gl.FRAMEBUFFER, self._subset_fbo(tuple(names)))
+
+    def _subset_fbo(self, names: tuple[str, ...]):
+        """The FBO for one draw-buffer set, created (with its draw buffers
+        set - that state belongs to the FBO) on first use."""
+        fbo = self._subset_fbos.get(names)
+        if fbo is not None:
+            return fbo
+
+        gl = self.gl
+        previous = gl.getParameter(gl.FRAMEBUFFER_BINDING)
+        fbo = gl.createFramebuffer()
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo)
+
         requested = {self.attachments[name] for name in names}
+        for name in names:
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, self.attachments[name], gl.TEXTURE_2D, self.textures[name], 0)
+        if self.depth_texture_name is not None:
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D,
+                                    self.textures[self.depth_texture_name], 0)
+        elif self.depth_renderbuffer is not None:
+            target = (gl.STENCIL_ATTACHMENT
+                      if any(t == AttachmentType.STENCIL for t, _ in self._attachments.values())
+                      else gl.DEPTH_STENCIL_ATTACHMENT)
+            gl.framebufferRenderbuffer(gl.FRAMEBUFFER, target, gl.RENDERBUFFER, self.depth_renderbuffer)
+
         bufs = [
             (gl.COLOR_ATTACHMENT0 + i) if (gl.COLOR_ATTACHMENT0 + i) in requested else gl.NONE
             for i in range(self.num_color_attachments)
         ]
-        gl.drawBuffers(bufs)
+        gl.drawBuffers(bufs or [gl.NONE])
+
+        status = gl.checkFramebufferStatus(gl.FRAMEBUFFER)
+        if status != gl.FRAMEBUFFER_COMPLETE:
+            raise RuntimeError(f"Framebuffer subset {names} incomplete: status {status}")
+
+        gl.bindFramebuffer(gl.FRAMEBUFFER, previous)
+        self._subset_fbos[names] = fbo
+        return fbo
 
     def unbind(self):
         """Rebinds the default framebuffer (the canvas's own backbuffer)."""

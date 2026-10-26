@@ -42,12 +42,16 @@ def to_typed_array(array: np.ndarray, dtype=np.float32):
 
 
 def to_js_matrix(matrix: np.ndarray):
-    """Converts a numpy matrix (row-major, as this engine stores every
-    transform/view/projection matrix) into the flat column-major
-    Float32Array `uniformMatrix*fv` expects - WebGL2 (like desktop GL)
-    reads a matrix uniform's flat data in column-major order regardless of
-    how the source array is laid out, so this transposes before
-    flattening rather than relying on `transpose=true` (which real
-    WebGL2/GLES3 drivers are allowed to reject for anything but `false` -
-    unlike desktop GL, which tolerates GL_TRUE)."""
-    return to_typed_array(matrix.T, dtype=np.float32)
+    """Converts a numpy matrix into the flat Float32Array
+    `uniformMatrix*fv` takes, in the matrix's own row-major memory order -
+    exactly the bytes GL33Shader hands glUniformMatrix4fv with GL_FALSE,
+    which is what the engine's matrices and shaders are written against
+    (model matrices keep their translation in the last row and rely on
+    that upload to land it in GL's last column).
+
+    This used to transpose first. Every matrix then reached the shader
+    transposed relative to desktop: a model matrix's translation ended up
+    in the w row, so each vertex got w = 1 - tx*x - ty*y and every sprite
+    was clipped away - the WebGL build drew nothing but its clear colour.
+    `transpose=true` is still avoided either way: WebGL2 rejects it."""
+    return to_typed_array(matrix, dtype=np.float32)
