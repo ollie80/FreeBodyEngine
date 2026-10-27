@@ -257,7 +257,12 @@ class UIManager(Service):
             # has no `.children` - `.parent` wraps it (see
             # _ScrollbarPartProxy).
             parent = getattr(node, "parent", None)
-            if parent is None or not any(child is node or child == node for child in parent.children.values()):
+            # A parent with no `children` is a bare native Node whose
+            # UIElement wrapper is gone - which only happens once it's
+            # been taken out of the tree (attached elements are kept
+            # alive; see native_element.py's _init_tree()).
+            children = getattr(parent, "children", None)
+            if children is None or not any(child is node or child == node for child in children.values()):
                 return False
             node = parent
         return node is self.root

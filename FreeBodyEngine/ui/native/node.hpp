@@ -165,6 +165,24 @@ private:
     std::shared_ptr<Node> scrollbar_track_;
     std::shared_ptr<Node> scrollbar_thumb_;
 
+    // parent_ and scrollbar_owner_ are raw, non-owning pointers (see
+    // add_child()), so a node going away has to tell anything that
+    // outlives it. A child can: the parent's shared_ptr isn't its only
+    // owner when Python still holds the child - UIManager keeping the
+    // element that was under the mouse, say, after a page rebuild cleared
+    // the container it was in. Its parent_ used to be left pointing at
+    // freed memory, and get_parent() read it.
+    //
+    // A member whose destructor does that, rather than ~Node() itself:
+    // the //@bind generator reads a declared ~Node() as a constructor.
+    // Declared last, so it's destroyed first, while children_ and the
+    // scrollbar parts are still there to visit.
+    struct DetachOnDestroy {
+        Node* owner;
+        ~DetachOnDestroy();
+    };
+    DetachOnDestroy detach_on_destroy_{this};
+
     bool has_own_style(const std::string& key);
     double measure_flow_extent(double content_w, double content_h, double root_w, double root_h, double scale, const std::string& layout_dir, double gap);
     double measure_cross_extent(double content_w, double content_h, double root_w, double root_h, double scale, const std::string& axis);
@@ -298,6 +316,18 @@ inline std::shared_ptr<Node> hit_test_search(const std::vector<std::shared_ptr<N
 } // namespace
 
 inline Node::Node(pybind11::dict default_styles) : default_styles_(std::move(default_styles)) {}
+
+inline Node::DetachOnDestroy::~DetachOnDestroy() {
+    for (auto& child : owner->children_) {
+        if (child && child->parent_ == owner) {
+            child->parent_ = nullptr;
+        }
+    }
+    if (owner->scrollbar_thumb_ && owner->scrollbar_thumb_->scrollbar_owner_ == owner) {
+        owner->scrollbar_thumb_->scrollbar_owner_ = nullptr;
+    }
+}
+
 
 inline void Node::add_child(std::shared_ptr<Node> child) {
     child->parent_ = this;

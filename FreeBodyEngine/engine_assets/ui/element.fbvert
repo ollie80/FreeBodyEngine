@@ -6,14 +6,18 @@ uvs: vec2
 @uniform
 rect: vec4
 window_size: vec2
+# (rotation, tilt_x, tilt_y, scale) - rotation and tilts in radians - and
+# the perspective distance in pixels. See the TRANSFORM docs in
+# ui/element.py and UIRenderer._visual_bounds(), which works out the same
+# corners on the CPU.
+transform: vec4
+perspective: float
 
 @output
 uv: vec2
 image_uv: vec2
 
 def main() -> void:
-    screen_rect: vec4 = vec4(rect.x / window_size.x * 2.0 - 1.0, 1.0 - rect.y / window_size.y * 2.0, rect.z / window_size.x * 2.0, rect.w / window_size.y * 2.0)
-
     # `uv` is a plain, non-flipped quad-local coordinate (top-left is
     # (0,0), matching the CSS-style top_left/top_right/bottom_right/
     # bottom_left corner order border_radius/border_width use) - the
@@ -33,19 +37,47 @@ def main() -> void:
     # core/files/loaders/font.py's _flip_uv work it out for MSDF glyphs -
     # while the rounded-box SDF math must NOT be flipped, or its corners
     # end up rotated 180 degrees from the styles that requested them.
+    corner: vec2 = vec2(0.0, 0.0)
     if VERTEX_INDEX == 0:
-        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y, 0.0, 1.0)
-        uv = vec2(0.0, 0.0)
+        corner = vec2(0.0, 0.0)
         image_uv = vec2(1.0, 1.0)
     elif VERTEX_INDEX == 1:
-        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y, 0.0, 1.0)
-        uv = vec2(1.0, 0.0)
+        corner = vec2(1.0, 0.0)
         image_uv = vec2(0.0, 1.0)
     elif VERTEX_INDEX == 2:
-        VERTEX_POSITION = vec4(screen_rect.x, screen_rect.y - screen_rect.w, 0.0, 1.0)
-        uv = vec2(0.0, 1.0)
+        corner = vec2(0.0, 1.0)
         image_uv = vec2(1.0, 0.0)
     else:
-        VERTEX_POSITION = vec4(screen_rect.x + screen_rect.z, screen_rect.y - screen_rect.w, 0.0, 1.0)
-        uv = vec2(1.0, 1.0)
+        corner = vec2(1.0, 1.0)
         image_uv = vec2(0.0, 0.0)
+    uv = corner
+
+    # The corner relative to the element's centre, in pixels (y down),
+    # turned by `rotation`, scaled, then tilted in 3D: tilt_x about the
+    # vertical axis (positive takes the right edge away from the viewer),
+    # tilt_y about the horizontal one (positive takes the bottom edge
+    # away). z is depth, positive away.
+    local: vec2 = (corner - vec2(0.5, 0.5)) * rect.zw
+    cr: float = cos(transform.x)
+    sr: float = sin(transform.x)
+    turned: vec2 = vec2(local.x * cr - local.y * sr, local.x * sr + local.y * cr) * transform.w
+
+    ca: float = cos(transform.y)
+    sa: float = sin(transform.y)
+    x1: float = turned.x * ca
+    z1: float = turned.x * sa
+
+    cb: float = cos(transform.z)
+    sb: float = sin(transform.z)
+    y2: float = turned.y * cb - z1 * sb
+    z2: float = z1 * cb + turned.y * sb
+
+    # Perspective through w rather than dividing here, so the GPU
+    # interpolates uv/image_uv perspective-correctly across the tilted
+    # quad - an image on it keeps its proportions instead of shearing
+    # along the diagonal.
+    w: float = (perspective + z2) / perspective
+    center: vec2 = rect.xy + rect.zw * 0.5
+    center_ndc: vec2 = vec2(center.x / window_size.x * 2.0 - 1.0, 1.0 - center.y / window_size.y * 2.0)
+    offset_ndc: vec2 = vec2(x1 / window_size.x * 2.0, 0.0 - y2 / window_size.y * 2.0)
+    VERTEX_POSITION = vec4(center_ndc.x * w + offset_ndc.x, center_ndc.y * w + offset_ndc.y, 0.0, w)

@@ -225,6 +225,34 @@ align_self
     "auto" (default) uses the parent's.
 
 
+TRANSFORM
+-------------------------------------------------------------------------------
+
+Visual only: these change how an element's background (colour, image,
+border) is drawn, around its centre, and nothing else - not its layout
+rect, not where it can be clicked, and not its text or children, which
+draw where they would anyway. All of them animate with set_style(...,
+duration=...).
+
+scale
+    Size multiplier. Default 1.
+
+rotation
+    Clockwise turn, in degrees. Default 0.
+
+tilt
+    (x, y) in degrees: a 3D lean, drawn in perspective. x turns it about
+    its vertical axis - positive takes the right edge away from you; y
+    about its horizontal axis - positive takes the bottom edge away.
+    Default (0, 0).
+
+        cover.set_style("tilt", (8, -5))    # right edge back, top edge back
+
+perspective
+    How far away the viewer is, in pixels - smaller exaggerates a tilt.
+    Default 1000.
+
+
 VISIBILITY
 -------------------------------------------------------------------------------
 

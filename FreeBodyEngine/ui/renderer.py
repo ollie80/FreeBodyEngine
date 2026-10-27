@@ -18,6 +18,46 @@ if TYPE_CHECKING:
     from FreeBodyEngine.ui.element import UIElement
     from FreeBodyEngine.graphics.material import Material
 
+def transform_of(styles: dict):
+    """An element's (rotation, tilt_x, tilt_y, scale) - angles in radians -
+    or None when it has none (the common case, drawn as a plain rect). See
+    the TRANSFORM docs in ui/element.py."""
+    scale = styles.get('scale', 1.0)
+    rotation = styles.get('rotation', 0.0)
+    tilt = styles.get('tilt', (0.0, 0.0))
+    if scale == 1 and not rotation and not tilt[0] and not tilt[1]:
+        return None
+    return (math.radians(rotation), math.radians(tilt[0]), math.radians(tilt[1]), float(scale))
+
+
+def visual_bounds(rect: tuple, transform: tuple, perspective: float) -> tuple:
+    """The screen rect (x, y, w, h) an element with `transform` actually
+    covers - the same corner math element.fbvert does, on the CPU, so
+    damage tracking and culling cover a tilted/scaled element's real
+    footprint rather than its layout rect."""
+    x, y, w, h = rect
+    rotation, tilt_x, tilt_y, scale = transform
+    cr, sr = math.cos(rotation), math.sin(rotation)
+    ca, sa = math.cos(tilt_x), math.sin(tilt_x)
+    cb, sb = math.cos(tilt_y), math.sin(tilt_y)
+    cx, cy = x + w / 2, y + h / 2
+
+    xs, ys = [], []
+    for corner_x, corner_y in ((-0.5, -0.5), (0.5, -0.5), (-0.5, 0.5), (0.5, 0.5)):
+        lx, ly = corner_x * w, corner_y * h
+        tx, ty = (lx * cr - ly * sr) * scale, (lx * sr + ly * cr) * scale
+        x1, z1 = tx * ca, tx * sa
+        y2, z2 = ty * cb - z1 * sb, z1 * cb + ty * sb
+        depth = max((perspective + z2) / perspective, 1e-3)
+        xs.append(cx + x1 / depth)
+        ys.append(cy + y2 / depth)
+
+    # A pixel of slack all round - rasterisation can touch the pixel a
+    # fractional edge sits in.
+    left, top = min(xs) - 1, min(ys) - 1
+    return (left, top, max(xs) + 1 - left, max(ys) + 1 - top)
+
+
 class UIRenderer(Service):
     """Engine service that draws the UI tree owned by the `ui` service (`UIManager`)."""
 
@@ -487,8 +527,8 @@ class UIRenderer(Service):
         text draw calls, GPU buffer uploads - possible for everything that
         didn't actually change."""
         layout = element._layout
-        rect = (layout.x, layout.y, layout.width, layout.height)
         styles = element.get_current_styles()
+        rect = self._drawn_rect(element, styles)
 
         if not styles.get('visible', True):
             # Hidden - like being culled below, except its children may
@@ -557,7 +597,10 @@ class UIRenderer(Service):
 
         child_scissor = scissor
         if element.get_overflow(styles) != "visible":
-            child_scissor = self._intersect_rect(scissor, rect) if scissor is not None else rect
+            # The layout rect, not the drawn one - children aren't
+            # transformed with their parent (see the TRANSFORM docs).
+            own_rect = (layout.x, layout.y, layout.width, layout.height)
+            child_scissor = self._intersect_rect(scissor, own_rect) if scissor is not None else own_rect
 
         for child in element.children.values():
             self._compute_dirty_rect(child, child_scissor)
@@ -628,11 +671,10 @@ class UIRenderer(Service):
         added later), rendered nothing at all despite every row existing
         in the tree with the right text and a valid size of its own."""
         layout = element._layout
-        rect = (layout.x, layout.y, layout.width, layout.height)
-
         styles = element.get_current_styles()
         if not styles.get('visible', True):
             return
+        rect = self._drawn_rect(element, styles)
 
         if layout.width > 0 and layout.height > 0:
             if scissor is not None and self._rect_outside(rect, scissor):
@@ -675,7 +717,10 @@ class UIRenderer(Service):
 
         child_scissor = scissor
         if element.get_overflow(styles) != "visible":
-            child_scissor = self._intersect_rect(scissor, rect) if scissor is not None else rect
+            # The layout rect, not the drawn one - children aren't
+            # transformed with their parent (see the TRANSFORM docs).
+            own_rect = (layout.x, layout.y, layout.width, layout.height)
+            child_scissor = self._intersect_rect(scissor, own_rect) if scissor is not None else own_rect
 
         for child in element.children.values():
             self._draw_element(child, child_scissor)
@@ -750,6 +795,16 @@ class UIRenderer(Service):
         until layout has run anyway."""
         self._repaint_requests.append(element)
 
+    def _drawn_rect(self, element: 'UIElement', styles: dict) -> tuple:
+        """Where `element` actually draws: its layout rect, or for one with a
+        transform the larger area that covers (see visual_bounds())."""
+        layout = element._layout
+        rect = (layout.x, layout.y, layout.width, layout.height)
+        transform = transform_of(styles)
+        if transform is None or layout.width <= 0 or layout.height <= 0:
+            return rect
+        return visual_bounds(rect, transform, styles.get('perspective', 1000) * self._scale)
+
     def _draw_background(self, element: 'UIElement', styles: dict):
         width, height = element._layout.width, element._layout.height
         if width <= 0 or height <= 0:
@@ -777,7 +832,10 @@ class UIRenderer(Service):
         if base_color[3] == 0 and not has_border and not has_image:
             return
 
-        if has_image:
+        if has_image or transform_of(styles) is not None:
+            # A transformed background can't be batched either - only
+            # element.fbvert does rotation/tilt/scale.
+            #
             # Can't be batched - element_instanced.fbvert/.fbfrag have no
             # texture-sampling path at all (see their own docstrings), so
             # this small minority of backgrounds (avatars, cover art, ...)
@@ -813,10 +871,12 @@ class UIRenderer(Service):
 
     def _draw_background_immediate(self, element: 'UIElement', styles: dict, width: float, height: float):
         """The original, single-element background draw - used only for a
-        background with an `image` style (see _draw_background), where
-        batching doesn't apply."""
+        background with an `image` style or a transform (see
+        _draw_background), where batching doesn't apply."""
         shader = self.material.shader
         shader.set_uniform('rect', (element._layout.x, element._layout.y, width, height))
+        shader.set_uniform('transform', transform_of(styles) or (0.0, 0.0, 0.0, 1.0))
+        shader.set_uniform('perspective', float(styles.get('perspective', 1000)) * self._scale)
         shader.set_uniform('size', (float(width), float(height)))
         scale = self._scale
         shader.set_uniform('border_radius', tuple(v * scale for v in self._to_vec4(styles.get('border_radius', 0))))

@@ -168,6 +168,12 @@ DEFAULT_STYLES = {
     "border_color": (0.0, 0.0, 0.0, 1.0),
     "image": None,
 
+    # Visual only - see the TRANSFORM docs in ui/element.py.
+    "scale": 1.0,
+    "rotation": 0.0,
+    "tilt": (0.0, 0.0),
+    "perspective": 1000,
+
     "text": "",
     "font": None,
     "font_size": 24,

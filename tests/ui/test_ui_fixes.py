@@ -236,3 +236,28 @@ def test_paste_leaves_the_cursor_after_the_pasted_text(ui, make_manager):
     manager.paste_text("xyz")
     assert field.get_current_styles()["text"] == "abxyz"
     assert field._cursor_index == 5
+
+
+def test_a_hovered_element_whose_container_was_cleared_and_collected(ui, make_manager, services):
+    import gc
+    manager = make_manager()
+    page = ui.UIElement(styles={"width": 400, "height": 400})
+    section = ui.UIElement(styles={"width": 400, "height": 100})
+    row = ui.UIElement(styles={"width": 400, "height": 50})
+    manager.add(page)
+    page.add(section)
+    section.add(row)
+    manager.root.calculate_layout()
+    services["mouse"].position = Vector(10, 10)
+    manager._handle_mouse()
+    assert manager._hovered is row
+
+    # A page rebuild: the section goes, and nothing on the Python side
+    # holds it any more - only the manager still holds the row.
+    page.children.clear()
+    del section
+    gc.collect()
+
+    services["mouse"].position = Vector(500, 500)
+    manager._handle_mouse()
+    assert manager._hovered is None
