@@ -10,17 +10,18 @@ project's code/.
 Usage: `python scripts/build_native.py [--force]`, from anywhere - always
 resolves paths relative to this file, not the current working directory.
 
-Each native/ subdirectory becomes its own independent `_fbcpp` extension
-(imported as `<subsystem>.native.<stem>`, e.g. `ui.native.hit_test`) -
+Each native/ subdirectory becomes its own independent extension, named
+`_fbengine_<subsystem>` (engine_extension_name(), e.g. `_fbengine_ui`) -
 kept separate per subsystem rather than one engine-wide extension so a
-change to physics/native/ doesn't force ui/native/ to recompile too.
+change to physics/native/ doesn't force ui/native/ to recompile too, and
+never `_fbcpp`, which is a project's own C++ scripts' module.
 """
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from FreeBodyEngine.cli.cpp.compile import compile_cpp_scripts
+from FreeBodyEngine.cli.cpp.compile import compile_cpp_scripts, engine_extension_name
 
 ENGINE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "FreeBodyEngine"))
 
@@ -39,7 +40,8 @@ def main():
             print(f"[{label}] directory does not exist, skipping")
             continue
 
-        status = compile_cpp_scripts(native_dir, sys.executable, force=force)
+        status = compile_cpp_scripts(native_dir, sys.executable, force=force,
+                                     extension_name=engine_extension_name(native_dir))
         if status == "unchanged":
             print(f"[{label}] up to date, nothing to compile")
         elif status == "no-sources":

@@ -22,7 +22,7 @@ from FreeBodyEngine.core.files.loaders.model import bake_model_file, MODEL_MANIF
 from FreeBodyEngine.core.files import asset_cache
 from FreeBodyEngine.core.files.asset_cache import AssetCache, cache_root_for
 from FreeBodyEngine import requirements as fb_requirements
-from FreeBodyEngine.cli.cpp.compile import compile_cpp_scripts, SCRIPTS_DIR_NAME
+from FreeBodyEngine.cli.cpp.compile import compile_cpp_scripts, engine_extension_name, SCRIPTS_DIR_NAME
 
 SUPPORTED_PLATFORMS = ["windows", "darwin", "linux"]
 
@@ -1143,7 +1143,8 @@ await run()
             # buildozer.spec's requirements in that case either.
             return
 
-        status = compile_cpp_scripts(native_dir, sys.executable, platform_name="android", force=True, generate_only=True)
+        status = compile_cpp_scripts(native_dir, sys.executable, platform_name="android", force=True, generate_only=True,
+                                     extension_name=engine_extension_name(native_dir))
         if status not in ("generated", "no-sources"):
             raise RuntimeError(f"Failed to generate native UI sources for the Android build (compile_cpp_scripts returned {status!r}).")
 

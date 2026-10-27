@@ -1,5 +1,6 @@
 import os
 import json
+import functools
 import hashlib
 import re
 import subprocess
@@ -13,6 +14,15 @@ EXTENSION_NAME = "_fbcpp"
 
 CPP_EXT = '.cpp'
 HEADER_EXTS = ('.hpp', '.h')
+
+
+def engine_extension_name(native_dir: str) -> str:
+    """The module name for one of the engine's own native/ directories -
+    `_fbengine_<subsystem>`, e.g. `_fbengine_ui` for ui/native/ - so it
+    never shares a name with a project's `_fbcpp` (see compile_cpp_scripts'
+    `extension_name`)."""
+    subsystem = os.path.basename(os.path.dirname(os.path.abspath(native_dir)))
+    return '_fbengine_' + re.sub(r'[^0-9A-Za-z_]', '_', subsystem)
 
 
 def compile_handler(env, args):
@@ -151,9 +161,9 @@ def _load_metadata(scripts_dir: str) -> dict:
         return {}
 
 
-def generate_setup_py(sources: list, include_dirs: list, cxx_standard_flag: str) -> str:
-    """Renders a `setup.py` that builds `sources` into the `_fbcpp`
-    extension module via pybind11/setuptools.
+def generate_setup_py(sources: list, include_dirs: list, compile_args: list, extension_name: str = None) -> str:
+    """Renders a `setup.py` that builds `sources` into the `extension_name`
+    extension module (`_fbcpp` unless given) via pybind11/setuptools.
 
     Finding pybind11's own headers checks the `FBCPP_PYBIND11_INCLUDE`
     env var first, falling back to `import pybind11; pybind11.
@@ -175,6 +185,7 @@ def generate_setup_py(sources: list, include_dirs: list, cxx_standard_flag: str)
     pybind11 uses (Recipe.get_recipe('pybind11', ctx).get_include_dir()) -
     the officially-supported way to consume another recipe's own output,
     as opposed to a live `import` of it."""
+    extension_name = extension_name or EXTENSION_NAME
     sources_literal = str([s.replace('\\', '/') for s in sources])
     include_dirs_literal = str([d.replace('\\', '/') for d in include_dirs])
     return f"""
@@ -188,17 +199,17 @@ if _pybind11_include is None:
 
 ext_modules = [
     Extension(
-        "{EXTENSION_NAME}",
+        "{extension_name}",
         {sources_literal},
         include_dirs={include_dirs_literal} + [_pybind11_include],
         language="c++",
-        extra_compile_args=["{cxx_standard_flag}"],
+        extra_compile_args={compile_args!r},
     ),
 ]
 
 setup(
     # The *distribution* name (pip/wheel metadata - PEP 508 requires it
-    # start with a letter or digit) is deliberately not "{EXTENSION_NAME}"
+    # start with a letter or digit) is deliberately not "{extension_name}"
     # itself - that's the *importable module* name instead (set via
     # Extension()'s own first argument above, completely independent of
     # this one; nothing else needs the two to match). Confirmed live via
@@ -207,10 +218,10 @@ setup(
     # entirely - see compile_cpp_scripts()'s own subprocess command), but
     # python-for-android's CppCompiledComponentsPythonRecipe installs via
     # a real `pip install .`, whose PEP 517 build-backend frontend
-    # rejects "{EXTENSION_NAME}" outright ("Invalid distribution name or
+    # rejects "{extension_name}" outright ("Invalid distribution name or
     # version syntax") - a leading underscore was never actually valid
     # there, just never exercised by a build strict enough to check.
-    name="fbcpp",
+    name="{extension_name.lstrip('_')}",
     version="0.0.0",
     ext_modules=ext_modules,
     zip_safe=False,
@@ -227,13 +238,51 @@ def _windows_bundled_clang() -> str | None:
     return candidate if os.path.exists(candidate) else None
 
 
+@functools.lru_cache(maxsize=None)
+def _msvc_installed() -> bool:
+    """True if Visual Studio's C++ build tools are installed - asked of
+    vswhere, the same tool setuptools finds them with."""
+    vswhere = os.path.join(os.environ.get('ProgramFiles(x86)', r'C:\Program Files (x86)'),
+                           'Microsoft Visual Studio', 'Installer', 'vswhere.exe')
+    if not os.path.isfile(vswhere):
+        return False
+    try:
+        result = subprocess.run([vswhere, '-latest', '-products', '*', '-requires',
+                                 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'],
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(result.stdout.strip())
+
+
+def _uses_bundled_clang(platform_name: str) -> bool:
+    """True when a Windows build goes through the bundled clang++ rather
+    than MSVC - the one place that decides it, so the compiler, the flags
+    and the setup.py arguments can't disagree about which is in use.
+
+    MSVC whenever it's installed. The bundled clang can only link a CPython
+    extension with MSVC's own linker and libraries anyway, so wherever it
+    works MSVC is there too - and MSVC is what Python itself is built with.
+    The clang is also a bare clang++.exe, without the headers of its own a
+    clang install ships (lib/clang/<version>/include): it compiled with the
+    Windows SDK's offsetof, which pybind11 can't use in a static_assert."""
+    return (platform_name == 'windows' and 'CXX' not in os.environ
+            and not _msvc_installed() and _windows_bundled_clang() is not None)
+
+
 def _build_env(platform_name: str) -> dict:
     env = os.environ.copy()
-    if platform_name == 'windows' and 'CXX' not in env:
-        clang = _windows_bundled_clang()
-        if clang:
-            env['CXX'] = clang
-            env['CC'] = clang
+    if _uses_bundled_clang(platform_name):
+        # Forward slashes: setuptools' mingw32 compiler runs CC through
+        # shlex.split(), which treats backslashes as escapes - a normal
+        # Windows path came out as "C:Usershover..." and the build died with
+        # a bare "[WinError 2] The system cannot find the file specified".
+        # Quoted if it has a space in it, which would split it in two.
+        clang = _windows_bundled_clang().replace('\\', '/')
+        if ' ' in clang:
+            clang = f'"{clang}"'
+        env['CXX'] = clang
+        env['CC'] = clang
     return env
 
 
@@ -241,13 +290,35 @@ def _extra_setup_args(platform_name: str) -> list:
     # distutils' default compiler on Windows is MSVC, which ignores CC/CXX
     # entirely (it always invokes cl.exe) - the mingw32 compiler class is
     # the one that actually respects them, which is what lets CXX above
-    # point it at the bundled clang++ instead of requiring MSVC.
-    if platform_name == 'windows' and _windows_bundled_clang() and 'CXX' not in os.environ:
+    # point it at the bundled clang++ instead of cl.exe. (clang++ still
+    # needs the Windows SDK and MSVC's libraries and linker to build a
+    # CPython extension - it saves installing Visual Studio's compiler, not
+    # its build tools.)
+    if _uses_bundled_clang(platform_name):
         return ['--compiler=mingw32']
     return []
 
 
-def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: str | None = None, force: bool = False, quiet: bool = False, generate_only: bool = False) -> str:
+def _compile_args(platform_name: str) -> list:
+    """The C++17 flag in the spelling the compiler in use understands.
+    Every Windows build used to get MSVC's `/std:c++17` - including the
+    ones going through the bundled clang++, which read it as a file name
+    and failed ("no such file or directory: '/std:c++17'").
+
+    The bundled clang also gets -O2: the mingw32 compiler class it runs
+    under hard-codes -O1, a lot slower for the simulation-heavy code C++
+    scripts exist for (a later -O wins). And _CRT_USE_BUILTIN_OFFSETOF, so
+    the Windows SDK's stddef.h defines offsetof as clang's builtin rather
+    than as a reinterpret_cast, which isn't a constant expression to clang
+    and broke pybind11's static_asserts (see _uses_bundled_clang)."""
+    if _uses_bundled_clang(platform_name):
+        return ['-std=c++17', '-O2', '-D_CRT_USE_BUILTIN_OFFSETOF']
+    if platform_name == 'windows':
+        return ['/std:c++17']
+    return ['-std=c++17']
+
+
+def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: str | None = None, force: bool = False, quiet: bool = False, generate_only: bool = False, extension_name: str = EXTENSION_NAME) -> str:
     """(re)builds every bound `.cpp`/`.hpp`/`.h` file under `code_path` into
     one shared extension module (`cpp_scripts/_fbcpp.<...>`), plus one
     `import`-able Python shim per bound file (`cpp_scripts/<stem>.py`).
@@ -268,9 +339,20 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
     success in this mode (never "unchanged" - always regenerates, there's
     no host build artifact to compare metadata against for staleness).
 
+    `extension_name` is the compiled module's name - `_fbcpp`, every
+    project's, unless given. The engine's own native modules each pass
+    their own (engine_extension_name()): Python keeps one module per name,
+    so while the engine's UI module and a project's were both `_fbcpp`,
+    whichever was imported first was the only one either of them got.
+
     Returns "unchanged" (nothing to do), "no-sources" (no .cpp/.hpp/.h files
     at all), "generated" (generate_only=True, see above), "ok", or "failed".
     """
+    # Absolute: setup.py runs with its own directory as the working
+    # directory, so a relative code_path got joined onto itself there and
+    # the build failed with "can't open file ...cpp_scripts/code/
+    # cpp_scripts/setup.py".
+    code_path = os.path.abspath(code_path)
     if platform_name is None:
         platform_name = {'win32': 'windows', 'darwin': 'darwin', 'linux': 'linux'}.get(sys.platform, sys.platform)
 
@@ -287,7 +369,7 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
     new_metadata = {f.abs_path: hash_source(f.generator.source) for f in files}
 
     extension_exists = any(
-        name.startswith(EXTENSION_NAME) and not name.endswith(('.py', '.pyi'))
+        name.startswith(extension_name + '.') and not name.endswith(('.py', '.pyi'))
         for name in os.listdir(scripts_dir)
     ) if os.path.isdir(scripts_dir) else False
 
@@ -318,7 +400,7 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
         open(shim_path, 'w', encoding='utf-8').write(
             "# Auto-generated by `fb compile_scripts` - do not edit.\n"
             "import sys as _sys\n"
-            f"from {EXTENSION_NAME} import {f.stem} as _mod\n"
+            f"from {extension_name} import {f.stem} as _mod\n"
             "_sys.modules[__name__] = _mod\n"
         )
 
@@ -330,7 +412,7 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
     for f in bound_files:
         module_lines.append(f'void {f.register_fn_name}(pybind11::module_& m);')
     module_lines.append('')
-    module_lines.append(f'PYBIND11_MODULE({EXTENSION_NAME}, m) {{')
+    module_lines.append(f'PYBIND11_MODULE({extension_name}, m) {{')
     for f in bound_files:
         module_lines.append(f'    {{ auto sub = m.def_submodule("{f.stem}"); {f.register_fn_name}(sub); }}')
     module_lines.append('}')
@@ -345,10 +427,9 @@ def compile_cpp_scripts(code_path: str, python_executable: str, platform_name: s
     gen_sources = [os.path.join(gen_dir, f'{f.safe_name}_bind.cpp') for f in bound_files]
     gen_sources.append(os.path.join(gen_dir, '_module.cpp'))
 
-    cxx_flag = '/std:c++17' if platform_name == 'windows' else '-std=c++17'
     setup_path = os.path.join(scripts_dir, 'setup.py')
     open(setup_path, 'w', encoding='utf-8').write(
-        generate_setup_py(normal_sources + gen_sources, [code_path], cxx_flag)
+        generate_setup_py(normal_sources + gen_sources, [code_path], _compile_args(platform_name), extension_name)
     )
 
     if generate_only:
