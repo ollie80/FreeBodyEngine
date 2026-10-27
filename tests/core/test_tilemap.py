@@ -342,3 +342,31 @@ def test_remove_chunk_drops_it_and_its_meshes():
     assert dropped.destroyed and not kept.destroyed
     assert list(renderer._meshes) == [('ground', Vector(1, 0), 1)]
     assert tilemap.remove_chunk(Vector(0, 0), 'ground') is None
+
+
+def test_visible_chunks_follow_a_camera_carried_by_something(monkeypatch):
+    """A camera parented to the player is at (0, 0) locally wherever the
+    player goes. Culling read that local position, so only the chunks round
+    the world origin were ever drawn - walk away and the ground vanished."""
+    import FreeBodyEngine.core.tilemap.renderer as renderer_module
+    from FreeBodyEngine.core.tilemap.renderer import TilemapRenderer
+    from FreeBodyEngine.math import Transform
+
+    class Window:
+        size = (800, 800)
+
+    monkeypatch.setattr(renderer_module, 'get_service', lambda name: Window())
+
+    class Camera:
+        zoom = 64.0
+        transform = Transform(Vector(0, 0), 0.0, Vector(1, 1))              # local
+        world_transform = Transform(Vector(160, 320), 0.0, Vector(1, 1))    # where it is
+
+    class Map:
+        chunk_size, tile_size = 16, 1
+        world_transform = Transform(Vector(0, 0), 0.0, Vector(1, 1))
+
+    left, right, top, bottom = object.__new__(TilemapRenderer)._visible_chunks(Camera(), Map())
+    assert left <= 10 <= right                 # x 160 is chunk column 10
+    assert top <= -21 <= bottom                # y 320 is row -321, chunk row -21
+    assert not (left <= 0 <= right and top <= 0 <= bottom)

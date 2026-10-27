@@ -194,7 +194,9 @@ class LitePipeline(GraphicsPipeline):
         if not zoom or zoom <= 0:
             return None
         size = get_service('window').size  # matches Camera._update_projection_matrix
-        centre = camera.transform.position
+        # World, not local: a camera parented to the player sits at (0, 0)
+        # locally wherever the player is - see TilemapRenderer._visible_chunks.
+        centre = camera.world_transform.position
         half_w = size[0] / 2.0 / zoom + margin
         half_h = size[1] / 2.0 / zoom + margin
         return (centre.x - half_w, centre.x + half_w,

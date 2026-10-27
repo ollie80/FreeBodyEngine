@@ -229,7 +229,10 @@ class TilemapRenderer(Node2D):
             return None
 
         size = get_service('window').size  # matches Camera._update_projection_matrix
-        centre = camera.transform.position
+        # The camera's world position: a camera carried by the player is a
+        # child of it, and its local position is just (0, 0) - which drew only
+        # the chunks round the world origin, wherever the camera actually was.
+        centre = camera.world_transform.position
         origin = transform.position
 
         # Into the tilemap's own space, then into chunk indices. Chunk rows
