@@ -118,7 +118,13 @@ class Transform:
     @property
     def model(self) -> numpy.ndarray:
         """Builds this transform's 4x4 model matrix (scale @ rotation @
-        translation, as a row-vector affine matrix)."""
+        translation, as a row-vector affine matrix).
+
+        Kept until the transform changes: a sprite that doesn't move asks
+        for the same matrix every frame, and building it is three matrices
+        and two multiplications. The kept array is read-only, so changing
+        it in place - which would change it for every later caller - raises
+        instead."""
         px = self.position.x
         py = self.position.y
 
@@ -126,6 +132,19 @@ class Transform:
         sy = self.scale.y
 
         rz = self.rotation  # assume scalar float for now, rotation around Z
+
+        key = (px, py, rz, sx, sy)
+        cached = self.__dict__.get('_model')
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        matrix = self._build_model(px, py, rz, sx, sy)
+        matrix.flags.writeable = False
+        self.__dict__['_model'] = (key, matrix)
+        return matrix
+
+    @staticmethod
+    def _build_model(px, py, rz, sx, sy) -> numpy.ndarray:
+        """Transform.model's matrix, built - see model."""
 
         rz_rad = math.radians(rz)
 

@@ -142,6 +142,23 @@ def set_gl_uniform(loc, gl_type, val):
         if isinstance(val, int):
             glUniform1i(loc, val)
 
+def _is_vec_of_length(obj, length, types=(int, float)):
+    """Returns True if `obj` is an acceptable Python value for a
+    `length`-component GLSL vector uniform: a tuple/list/ndarray of exactly
+    `length` elements each matching `types`, or one of the engine's own
+    vector-shaped types (`Color` for length>=3, `Vector` for length==2,
+    `Vector3` for length==3)."""
+    if isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj):
+        return True
+    if isinstance(obj, Color) and length >= 3:
+        return True
+    if isinstance(obj, Vector) and length == 2:
+        return True
+    if isinstance(obj, Vector3) and length == 3:
+        return True
+    return False
+
+
 class GLShader(Shader):
     """The GL 3.3 implementation of Shader: compiles FBUSL source via
     GL33Generator into a real GL program, introspects its uniforms, and
@@ -224,23 +241,10 @@ class GLShader(Shader):
         if not. `Color`/`Vector`/`Vector3` are accepted directly for the
         vector GL types they map onto, alongside a plain tuple/list/ndarray
         of the right length."""
-        def is_vec_of_length(obj, length, types=(int, float)):
-            """Returns True if `obj` is an acceptable Python value for a
-            `length`-component GLSL vector uniform: a tuple/list/ndarray of
-            exactly `length` elements each matching `types`, or one of the
-            engine's own vector-shaped types (`Color` for length>=3,
-            `Vector` for length==2, `Vector3` for length==3)."""
-            if isinstance(obj, (tuple, list, np.ndarray)) and len(obj) == length and all(isinstance(x, types) for x in obj):
-                return True
-
-            elif isinstance(obj, Color) and length >= 3:
-                return True
-
-            elif isinstance(obj, Vector) and length == 2:
-                return True
-
-            elif isinstance(obj, Vector3) and length == 3:
-                return True
+        # Module-level rather than defined in here: this runs for every
+        # uniform value that changes, and a nested def is a new function
+        # object every call.
+        is_vec_of_length = _is_vec_of_length
 
         if gl_type == GL_INT:
             if isinstance(val, int):

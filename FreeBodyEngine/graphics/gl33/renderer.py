@@ -20,9 +20,11 @@ if TYPE_CHECKING:
 from FreeBodyEngine import get_service, service_exists
 from FreeBodyEngine.utils import get_platform
 
+import ctypes
+
 import numpy as np
 
-if get_platform() == "win32": 
+if get_platform() == "win32":
     from OpenGL import WGL
 
 from OpenGL.GL import *
@@ -298,6 +300,65 @@ class GL33Renderer(Renderer):
 
         glBindVertexArray(0)
         glDeleteBuffers(1, [instance_vbo])
+
+    def draw_calls_instanced(self, calls):
+        """Draws `calls` - sharing one mesh and identical-looking materials,
+        see graphics/instancing.py - as one glDrawElementsInstanced through
+        the material's instanced shader: the per-call model matrices and z's
+        go up as one per-instance vertex buffer, the material's properties
+        and the camera's matrices once.
+
+        The buffer is kept and reused (orphaned each time, so the driver
+        never waits on a draw still reading the last batch's data), grown
+        when a batch outgrows it."""
+        from FreeBodyEngine.graphics.instancing import instance_data
+
+        first = calls[0]
+        mesh, material, camera = first.mesh, first.material, first.camera
+        shader = material.instanced_shader()
+        if shader is None or mesh.indices is None:
+            return super().draw_calls_instanced(calls)
+
+        data = instance_data(calls)
+        self.total_draw_calls += 1
+        self.texture_manager.begin_draw()
+        shader['view'] = camera.view_matrix
+        shader['proj'] = camera.proj_matrix
+        material.use(shader)
+
+        if getattr(self, '_instance_vbo', None) is None:
+            self._instance_vbo = glGenBuffers(1)
+            self._instance_capacity = 0
+        glBindBuffer(GL_ARRAY_BUFFER, self._instance_vbo)
+        if data.nbytes > self._instance_capacity:
+            self._instance_capacity = max(data.nbytes, 2 * self._instance_capacity)
+        glBufferData(GL_ARRAY_BUFFER, self._instance_capacity, None, GL_STREAM_DRAW)
+        glBufferSubData(GL_ARRAY_BUFFER, 0, data.nbytes, data)
+
+        locations = shader.__dict__.get('_instance_locations')
+        if locations is None:
+            names = [f'instance_model_{i}' for i in range(4)] + ['instance_z']
+            locations = [glGetAttribLocation(shader._shader, name) for name in names]
+            shader.__dict__['_instance_locations'] = locations
+
+        glBindVertexArray(mesh.vao)
+        stride = data.shape[1] * 4
+        for i, location in enumerate(locations):
+            if location < 0:
+                continue   # optimised out
+            glEnableVertexAttribArray(location)
+            glVertexAttribPointer(location, 4 if i < 4 else 1, GL_FLOAT, GL_FALSE, stride, ctypes.c_void_p(i * 16))
+            glVertexAttribDivisor(location, 1)
+
+        glDrawElementsInstanced(mesh._render_mode, len(mesh.indices), mesh.gl_index_type, None, len(calls))
+
+        # The mesh's VAO is shared with its ordinary draws, which must not
+        # see these attributes.
+        for location in locations:
+            if location >= 0:
+                glVertexAttribDivisor(location, 0)
+                glDisableVertexAttribArray(location)
+        glBindVertexArray(0)
 
     def enable_depth_testing(self):
         """Enables GL_DEPTH_TEST."""

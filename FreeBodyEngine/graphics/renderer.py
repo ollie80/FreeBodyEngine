@@ -198,15 +198,12 @@ class Renderer(Service):
     def flush_opaque(self):
         """Draws and dequeues every OPAQUE/ADDITIVE Call currently queued
         (leaving any TRANSPARENT ones queued - see flush_transparent()),
-        grouped by (material, mesh) - via graphics.instancing.
-        group_by_state() - purely to cut redundant glUseProgram/uniform/
-        texture-bind churn between consecutive draws that share a material
-        (state-minimizing batching, not GPU instancing - see
-        graphics/instancing.py's module docstring for why real
-        per-instance-transform instancing isn't part of this). Drawn with
-        depth testing/writing on; ADDITIVE still writes depth (e.g. a glow
-        effect should still occlude/be occluded) while blending
-        additively, unlike TRANSPARENT.
+        grouped by what they draw with (graphics.instancing.group_by_state)
+        so each group of identical-looking sprites goes to the GPU as one
+        instanced draw - see graphics/instancing.py. Drawn with depth
+        testing/writing on; ADDITIVE still writes depth (e.g. a glow effect
+        should still occlude/be occluded) while blending additively, unlike
+        TRANSPARENT.
 
         Split from flush_transparent() (rather than one combined flush())
         because a deferred pipeline needs a framebuffer rebind between the
@@ -223,10 +220,30 @@ class Renderer(Service):
         for group in group_by_state(opaque):
             mode = group[0].blend_mode
             self.set_blend_mode(mode)
-            for call in group:
-                self._draw_call(call)
+            self._draw_group(group)
 
         self.set_blend_mode(BlendMode.OPAQUE)
+
+    def _draw_group(self, calls: list[Call]):
+        """Draws `calls` - in order - as few instanced draws as their order
+        allows (graphics.instancing.runs), and anything that can't be
+        instanced on its own."""
+        from FreeBodyEngine.graphics.instancing import instance_key, runs
+
+        for run in runs(calls):
+            if len(run) > 1 and instance_key(run[0]) is not None:
+                self.draw_calls_instanced(run)
+            else:
+                for call in run:
+                    self._draw_call(call)
+
+    def draw_calls_instanced(self, calls: list[Call]):
+        """Draws `calls` - all sharing one graphics.instancing.instance_key(),
+        so one mesh and identical-looking materials - in a single instanced
+        draw. A backend that can't instance draws them one by one, which
+        looks the same."""
+        for call in calls:
+            self._draw_call(call)
 
     def flush_transparent(self):
         """Draws and dequeues every TRANSPARENT Call currently queued,
@@ -255,11 +272,16 @@ class Renderer(Service):
         # most negative sorts last, and last drawn wins when depth writes
         # are off. Equal-z calls still resolve farthest-first, which is what
         # actually matters for two overlapping sprites on one layer.
-        transparent.sort(key=lambda c: (c.z, c.camera_distance()), reverse=True)
+        #
+        # Within one z, calls are also grouped by what they draw with, so
+        # each group is one instanced draw - see graphics/instancing.py for
+        # what that means for same-z overlaps.
+        from FreeBodyEngine.graphics.instancing import sort_transparent
+
+        transparent = sort_transparent(transparent)
         if transparent:
             self.set_blend_mode(BlendMode.TRANSPARENT)
-            for call in transparent:
-                self._draw_call(call)
+            self._draw_group(transparent)
             self.set_blend_mode(BlendMode.OPAQUE)
 
     def _draw_call(self, call: Call):

@@ -359,6 +359,8 @@ class Material:
         frag_file = files.get_file(self._frag_source_path)
         geom_file = files.get_file(self._geom_source_path) if self._geom_source_path is not None else None
         self.shader.rebuild(self._shader_injector, vert_file, frag_file, geom_file)
+        # An instanced twin (instanced_shader()) was built from the old source.
+        self.shader.__dict__.pop('_instanced_twin', None)
 
     def __getattribute__(self, name):
         if name not in ('data', 'properties'):
@@ -449,13 +451,46 @@ class Material:
                     warning(f"Couldn't parse material color value, '{property}' only contained {len(val)} values, minimum of 3 is required.")
 
     
-    def use(self):
+    # -- instancing (see graphics/instancing.py) ----------------------------
+
+    def instanced_shader(self):
+        """A variant of this material's shader that takes each draw's model
+        matrix and depth nudge per instance, for drawing many copies in one
+        call - or None if it has none, and every draw goes on its own.
+        Pipelines' materials override this for the shaders they ship."""
+        return None
+
+    def batch_key(self) -> tuple:
+        """What this material draws with, as something comparable: two
+        materials with equal keys (and the same shader) look identical, so
+        their draws can share one instanced call - which per-object
+        instances (see instance()) of one material usually do."""
+        parts = [self.blend_mode, self.pixel_filter]
+        for name in sorted(self.properties):
+            val = self.properties[name]
+            if isinstance(val, Image):
+                parts.append((name, 'texture', id(val.texture)))
+            elif isinstance(val, Texture):
+                parts.append((name, 'texture', id(val)))
+            elif isinstance(val, Color):
+                parts.append((name, 'colour', tuple(val.float_normalized_a)))
+            elif isinstance(val, (list, tuple)):
+                parts.append((name, 'value', tuple(val)))
+            else:
+                parts.append((name, 'value', val))
+        return tuple(parts)
+
+    def use(self, shader=None):
         """Uploads every property's current value to the shader as uniforms
         - a Color property sets `{Prop}_Color` and `{Prop}_useTexture =
         False`; a Texture/Image property applies this material's
         `pixel_filter` to it and sets `{Prop}_Texture` and
         `{Prop}_useTexture = True` - then activates the shader for
-        drawing."""
+        drawing.
+
+        `shader` uploads them to another shader built from the same
+        properties instead - the instanced variant (instanced_shader())."""
+        shader = self.shader if shader is None else shader
         # The uniform names each property sets, built once: this runs every
         # draw, and the f-strings were a measurable part of it.
         names = self.__dict__.get('_uniform_names')
@@ -473,8 +508,8 @@ class Material:
                 # Numbers and pairs as well as colours: a property declared
                 # COLOR_R or COLOR_RG holds one, and its uniform is a float or
                 # a vec2 to match.
-                self.shader.set_uniform(colour_name, val)
-                self.shader.set_uniform(use_name, False)
+                shader.set_uniform(colour_name, val)
+                shader.set_uniform(use_name, False)
             elif isinstance(val, (Texture, Image)):
                 if isinstance(val, Texture):
                     tex = val
@@ -486,9 +521,9 @@ class Material:
                 if getattr(tex, '_applied_filter', None) != self.pixel_filter:
                     tex.manager.set_texture_filter(tex.id, self.pixel_filter)
                     tex._applied_filter = self.pixel_filter
-                self.shader.set_uniform(texture_name, tex)
-                self.shader.set_uniform(use_name, True)
+                shader.set_uniform(texture_name, tex)
+                shader.set_uniform(use_name, True)
             else:
-                self.shader.set_uniform(colour_name, Color('#FF00FFFF'))
+                shader.set_uniform(colour_name, Color('#FF00FFFF'))
 
-        self.shader.use()
+        shader.use()

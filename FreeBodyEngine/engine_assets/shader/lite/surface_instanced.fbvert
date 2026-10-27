@@ -1,0 +1,38 @@
+# surface.fbvert for many sprites in one draw - see graphics/instancing.py.
+#
+# Everything surface.fbvert takes as a uniform per sprite comes per instance
+# instead: the model matrix's four rows (as Transform.model lays them out,
+# which is how a mat4 uniform reaches the GPU too, so `model * v` is
+# row0 * v.x + row1 * v.y + row2 * v.z + row3) and the depth nudge. The
+# fragment stage is surface.fbfrag, unchanged.
+
+@uniform
+view: mat4
+proj: mat4
+
+@input
+vertex: vec3
+uvs: vec2
+normal: vec3
+instance_model_0: vec4
+instance_model_1: vec4
+instance_model_2: vec4
+instance_model_3: vec4
+instance_z: float
+
+@output
+uv: vec2
+worldPos: vec4
+worldNormal: vec4
+
+def main():
+    uv = uvs
+
+    world: vec4 = instance_model_0 * vertex.x + instance_model_1 * vertex.y + instance_model_2 * vertex.z + instance_model_3
+    worldPos = vec4(world.x, world.y, world.z, 1.0)
+
+    world_normal: vec4 = instance_model_0 * normal.x + instance_model_1 * normal.y + instance_model_2 * normal.z
+    worldNormal = vec4(world_normal.x, world_normal.y, world_normal.z, 1.0)
+
+    clip: vec4 = proj * view * world
+    VERTEX_POSITION = vec4(clip.x, clip.y, clip.z + (instance_z * clip.w), clip.w)
