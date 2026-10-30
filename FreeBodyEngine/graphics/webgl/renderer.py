@@ -68,8 +68,42 @@ class WebGL2Renderer(Renderer):
         self.gl.blendFunc(self.gl.SRC_ALPHA, self.gl.ONE_MINUS_SRC_ALPHA)
         self._current_blend_mode = BlendMode.TRANSPARENT
 
+        self._log_context()
+
         from FreeBodyEngine.core.files import get_file
         self.line_shader = self.load_shader(get_file("engine://shader/line.fbvert"), get_file("engine://shader/line.fbfrag"))
+
+    def _log_context(self):
+        """One line saying what this tab is actually rendering on.
+
+        A browser gives no other way to find out, and nearly every web-only
+        rendering problem needs it: whether the GPU is real or a software
+        fallback, whether float render targets exist at all, and how many
+        texture units a fragment shader may use (the combined limit is
+        larger, and binding a sampler above the per-stage one fails every
+        draw silently). Cheap, once, at startup."""
+        from FreeBodyEngine import log
+        gl = self.gl
+        try:
+            info = gl.getExtension("WEBGL_debug_renderer_info")
+            device = gl.getParameter(info.UNMASKED_RENDERER_WEBGL) if info else gl.getParameter(gl.RENDERER)
+            vendor = gl.getParameter(info.UNMASKED_VENDOR_WEBGL) if info else gl.getParameter(gl.VENDOR)
+            extensions = {
+                "float targets (EXT_color_buffer_float)": gl.getExtension("EXT_color_buffer_float") is not None,
+                "linear float filtering (OES_texture_float_linear)": gl.getExtension("OES_texture_float_linear") is not None,
+                "anisotropy (EXT_texture_filter_anisotropic)": gl.getExtension("EXT_texture_filter_anisotropic") is not None,
+            }
+            log(f"[WebGL2] {vendor} - {device}")
+            log(f"[WebGL2] {gl.getParameter(gl.VERSION)}, GLSL {gl.getParameter(gl.SHADING_LANGUAGE_VERSION)}")
+            log(f"[WebGL2] texture units: {gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)} per fragment shader, "
+                f"{gl.getParameter(gl.MAX_COMBINED_TEXTURE_IMAGE_UNITS)} combined; "
+                f"max texture {gl.getParameter(gl.MAX_TEXTURE_SIZE)}, array layers "
+                f"{gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS)}")
+            for name, present in extensions.items():
+                if not present:
+                    log(f"[WebGL2] missing: {name}")
+        except Exception as e:                            # never fail a boot over a log line
+            log(f"[WebGL2] could not read context info: {e}")
 
     def create_buffer(self, data):
         """Not supported yet - see WebGL2Shader.set_buffer()'s own note;

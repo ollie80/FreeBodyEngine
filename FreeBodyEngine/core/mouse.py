@@ -71,6 +71,16 @@ class Mouse(Service):
         """Releases a cursor lock previously set by lock_position(), letting the cursor move freely again."""
         pass
 
+    @property
+    def position_locked(self) -> bool:
+        """Whether the cursor is locked right now.
+
+        Not the same as "lock_position() was called": on the web the browser
+        grants the lock only inside a user gesture and takes it back on
+        Escape, without the page seeing a key - so there, this is the only
+        way to know. Backends that lock synchronously can leave this as is."""
+        return getattr(self, "_position_locked", False)
+
     @abstractmethod
     def get_pressed(self, button: int) -> bool:
         """Returns whether `button` was pressed down this frame."""

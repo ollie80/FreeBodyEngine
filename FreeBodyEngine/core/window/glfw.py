@@ -494,6 +494,7 @@ class GLFWMouse(Mouse):
         glfw.set_input_mode(handle, glfw.CURSOR, glfw.CURSOR_DISABLED)
         if glfw.raw_mouse_motion_supported():
             glfw.set_input_mode(handle, glfw.RAW_MOUSE_MOTION, glfw.TRUE)
+        self._position_locked = True
 
     def unlock_position(self):
         """Releases a lock_position() lock, showing the cursor again."""
@@ -501,6 +502,7 @@ class GLFWMouse(Mouse):
         if glfw.raw_mouse_motion_supported():
             glfw.set_input_mode(handle, glfw.RAW_MOUSE_MOTION, glfw.FALSE)
         glfw.set_input_mode(handle, glfw.CURSOR, glfw.CURSOR_NORMAL)
+        self._position_locked = False
 
     def get_scroll_delta(self) -> Vector:
         """How far the scroll wheel moved this frame, drained from the

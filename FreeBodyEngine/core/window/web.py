@@ -137,6 +137,11 @@ class WebWindow(Window):
         self._keyup_proxy = create_proxy(self._on_keyup)
         self._paste_proxy = create_proxy(self._on_paste)
         self._contextmenu_proxy = create_proxy(lambda e: e.preventDefault())
+        self._lockchange_proxy = create_proxy(self._on_pointerlockchange)
+        self._lockerror_proxy = create_proxy(self._on_pointerlockerror)
+        self._lockclick_proxy = create_proxy(self._on_lock_click)
+        self._contextlost_proxy = create_proxy(self._on_context_lost)
+        self._contextrestored_proxy = create_proxy(self._on_context_restored)
 
         canvas.addEventListener("mousemove", self._mousemove_proxy)
         canvas.addEventListener("mousedown", self._mousedown_proxy)
@@ -148,6 +153,10 @@ class WebWindow(Window):
         # browser's native context menu popping up on every right-click
         # would make that unusable.
         canvas.addEventListener("contextmenu", self._contextmenu_proxy)
+        canvas.addEventListener("webglcontextlost", self._contextlost_proxy)
+        canvas.addEventListener("webglcontextrestored", self._contextrestored_proxy)
+        js.document.addEventListener("pointerlockchange", self._lockchange_proxy)
+        js.document.addEventListener("pointerlockerror", self._lockerror_proxy)
         js.window.addEventListener("keydown", self._keydown_proxy)
         js.window.addEventListener("keyup", self._keyup_proxy)
         # See _on_paste()/get_clipboard_text() below for why this - not
@@ -158,6 +167,89 @@ class WebWindow(Window):
         self._mouse_pos = Vector(0, 0)
         self._mouse_down = [False, False, False]
         self._scroll_accum = Vector(0.0, 0.0)
+        self.pointer_locked = False
+        self._lock_wanted = False
+        self._lock_click_armed = False
+        self.context_lost = False
+
+    def _on_context_lost(self, event):
+        """The GPU dropped the WebGL context - the driver crashed, the GPU
+        ran out of memory, or the browser reclaimed it.
+
+        Worth naming loudly: every GL call afterwards fails quietly, so the
+        first thing anyone sees is some later, unrelated-looking error (a
+        shader that "fails to link" with an empty log, say) rather than the
+        thing that actually went wrong."""
+        from FreeBodyEngine import error
+        self.context_lost = True
+        error("The WebGL context was lost - the GPU process crashed, ran out "
+              "of memory, or the browser took it back. Everything drawn after "
+              "this point fails silently.")
+        event.preventDefault()        # lets the browser offer a restore
+
+    def _on_context_restored(self, event):
+        from FreeBodyEngine import warning
+        self.context_lost = False
+        warning("The WebGL context came back, but this session's GPU resources did not - reload the page.")
+
+    def request_pointer_lock(self):
+        """Asks for Pointer Lock, now if the browser will allow it and on the
+        next click if it won't.
+
+        A browser only grants `requestPointerLock()` inside a user gesture -
+        a real click handler, not a task scheduled afterwards. A game asks
+        for it from its own update, which runs in requestAnimationFrame, so
+        the request lands outside any gesture and is refused with nothing but
+        a console message. Arming a one-shot click listener turns that into
+        the behaviour every browser game has: click the page to capture the
+        mouse."""
+        self._lock_wanted = True
+        try:
+            self.canvas.requestPointerLock()
+        except Exception:
+            # Older browsers throw rather than firing pointerlockerror.
+            pass
+        if not self._lock_click_armed:
+            self._lock_click_armed = True
+            self.canvas.addEventListener("click", self._lockclick_proxy)
+
+    def release_pointer_lock(self):
+        """Drops the lock, and the pending request if it hasn't landed yet."""
+        self._lock_wanted = False
+        self._disarm_lock_click()
+        if js.document.pointerLockElement is not None:
+            js.document.exitPointerLock()
+
+    def _disarm_lock_click(self):
+        if self._lock_click_armed:
+            self._lock_click_armed = False
+            self.canvas.removeEventListener("click", self._lockclick_proxy)
+
+    def _on_lock_click(self, event):
+        """The click that actually gets the lock - this *is* the gesture."""
+        if self._lock_wanted and js.document.pointerLockElement is None:
+            try:
+                self.canvas.requestPointerLock()
+            except Exception:
+                pass
+
+    def _on_pointerlockchange(self, event):
+        """Pointer lock came or went - including the browser taking it away
+        when the player presses Escape, which the page never sees as a key."""
+        self.pointer_locked = js.document.pointerLockElement == self.canvas
+        if self.pointer_locked:
+            self._disarm_lock_click()
+        elif self._lock_wanted and not self._lock_click_armed:
+            # Escape (or losing focus) handed it back. The game still wants
+            # it, so re-arm: the next click takes it again, which is how
+            # every browser game behaves. `position_locked` is False until
+            # then, so the game knows not to treat the mouse as captured.
+            self._lock_click_armed = True
+            self.canvas.addEventListener("click", self._lockclick_proxy)
+
+    def _on_pointerlockerror(self, event):
+        from FreeBodyEngine import warning
+        warning("Pointer lock was refused - it will be requested again on the next click.")
 
     def _on_mousemove(self, event):
         # `event.clientX/clientY` are always CSS pixels, never scaled by
@@ -173,10 +265,22 @@ class WebWindow(Window):
         rect = self.canvas.getBoundingClientRect()
         scale_x = self.canvas.width / rect.width if rect.width else 1.0
         scale_y = self.canvas.height / rect.height if rect.height else 1.0
-        self._mouse_pos = Vector(
-            (event.clientX - rect.left) * scale_x,
-            (event.clientY - rect.top) * scale_y,
-        )
+        if self.pointer_locked:
+            # Under Pointer Lock the cursor doesn't move, so clientX/clientY
+            # stop changing and only movementX/movementY mean anything. The
+            # position becomes an unbounded virtual one, advanced by that
+            # motion - exactly what GLFW's CURSOR_DISABLED reports, so code
+            # that derives mouse-look by differencing `position` between
+            # frames (the normal way to do it) works the same on both.
+            self._mouse_pos += Vector(
+                (event.movementX or 0) * scale_x,
+                (event.movementY or 0) * scale_y,
+            )
+        else:
+            self._mouse_pos = Vector(
+                (event.clientX - rect.left) * scale_x,
+                (event.clientY - rect.top) * scale_y,
+            )
 
     def _on_mousedown(self, event):
         button = JS_MOUSE_BUTTON_MAP.get(event.button)
@@ -430,15 +534,37 @@ class WebMouse(Mouse):
         self.scroll_delta = Vector(0.0, 0.0)
 
     def lock_position(self):
-        """Requests Pointer Lock on the canvas - the browser equivalent of
-        a native cursor-lock (mouse movement keeps reporting deltas with
-        the system cursor hidden and pinned in place)."""
-        self.window.canvas.requestPointerLock()
+        """Locks the cursor to the canvas, hidden - Pointer Lock, the browser
+        equivalent of GLFW's CURSOR_DISABLED.
+
+        Like that one, `position` then keeps tracking movement as an
+        unbounded virtual position (see WebWindow._on_mousemove), so the
+        change between frames is the mouse's motion.
+
+        The lock itself may not start until the player's next click: a
+        browser only grants it inside a user gesture, and a game asking for
+        it from its own update is not in one. WebWindow.request_pointer_lock()
+        handles that; `position_locked` says whether it has actually taken
+        effect."""
+        self.window.canvas.style.cursor = "none"
+        self.window.request_pointer_lock()
 
     def unlock_position(self):
         """Releases a Pointer Lock previously requested by
-        lock_position()."""
-        js.document.exitPointerLock()
+        lock_position(), and shows the cursor again."""
+        self.window.release_pointer_lock()
+        self.window.canvas.style.cursor = "default"
+
+    @property
+    def position_locked(self) -> bool:
+        """Whether the cursor is locked right now.
+
+        Worth checking every frame on this backend: the browser hands the
+        lock back whenever the player presses Escape or the tab loses focus,
+        and it does that without the page seeing a key event at all. A game
+        that assumed it still held the lock would keep reading a frozen
+        cursor."""
+        return self.window.pointer_locked
 
     def get_pressed(self, button: int) -> bool:
         return self._pressed[button]
