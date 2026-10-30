@@ -6,14 +6,17 @@ Pyodide's default argument conversion actually behaves for buffer-protocol
 objects, rather than that assumption scattered across mesh/shader/texture/
 framebuffer code.
 
-Pyodide's documented default conversion turns a Python `bytes`/`bytearray`
-argument into a JS `Uint8Array` automatically the moment it crosses into a
-JS call - there is no direct "numpy array -> Float32Array" conversion, so
-every helper here goes through `.tobytes()` first, then reinterprets that
-Uint8Array's backing `ArrayBuffer` as whichever typed array WebGL2 actually
-wants (`Float32Array`/`Uint16Array`/`Uint32Array`/...). This is the
-standard, if slightly roundabout, way to hand real binary data to a WebGL
-call from Pyodide.
+There is no direct "numpy array -> Float32Array" conversion, so these
+allocate the typed array JS-side and fill it with `assign()`, which does a
+bulk memcpy out of any Python buffer.
+
+Not `Ctor.new(some_bytes)`, which looks equivalent and is the obvious way
+to write it: Pyodide treats a Python `bytes` argument as an *iterable* there
+and converts it one element at a time. For the 2 MB of an on-screen overlay
+that is **952 ms**, against 0.15 ms for the same copy through `assign()` -
+measured under Pyodide 0.26.4, a factor of about six thousand. Every mesh
+and every texture in a web build goes through this function, so that one
+line was most of what a browser spent its time doing.
 """
 import numpy as np
 import js
@@ -37,8 +40,9 @@ def to_typed_array(array: np.ndarray, dtype=np.float32):
     contiguous = np.ascontiguousarray(array, dtype=dtype)
     ctor_name = _DTYPE_TO_JS_CTOR[np.dtype(dtype)]
     ctor = getattr(js, ctor_name)
-    byte_view = js.Uint8Array.new(contiguous.tobytes())
-    return ctor.new(byte_view.buffer)
+    out = ctor.new(contiguous.size)
+    out.assign(memoryview(contiguous))
+    return out
 
 
 def to_js_matrix(matrix: np.ndarray):
