@@ -25,6 +25,8 @@ origin, uploads flipped as GL44 flips them - so engine and project code
 written for GL renders identically. The one flip happens when the
 window's image is copied to the swapchain at the end of the frame.
 """
+import struct
+
 import numpy as np
 import vulkan as vk
 
@@ -32,7 +34,7 @@ from FreeBodyEngine import get_service, service_exists, register_service_update,
 from FreeBodyEngine.core.update import UpdatePhase
 from FreeBodyEngine.graphics.renderer import Renderer
 from FreeBodyEngine.graphics.material import BlendMode
-from FreeBodyEngine.graphics.texture import Texture, TextureStack
+from FreeBodyEngine.graphics.texture import Texture, TextureStack, TypedTexture
 from FreeBodyEngine.graphics.vulkan.context import VulkanContext, Buffer
 from FreeBodyEngine.graphics.vulkan.swapchain import Presenter
 from FreeBodyEngine.graphics.vulkan.image import GpuImage, VulkanImage, FORMAT_INFO
@@ -181,6 +183,16 @@ class VulkanRenderer(Renderer):
         self._white.upload(b"\xff\xff\xff\xff")
         self._white_array = GpuImage(ctx, 1, 1, vk.VK_FORMAT_R8G8B8A8_UNORM, SAMPLED, array_view=True)
         self._white_array.upload(b"\xff\xff\xff\xff")
+        # What a sampler with no texture set reads. Each has to be the shape
+        # the shader's binding declares.
+        self._white_volume = GpuImage(ctx, 1, 1, vk.VK_FORMAT_R8G8B8A8_UNORM, SAMPLED, depth=1)
+        self._white_volume.upload(b"\xff\xff\xff\xff")
+        self._white_cube = GpuImage(ctx, 1, 1, vk.VK_FORMAT_R8G8B8A8_UNORM, SAMPLED, layers=6, cube=True)
+        for face in range(6):
+            self._white_cube.upload(b"\xff\xff\xff\xff", layer=face)
+        self._far_depth = GpuImage(ctx, 1, 1, vk.VK_FORMAT_D32_SFLOAT, vk.VK_IMAGE_USAGE_SAMPLED_BIT
+                                   | vk.VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+        self._far_depth.upload(struct.pack("<f", 1.0))
         register_service_update(UpdatePhase.LATE, self.present, priority=1000)
 
     def on_destroy(self):
@@ -195,7 +207,8 @@ class VulkanRenderer(Renderer):
         for pipeline in self._pipelines.values():
             vk.vkDestroyPipeline(ctx.device, pipeline, None)
         self.texture_manager.destroy()
-        for image in (self._white, self._white_array, self.window_target.color, self.window_target.depth):
+        for image in (self._white, self._white_array, self._white_volume, self._white_cube, self._far_depth,
+                      self.window_target.color, self.window_target.depth):
             image.destroy()
         self.uniform_ring.buffer.destroy()
         self.vertex_ring.buffer.destroy()
@@ -568,11 +581,13 @@ class VulkanRenderer(Renderer):
         for name, binding in shader.sampler_bindings.items():
             value = shader.textures.get(name)
             gpu = sampler = None
-            if isinstance(value, (Texture, TextureStack)):
+            if isinstance(value, (Texture, TextureStack, TypedTexture)):
                 gpu, sampler = tm.resolve(value.id)
             if gpu is None:
-                gpu = self._white_array if binding.get("texture_kind") == "textureStack" else self._white
-                sampler = tm.sampler(False, False, True)
+                kind = binding.get("texture_kind")
+                gpu = {"textureStack": self._white_array, "textureVolume": self._white_volume,
+                       "textureCube": self._white_cube, "textureShadow": self._far_depth}.get(kind, self._white)
+                sampler = tm.sampler(False, False, True, kind == "textureShadow")
             images.append((binding["binding"], gpu, sampler))
         return images
 

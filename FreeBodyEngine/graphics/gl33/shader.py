@@ -7,7 +7,7 @@ from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
 from FreeBodyEngine import warning
 from FreeBodyEngine import get_time
-from FreeBodyEngine.graphics.texture import Texture, TextureStack
+from FreeBodyEngine.graphics.texture import Texture, TextureStack, TextureCube, TextureShadow, TextureVolume
 from FreeBodyEngine.graphics.buffer import Buffer as DataBuffer
 from OpenGL.GL import *
 import numpy as np
@@ -33,6 +33,17 @@ GL_TYPE_NAMES = {
     GL_BOOL: "bool",
     GL_SAMPLER_2D: "sampler2D",
     GL_SAMPLER_2D_ARRAY: "sampler2DArray",
+    GL_SAMPLER_3D: "sampler3D",
+    GL_SAMPLER_CUBE: "samplerCube",
+    GL_SAMPLER_2D_SHADOW: "sampler2DShadow",
+}
+
+# The FBUSL types with no uv_rect to go with them: a GL sampler type, and the
+# Python class a uniform of it takes.
+_TYPED_SAMPLERS = {
+    GL_SAMPLER_3D: TextureVolume,
+    GL_SAMPLER_CUBE: TextureCube,
+    GL_SAMPLER_2D_SHADOW: TextureShadow,
 }
 
 @dataclass
@@ -138,7 +149,7 @@ def set_gl_uniform(loc, gl_type, val):
     elif gl_type == GL_FLOAT_MAT4:
         glUniformMatrix4fv(loc, 1, GL_FALSE, val)
 
-    elif gl_type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY):
+    elif gl_type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY, GL_SAMPLER_3D, GL_SAMPLER_CUBE, GL_SAMPLER_2D_SHADOW):
         if isinstance(val, int):
             glUniform1i(loc, val)
 
@@ -299,6 +310,10 @@ class GLShader(Shader):
             if isinstance(val, (int, TextureStack)):
                 return True
 
+        elif gl_type in _TYPED_SAMPLERS:
+            if isinstance(val, (int, _TYPED_SAMPLERS[gl_type])):
+                return True
+
         fb_error(f'Cannot set uniform "{name}" of type "{GL_TYPE_NAMES.get(gl_type, "Unknown")}" to value of type "{type(val).__name__}"')
         return False
 
@@ -365,14 +380,20 @@ class GLShader(Shader):
         found = getattr(self, '_texture_uniform_list', None)
         if found is None:
             found = [(name, uniform) for name, uniform in self.uniforms.items()
-                     if uniform.type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY)]
+                     if uniform.type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY) or uniform.type in _TYPED_SAMPLERS]
             self._texture_uniform_list = found
         return found
 
     def _bind_textures(self):
         texture_manager = get_service('renderer').texture_manager
         for name, uniform in self._texture_uniforms():
-            if uniform.type == GL_SAMPLER_2D:
+            if uniform.type in _TYPED_SAMPLERS:
+                value = self.uniform_cache[name]
+                slot = value.use() if isinstance(value, _TYPED_SAMPLERS[uniform.type]) else None
+                if slot is not None:
+                    glUniform1i(uniform.location, slot)
+
+            elif uniform.type == GL_SAMPLER_2D:
                 if uniform.size == 1:
                     texture = self.uniform_cache[name]
 

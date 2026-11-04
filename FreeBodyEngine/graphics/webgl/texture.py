@@ -4,7 +4,8 @@ import uuid
 import numpy as np
 from PIL import Image as PILImage
 
-from FreeBodyEngine.graphics.texture import TextureManager, Texture
+from FreeBodyEngine.graphics.texture import (TextureManager, Texture, TextureCube, TextureShadow, TextureVolume,
+                                             cube_pixels, volume_pixels)
 from FreeBodyEngine.graphics.webgl.interop import to_typed_array
 from FreeBodyEngine import warning, error as fb_error, get_service
 
@@ -52,6 +53,7 @@ class WebGL2TextureManager(TextureManager):
         for slot in range(self.next_texture_slot):
             gl.activeTexture(gl.TEXTURE0 + slot)
             gl.bindTexture(gl.TEXTURE_2D, None)
+            gl.bindSampler(slot, None)  # a shadow texture's comparison, if it held one
 
         self.texture_slots.clear()
         self.slot_textures.clear()
@@ -135,6 +137,76 @@ class WebGL2TextureManager(TextureManager):
         gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.NEAREST_MIPMAP_NEAREST if nearest else gl.LINEAR_MIPMAP_LINEAR)
         gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.NEAREST if nearest else gl.LINEAR)
 
+    def create_texture_volume(self, pixels) -> TextureVolume:
+        """See TextureManager.create_texture_volume()."""
+        gl = self.gl
+        data, width, height, depth, channels = volume_pixels(pixels)
+        tex = gl.createTexture()
+        gl.bindTexture(gl.TEXTURE_3D, tex)
+        internal, fmt = (gl.R8, gl.RED) if channels == 1 else (gl.RGBA8, gl.RGBA)
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1)
+        gl.texImage3D(gl.TEXTURE_3D, 0, internal, width, height, depth, 0, fmt, gl.UNSIGNED_BYTE,
+                      to_typed_array(data, dtype=np.uint8))
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4)
+        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+        gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        for axis in (gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R):
+            gl.texParameteri(gl.TEXTURE_3D, axis, gl.REPEAT)
+        id = self.gen_id()
+        self.typed_textures[id] = (gl.TEXTURE_3D, tex)
+        return TextureVolume(self, id)
+
+    def create_texture_cube(self, faces) -> TextureCube:
+        """See TextureManager.create_texture_cube(). Mipmapping an RGBA16F
+        texture needs it renderable, which is EXT_color_buffer_float."""
+        gl = self.gl
+        data, size, is_float = cube_pixels(faces)
+        if is_float:
+            gl.getExtension("EXT_color_buffer_float")
+        tex = gl.createTexture()
+        gl.bindTexture(gl.TEXTURE_CUBE_MAP, tex)
+        internal, kind, dtype = (gl.RGBA16F, gl.FLOAT, np.float32) if is_float else (gl.RGBA8, gl.UNSIGNED_BYTE, np.uint8)
+        for face in range(6):
+            gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, internal, size, size, 0, gl.RGBA, kind,
+                          to_typed_array(np.ascontiguousarray(data[face]), dtype=dtype))
+        gl.generateMipmap(gl.TEXTURE_CUBE_MAP)
+        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+        for axis in (gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R):
+            gl.texParameteri(gl.TEXTURE_CUBE_MAP, axis, gl.CLAMP_TO_EDGE)
+        id = self.gen_id()
+        self.typed_textures[id] = (gl.TEXTURE_CUBE_MAP, tex)
+        return TextureCube(self, id)
+
+    def wrap_shadow_texture(self, handle) -> TextureShadow:
+        """See TextureManager.wrap_shadow_texture(). Comparison lives on a
+        sampler object bound to the unit, since the same depth image may also
+        be read plainly - see graphics/gl_typed_textures.py."""
+        id = self.gen_id()
+        self.typed_textures[id] = (self.gl.TEXTURE_2D, handle)
+        return TextureShadow(self, id)
+
+    def bind_typed_texture(self, id):
+        """See TextureManager.bind_typed_texture()."""
+        gl = self.gl
+        entry = self.typed_textures.get(id)
+        if entry is None:
+            return None
+        target, tex = entry
+        slot = self._allocate_slot(id, target, tex)
+        if slot is not None and target == gl.TEXTURE_2D:
+            if getattr(self, "_compare_sampler", None) is None:
+                sampler = gl.createSampler()
+                gl.samplerParameteri(sampler, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE)
+                gl.samplerParameteri(sampler, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL)
+                gl.samplerParameteri(sampler, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+                gl.samplerParameteri(sampler, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+                gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+                gl.samplerParameteri(sampler, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+                self._compare_sampler = sampler
+            gl.bindSampler(slot, self._compare_sampler)
+        return slot
+
     def _create_texture_stack(self, rects):
         raise NotImplementedError(
             "Texture stacks (sampler2DArray) aren't supported by the web backend yet."
@@ -213,6 +285,9 @@ class WebGL2TextureManager(TextureManager):
 
     def _delete_texture(self, id):
         gl = self.gl
+        typed = self.typed_textures.pop(id, None)
+        if typed is not None and typed[0] != gl.TEXTURE_2D:  # a shadow texture's image is its framebuffer's
+            gl.deleteTexture(typed[1])
         slot = self.texture_slots.pop(id, None)
         if slot is not None:
             self.slot_textures.pop(slot, None)

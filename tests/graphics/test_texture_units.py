@@ -24,6 +24,7 @@ def _manager(module, monkeypatch, units=16):
     manager.standalone_textures = {}
     manager.atlas_textures = {}
     manager.texture_stacks = {}
+    manager.typed_textures = {}
     manager.texture_slots = {}
     manager.slot_textures = {}
     manager._external_ids = {}

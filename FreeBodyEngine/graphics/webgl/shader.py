@@ -15,7 +15,7 @@ import numpy as np
 from FreeBodyEngine.graphics.shader import Shader
 from FreeBodyEngine.graphics.webgl.generator import WebGL2Generator
 from FreeBodyEngine.graphics.webgl.interop import to_typed_array, to_js_matrix
-from FreeBodyEngine.graphics.texture import Texture
+from FreeBodyEngine.graphics.texture import Texture, TextureCube, TextureShadow, TextureVolume
 from FreeBodyEngine.graphics.color import Color
 from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import get_service, get_time, error as fb_error, warning
@@ -173,6 +173,8 @@ class WebGL2Shader(Shader):
             return isinstance(val, (int, Texture))
         elif gl_type == gl.SAMPLER_2D_ARRAY:
             return isinstance(val, int)
+        elif gl_type in self._typed_samplers():
+            return isinstance(val, (int, self._typed_samplers()[gl_type]))
 
         fb_error(f'Cannot set uniform "{name}" to value of type "{type(val).__name__}"')
         return False
@@ -219,6 +221,17 @@ class WebGL2Shader(Shader):
             "Uniform buffer blocks aren't supported by the web backend yet."
         )
 
+    def _typed_samplers(self):
+        """The sampler enums for FBUSL's uv_rect-less texture types, and the
+        Python class a uniform of each takes."""
+        found = getattr(self, "_typed_sampler_map", None)
+        if found is None:
+            gl = self.gl
+            found = {int(gl.SAMPLER_3D): TextureVolume, int(gl.SAMPLER_CUBE): TextureCube,
+                     int(gl.SAMPLER_2D_SHADOW): TextureShadow}
+            self._typed_sampler_map = found
+        return found
+
     def _bind_textures(self):
         """Binds every currently-cached sampler2D uniform to a texture
         unit - the WebGL2 equivalent of GLShader._bind_textures(), minus
@@ -227,6 +240,14 @@ class WebGL2Shader(Shader):
         gl = self.gl
         texture_manager = get_service('renderer').texture_manager
         for name, uniform in self.uniforms.items():
+            typed = self._typed_samplers().get(uniform.type)
+            if typed is not None:
+                value = self.uniform_cache.get(name)
+                slot = value.use() if isinstance(value, typed) else None
+                if slot is not None:
+                    gl.uniform1i(uniform.location, slot)
+                continue
+
             if uniform.type != gl.SAMPLER_2D:
                 continue
 

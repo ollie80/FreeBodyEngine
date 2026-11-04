@@ -1,6 +1,7 @@
 from FreeBodyEngine.graphics.texture import TextureManager, Texture, TextureStack, MAX_TEXTURE_STACK_SIZE, decode_image_bytes
 from FreeBodyEngine import warning
 from FreeBodyEngine import error as fb_error
+from FreeBodyEngine.graphics.gl_typed_textures import GLTypedTextures
 from OpenGL.GL import *
 import numpy as np
 from PIL import Image
@@ -8,7 +9,7 @@ import uuid
 import io
 
 
-class GLTextureManager(TextureManager):
+class GLTextureManager(GLTypedTextures, TextureManager):
     """The GL 3.3 implementation of TextureManager: owns the real GL texture
     objects behind every standalone/atlas/font-atlas/stack id, and does the
     actual `glActiveTexture`/`glBindTexture` slot bookkeeping (`texture_slots`/
@@ -434,6 +435,7 @@ class GLTextureManager(TextureManager):
 
         slot = self.next_texture_slot
         self.next_texture_slot += 1
+        self.release_compare_sampler(slot)
 
         self.texture_slots[id] = slot
         self.slot_textures[slot] = id
@@ -476,6 +478,7 @@ class GLTextureManager(TextureManager):
         return self.bind_texture(id)
 
     def _delete_texture(self, id):
+        self._delete_typed_texture(id)
 
         slot = self.texture_slots.pop(id, None)
 
