@@ -18,7 +18,8 @@ from PIL import Image
 
 from FreeBodyEngine import warning, error as fb_error, get_service
 from FreeBodyEngine.graphics.texture import (TextureManager, Texture, TextureStack, MAX_TEXTURE_STACK_SIZE,
-                                             decode_image_bytes)
+                                             TextureCube, TextureShadow, TextureVolume, cube_pixels,
+                                             decode_image_bytes, volume_pixels)
 from FreeBodyEngine.graphics.vulkan.image import GpuImage, mip_count
 
 SAMPLED = vk.VK_IMAGE_USAGE_SAMPLED_BIT | vk.VK_IMAGE_USAGE_TRANSFER_DST_BIT | vk.VK_IMAGE_USAGE_TRANSFER_SRC_BIT
@@ -31,6 +32,7 @@ class _Entry:
     nearest: bool = False
     clamp: bool = False
     kind: str = "2d"  # or "array"
+    compare: bool = False  # read by comparison: a shadow texture
 
     @property
     def gpu(self) -> GpuImage:
@@ -47,8 +49,8 @@ class VulkanTextureManager(TextureManager):
 
     # -- samplers -----------------------------------------------------------------
 
-    def sampler(self, nearest: bool, mipmapped: bool, clamp: bool):
-        key = (nearest, mipmapped, clamp)
+    def sampler(self, nearest: bool, mipmapped: bool, clamp: bool, compare: bool = False):
+        key = (nearest, mipmapped, clamp, compare)
         if key not in self._samplers:
             filt = vk.VK_FILTER_NEAREST if nearest else vk.VK_FILTER_LINEAR
             mode = vk.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE if clamp else vk.VK_SAMPLER_ADDRESS_MODE_REPEAT
@@ -56,6 +58,8 @@ class VulkanTextureManager(TextureManager):
                 magFilter=filt, minFilter=filt,
                 mipmapMode=vk.VK_SAMPLER_MIPMAP_MODE_NEAREST if nearest else vk.VK_SAMPLER_MIPMAP_MODE_LINEAR,
                 addressModeU=mode, addressModeV=mode, addressModeW=mode,
+                compareEnable=vk.VK_TRUE if compare else vk.VK_FALSE,
+                compareOp=vk.VK_COMPARE_OP_LESS_OR_EQUAL if compare else vk.VK_COMPARE_OP_NEVER,
                 maxLod=1000.0 if mipmapped else 0.0, borderColor=vk.VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE), None)
         return self._samplers[key]
 
@@ -64,7 +68,7 @@ class VulkanTextureManager(TextureManager):
         entry = self.entries.get(id)
         if entry is None:
             return None, None
-        return entry.gpu, self.sampler(entry.nearest, entry.mipmapped, entry.clamp)
+        return entry.gpu, self.sampler(entry.nearest, entry.mipmapped, entry.clamp, entry.compare)
 
     # -- creation ------------------------------------------------------------------
 
@@ -166,6 +170,44 @@ class VulkanTextureManager(TextureManager):
         a GpuImage, or a compute kernel's StorageImage."""
         return self._add(_Entry(handle))
 
+    def _add_typed(self, entry: _Entry, cls):
+        id = self.gen_id()
+        self.entries[id] = entry
+        self.typed_textures[id] = entry
+        return cls(self, id)
+
+    def create_texture_volume(self, pixels) -> TextureVolume:
+        """See TextureManager.create_texture_volume()."""
+        data, width, height, depth, channels = volume_pixels(pixels)
+        fmt = vk.VK_FORMAT_R8_UNORM if channels == 1 else vk.VK_FORMAT_R8G8B8A8_UNORM
+        gpu = GpuImage(self.ctx, width, height, fmt, SAMPLED, depth=depth)
+        gpu.upload(data.tobytes())
+        return self._add_typed(_Entry(gpu, kind="volume"), TextureVolume)
+
+    def create_texture_cube(self, faces) -> TextureCube:
+        """See TextureManager.create_texture_cube()."""
+        data, size, is_float = cube_pixels(faces)
+        fmt = vk.VK_FORMAT_R16G16B16A16_SFLOAT if is_float else vk.VK_FORMAT_R8G8B8A8_UNORM
+        mips = mip_count(size, size)
+        gpu = GpuImage(self.ctx, size, size, fmt, SAMPLED, mips=mips, layers=6, cube=True)
+        if is_float:
+            data = data.astype(np.float16)
+        for face in range(6):
+            gpu.upload(data[face].tobytes(), layer=face)
+        gpu.generate_mips()
+        return self._add_typed(_Entry(gpu, mipmapped=True, clamp=True, kind="cube"), TextureCube)
+
+    def wrap_shadow_texture(self, handle) -> TextureShadow:
+        """`handle` is a depth attachment, from get_attachment_texture(). See
+        TextureManager.wrap_shadow_texture()."""
+        for id, entry in self.typed_textures.items():
+            if entry.image is handle:
+                return TextureShadow(self, id)
+        return self._add_typed(_Entry(handle, clamp=True, kind="shadow", compare=True), TextureShadow)
+
+    def bind_typed_texture(self, id):
+        return self.bind_texture(id)
+
     # -- streaming (video frames) ---------------------------------------------------
 
     def create_stream_texture(self, width: int, height: int, channels: int = 3) -> Texture:
@@ -239,6 +281,7 @@ class VulkanTextureManager(TextureManager):
         self.standalone_textures.pop(id, None)
         self.atlas_textures.pop(id, None)
         self.texture_stacks.pop(id, None)
+        self.typed_textures.pop(id, None)
         if entry is not None:
             self._retire(entry.image)
 

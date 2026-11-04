@@ -30,6 +30,8 @@ vec4 fb_sample(sampler2D tex, vec2 texcoords, vec4 uv_rect) {{
         "call": {
             "$args[0].type$==texture": "fb_sample($args[0]$, $args[1]$, _ENGINE_$args[0]$_uv_rect)",
             "$args[0].type$==textureStack": "fb_sample($args[0]$, $args[1]$, $args[2]$, _ENGINE_$args[0]$_uv_rect)",
+            "$args[0].type$==textureVolume": "texture($args[0]$, $args[1]$)",
+            "$args[0].type$==textureCube": "texture($args[0]$, $args[1]$)",
         },
     },
 }
@@ -108,6 +110,9 @@ class WebGL2Generator(GL33Generator):
             "precision highp int;\n"
             "precision highp sampler2D;\n"
             "precision highp sampler2DArray;\n"
+            "precision highp sampler3D;\n"
+            "precision highp samplerCube;\n"
+            "precision highp sampler2DShadow;\n"
             # isampler2D has no default precision either, same as every
             # other sampler kind in GLSL ES - needed unconditionally (not
             # just for a raytrace/compute shader) since _ENGINE_buf_idx()

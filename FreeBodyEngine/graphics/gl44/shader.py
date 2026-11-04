@@ -7,7 +7,7 @@ from FreeBodyEngine.math import Vector, Vector3
 from FreeBodyEngine import error as fb_error
 from FreeBodyEngine import warning
 from FreeBodyEngine import get_time
-from FreeBodyEngine.graphics.texture import Texture, TextureStack
+from FreeBodyEngine.graphics.texture import Texture, TextureStack, TextureCube, TextureShadow, TextureVolume
 from FreeBodyEngine.graphics.buffer import Buffer as DataBuffer
 from OpenGL.GL import *
 import numpy as np
@@ -33,6 +33,17 @@ GL_TYPE_NAMES = {
     GL_BOOL: "bool",
     GL_SAMPLER_2D: "sampler2D",
     GL_SAMPLER_2D_ARRAY: "sampler2DArray",
+    GL_SAMPLER_3D: "sampler3D",
+    GL_SAMPLER_CUBE: "samplerCube",
+    GL_SAMPLER_2D_SHADOW: "sampler2DShadow",
+}
+
+# The FBUSL types with no uv_rect to go with them: a GL sampler type, and the
+# Python class a uniform of it takes.
+_TYPED_SAMPLERS = {
+    GL_SAMPLER_3D: TextureVolume,
+    GL_SAMPLER_CUBE: TextureCube,
+    GL_SAMPLER_2D_SHADOW: TextureShadow,
 }
 
 @dataclass
@@ -181,6 +192,9 @@ _UNIFORM_SETTERS = {
     GL_FLOAT_MAT4: _set_mat4,
     GL_SAMPLER_2D: _set_sampler,
     GL_SAMPLER_2D_ARRAY: _set_sampler,
+    GL_SAMPLER_3D: _set_sampler,
+    GL_SAMPLER_CUBE: _set_sampler,
+    GL_SAMPLER_2D_SHADOW: _set_sampler,
 }
 
 
@@ -275,7 +289,7 @@ class GL44Shader(Shader):
         # one sampler, every glyph, of every text draw, every frame.
         self._sampler_uniforms = [
             name for name, uniform in self.uniforms.items()
-            if uniform.type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY)
+            if uniform.type in (GL_SAMPLER_2D, GL_SAMPLER_2D_ARRAY) or uniform.type in _TYPED_SAMPLERS
         ]
 
         # Each sampler's companion uv_rect uniform, resolved to a location
@@ -363,6 +377,10 @@ class GL44Shader(Shader):
 
         elif gl_type == GL_SAMPLER_2D_ARRAY:
             if isinstance(val, (int, TextureStack)):
+                return True
+
+        elif gl_type in _TYPED_SAMPLERS:
+            if isinstance(val, (int, _TYPED_SAMPLERS[gl_type])):
                 return True
 
         fb_error(f'Cannot set uniform "{name}" of type "{GL_TYPE_NAMES.get(gl_type, "Unknown")}" to value of type "{type(val).__name__}"')
@@ -466,7 +484,13 @@ class GL44Shader(Shader):
         # time.
         for name in self._sampler_uniforms:
             uniform = self.uniforms[name]
-            if uniform.type == GL_SAMPLER_2D:
+            if uniform.type in _TYPED_SAMPLERS:
+                value = self.uniform_cache[name]
+                slot = value.use() if isinstance(value, _TYPED_SAMPLERS[uniform.type]) else None
+                if slot is not None:
+                    glUniform1i(uniform.location, slot)
+
+            elif uniform.type == GL_SAMPLER_2D:
                 if uniform.size == 1:
                     texture = self.uniform_cache[name]
 

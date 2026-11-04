@@ -39,8 +39,9 @@ OP = {
     "VectorShuffle": 79, "CompositeConstruct": 80, "CompositeExtract": 81,
     "CompositeInsert": 82, "CopyObject": 83,
     "ImageSampleImplicitLod": 87, "ImageSampleExplicitLod": 88,
-    "ImageRead": 98, "ImageWrite": 99,
-    "ConvertFToS": 110, "ConvertSToF": 111, "Bitcast": 124,
+    "ImageSampleDrefImplicitLod": 89, "ImageSampleDrefExplicitLod": 90,
+    "ImageFetch": 95, "ImageRead": 98, "ImageWrite": 99, "Image": 100, "ImageQuerySizeLod": 103,
+    "ConvertFToS": 110, "ConvertSToF": 111, "Bitcast": 124, "DPdx": 207, "DPdy": 208,
     "SNegate": 126, "FNegate": 127, "IAdd": 128, "FAdd": 129, "ISub": 130,
     "FSub": 131, "IMul": 132, "FMul": 133, "SDiv": 135, "FDiv": 136,
     "SRem": 138, "FRem": 140, "FMod": 141,
@@ -57,7 +58,7 @@ OP = {
     "EmitVertex": 218, "EndPrimitive": 219, "ControlBarrier": 224, "AtomicExchange": 229, "AtomicIAdd": 234,
     "AtomicSMin": 236, "AtomicSMax": 238,
     "LoopMerge": 246, "SelectionMerge": 247, "Label": 248, "Branch": 249,
-    "BranchConditional": 250, "Return": 253, "ReturnValue": 254, "Unreachable": 255,
+    "BranchConditional": 250, "Kill": 252, "Return": 253, "ReturnValue": 254, "Unreachable": 255,
     "TypeRayQueryKHR": 4472, "RayQueryInitializeKHR": 4473,
     "RayQueryTerminateKHR": 4474, "RayQueryProceedKHR": 4477,
     "RayQueryGetIntersectionTypeKHR": 4479,
@@ -75,6 +76,7 @@ OP_NAMES = {v: k for k, v in OP.items()}
 # Enumerants.
 CAP_SHADER = 1
 CAP_GEOMETRY = 2
+CAP_IMAGE_QUERY = 50
 CAP_RAY_QUERY = 4472
 STORAGE_UNIFORM_CONSTANT = 0
 STORAGE_INPUT = 1
@@ -118,6 +120,8 @@ MODE_OUTPUT_VERTICES = 26
 MODE_LOCAL_SIZE = 17
 IMAGE_OPERAND_LOD = 0x2
 DIM_2D = 1
+DIM_3D = 2
+DIM_CUBE = 3
 IMAGE_FORMATS = {"rgba32f": 1, "rgba16f": 2, "r32f": 3, "rgba8": 4, "rg32f": 6, "r32i": 24}
 SCOPE_DEVICE = 1
 SCOPE_WORKGROUP = 2
@@ -266,6 +270,12 @@ class Module:
         images are."""
         return self._type(("image_sampled", sampled_type, arrayed), "TypeImage", sampled_type, DIM_2D,
                           0, 1 if arrayed else 0, 0, 1, 0)
+
+    def type_image_sampled(self, sampled_type: int, dim: int, depth: bool = False) -> int:
+        """A volume, cube or depth image read through a sampler. `depth`
+        images are the ones comparison reads (OpImageSampleDref*)."""
+        return self._type(("image_sampled_dim", sampled_type, dim, depth), "TypeImage", sampled_type, dim,
+                          1 if depth else 0, 0, 0, 1, 0)
 
     def type_sampled_image(self, image_type: int) -> int:
         return self._type(("sampled_image", image_type), "TypeSampledImage", image_type)

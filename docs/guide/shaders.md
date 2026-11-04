@@ -34,6 +34,64 @@ def main() -> void:
   the same order - a vertex shader's outputs feed a fragment shader's
   inputs positionally, not by name.
 
+## Loops and `discard`
+
+`while` and Python's `for ... in range(...)` both work, with `break` and
+`continue`:
+
+```fbusl
+for i in range(8):            # also range(start, stop), range(start, stop, step)
+    if done:
+        break
+    total += sample_texel(Lut, ivec2(i, 0), 0).x
+```
+
+As in Python, `stop` is read once before the first iteration. `step` has to be a
+non-zero integer constant, because its sign sets the loop's direction. The loop
+variable belongs to the loop, so don't read it afterwards.
+
+`discard` is a statement that only exists in a fragment stage. It writes nothing
+for this fragment, depth included, and stops the shader for it. It's what cuts a
+leaf out of its card:
+
+```fbusl
+if sample(Leaf, uv).w < 0.5:
+    discard
+```
+
+## Reading textures
+
+| Type | Holds | Read with |
+|---|---|---|
+| `texture` | one image, maybe part of an atlas | `sample`, `sample_level`, `sample_texel` |
+| `textureStack` | layers of same-sized images | the same, with the layer index before the coordinate |
+| `textureVolume` | a block of voxels | `sample`, `sample_level`, `sample_texel`, by `vec3` |
+| `textureCube` | six faces | `sample`, `sample_level`, by direction |
+| `textureShadow` | a depth image, by comparison | `sample_shadow` |
+
+- **`sample(tex, uv)`** is the everyday read. It's filtered, and a fragment stage
+  picks the mip level from how fast `uv` moves across the screen. Other stages
+  read level 0.
+- **`sample_level(tex, uv, level)`** is filtered at a mip level you choose. 0 is
+  full size and fractions blend two levels. It does the same thing in every stage.
+- **`sample_texel(tex, coord, level)`** reads one exact texel by integer position,
+  unfiltered. Coordinates count from the corner `sample()` calls uv `(0, 0)`, and
+  within the texture's own rect when it's in an atlas.
+- **`sample_shadow(tex, uv, depth)`** returns how lit a point is: `0.0` when `depth`
+  is behind what the map holds, `1.0` when it's in front, and in between across
+  the four texels around `uv`.
+
+Volume, cube and shadow textures come from the renderer's `texture_manager`:
+
+```python
+tm = fb.get_service("renderer").texture_manager
+noise = tm.create_texture_volume(voxels)   # uint8: (depth, height, width) or (..., 4)
+sky = tm.create_texture_cube(faces)        # (6, size, size, 4), +x -x +y -y +z -z. Float keeps radiance past 1.
+shadow = tm.wrap_shadow_texture(framebuffer.get_attachment_texture("depth"))
+
+shader["Noise"] = noise
+```
+
 ## Materials
 
 A [`Material`][FreeBodyEngine.graphics.material.Material] pairs a compiled

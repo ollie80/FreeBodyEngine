@@ -106,6 +106,56 @@ class TextureStack:
         unit it's now bound to."""
         return self.manager._use_texture_stack(self.id)
 
+class TypedTexture:
+    """A texture FBUSL has its own type for beyond `texture`/`textureStack`.
+    Like Texture it holds only an id into its manager, and it has no uv_rect:
+    these never live in an atlas."""
+    def __init__(self, manager: 'TextureManager', id):
+        self.manager = manager
+        self.id = id
+
+    def use(self):
+        """Binds this texture for sampling and returns its texture unit."""
+        return self.manager.bind_typed_texture(self.id)
+
+
+class TextureVolume(TypedTexture):
+    """FBUSL's `textureVolume` - see TextureManager.create_texture_volume()."""
+
+
+class TextureCube(TypedTexture):
+    """FBUSL's `textureCube` - see TextureManager.create_texture_cube()."""
+
+
+class TextureShadow(TypedTexture):
+    """FBUSL's `textureShadow` - see TextureManager.wrap_shadow_texture()."""
+
+
+def volume_pixels(pixels) -> tuple:
+    """Checks a volume's pixels: uint8, shaped (depth, height, width) for one
+    channel or (depth, height, width, 4) for RGBA. Returns (contiguous array,
+    width, height, depth, channels)."""
+    data = np.ascontiguousarray(pixels)
+    if data.dtype != np.uint8 or data.ndim not in (3, 4) or (data.ndim == 4 and data.shape[3] not in (1, 4)):
+        raise ValueError("A volume texture wants uint8 pixels shaped (depth, height, width) or "
+                         f"(depth, height, width, 4), not {data.dtype} {data.shape}.")
+    channels = 1 if data.ndim == 3 else data.shape[3]
+    return data, data.shape[2], data.shape[1], data.shape[0], channels
+
+
+def cube_pixels(faces) -> tuple:
+    """Checks a cube's faces: shaped (6, size, size, 4) in +x -x +y -y +z -z
+    order, uint8 for colour or float for radiance. Returns (contiguous array,
+    size, is_float); float faces come back as float32."""
+    data = np.ascontiguousarray(faces)
+    if data.ndim != 4 or data.shape[0] != 6 or data.shape[1] != data.shape[2] or data.shape[3] != 4:
+        raise ValueError(f"A cube texture wants faces shaped (6, size, size, 4), not {data.shape}.")
+    is_float = np.issubdtype(data.dtype, np.floating)
+    if not is_float and data.dtype != np.uint8:
+        raise ValueError(f"A cube texture wants uint8 or float faces, not {data.dtype}.")
+    return (data.astype(np.float32) if is_float else data), data.shape[1], is_float
+
+
 class TextureManager:
     """Backend-agnostic owner of every texture resource (standalone images,
     atlas sub-images, MSDF font atlases, texture-array stacks). Concrete
@@ -120,6 +170,7 @@ class TextureManager:
         self.standalone_textures: dict[str, int] = {}
         self.texture_stacks: dict[str, int] = {}
         self.atlas_textures: dict[str, list[str, str]]= {} # {id, [graphicsID, fileID]}
+        self.typed_textures: dict = {}  # id -> whatever the backend needs, for TypedTextures
         self.current_texture = None
 
     def _create_standalone_texture(self, image_data: str):
@@ -151,6 +202,31 @@ class TextureManager:
 
     def _create_atlas_texture(self):
         """Gets a texture from an atlas."""
+
+    def create_texture_volume(self, pixels) -> TextureVolume:
+        """A block of voxels for FBUSL's `textureVolume`: uint8, shaped (depth,
+        height, width) or (depth, height, width, 4). Linear filtering, repeats
+        on every axis, no mipmaps."""
+        raise NotImplementedError
+
+    def create_texture_cube(self, faces) -> TextureCube:
+        """Six faces for FBUSL's `textureCube`: shaped (6, size, size, 4) in
+        +x -x +y -y +z -z order - uint8 for colour, float for radiance past
+        1.0. Mipmapped, so sample_level() can blur it, and filtered across
+        face edges on every backend."""
+        raise NotImplementedError
+
+    def wrap_shadow_texture(self, handle) -> TextureShadow:
+        """A framebuffer's depth attachment, from get_attachment_texture(), as
+        FBUSL's `textureShadow`. The image still belongs to the framebuffer,
+        and its plain depth stays readable as a `texture` too. Comparison is
+        less-or-equal, filtered between texels, clamped at the edges."""
+        raise NotImplementedError
+
+    def bind_typed_texture(self, id):
+        """Binds a TypedTexture and returns its texture unit, or None if `id`
+        doesn't exist."""
+        raise NotImplementedError
 
     def _delete_texture(self):
         pass

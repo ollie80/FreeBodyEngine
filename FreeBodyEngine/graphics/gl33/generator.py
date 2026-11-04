@@ -18,8 +18,48 @@ vec4 sample(sampler2D tex, vec2 texcoords, vec4 uv_rect) {{
 }}\n""",
         "call": {
             "$args[0].type$==texture": "sample($args[0]$, $args[1]$, _ENGINE_$args[0]$_uv_rect)",
-            "$args[0].type$==textureStack": "sample($args[0]$, $args[1]$, $args[2]$, _ENGINE_$args[0]$_uv_rect)"
+            "$args[0].type$==textureStack": "sample($args[0]$, $args[1]$, $args[2]$, _ENGINE_$args[0]$_uv_rect)",
+            "$args[0].type$==textureVolume": "texture($args[0]$, $args[1]$)",
+            "$args[0].type$==textureCube": "texture($args[0]$, $args[1]$)",
         }
+    },
+    "sample_level": {
+        "kind": "function",
+        "source": f"""
+vec4 _ENGINE_sample_level(sampler2D tex, vec2 uv, float level, vec4 rect) {{
+    return textureLod(tex, rect.xy + uv * rect.zw, level);
+}}
+
+vec4 _ENGINE_sample_level(sampler2DArray tex, int index, vec2 uv, float level, vec4 rects[{MAX_TEXTURE_STACK_SIZE}]) {{
+    return textureLod(tex, vec3(rects[index].xy + uv * rects[index].zw, float(index)), level);
+}}\n""",
+        "call": {
+            "$args[0].type$==texture": "_ENGINE_sample_level($args[0]$, $args[1]$, $args[2]$, _ENGINE_$args[0]$_uv_rect)",
+            "$args[0].type$==textureStack": "_ENGINE_sample_level($args[0]$, $args[1]$, $args[2]$, $args[3]$, _ENGINE_$args[0]$_uv_rect)",
+            "$args[0].type$==textureVolume": "textureLod($args[0]$, $args[1]$, $args[2]$)",
+            "$args[0].type$==textureCube": "textureLod($args[0]$, $args[1]$, $args[2]$)",
+        },
+    },
+    "sample_texel": {
+        "kind": "function",
+        "source": f"""
+vec4 _ENGINE_sample_texel(sampler2D tex, ivec2 coord, int level, vec4 rect) {{
+    return texelFetch(tex, ivec2(rect.xy * vec2(textureSize(tex, level))) + coord, level);
+}}
+
+vec4 _ENGINE_sample_texel(sampler2DArray tex, int index, ivec2 coord, int level, vec4 rects[{MAX_TEXTURE_STACK_SIZE}]) {{
+    ivec2 size = textureSize(tex, level).xy;
+    return texelFetch(tex, ivec3(ivec2(rects[index].xy * vec2(size)) + coord, index), level);
+}}\n""",
+        "call": {
+            "$args[0].type$==texture": "_ENGINE_sample_texel($args[0]$, $args[1]$, $args[2]$, _ENGINE_$args[0]$_uv_rect)",
+            "$args[0].type$==textureStack": "_ENGINE_sample_texel($args[0]$, $args[1]$, $args[2]$, $args[3]$, _ENGINE_$args[0]$_uv_rect)",
+            "$args[0].type$==textureVolume": "texelFetch($args[0]$, $args[1]$, $args[2]$)",
+        },
+    },
+    "sample_shadow": {
+        "kind": "function",
+        "call": {"": "texture($args[0]$, vec3($args[1]$, $args[2]$))"},
     },
     "VERTEX_POSITION": {"kind": "variable", "replace": "gl_Position"},
     "INSTANCE_ID": {"kind": "variable", "replace": "gl_InstanceID"},
@@ -36,6 +76,9 @@ vec4 sample(sampler2D tex, vec2 texcoords, vec4 uv_rect) {{
     "image": {"kind": "type", "replace": "sampler2D"},
     "image_load": {"kind": "function", "call": {"": "texelFetch($args[0]$, $args[1]$, 0)"}},
     "textureStack": {"kind": "type", "replace": "sampler2DArray"},
+    "textureVolume": {"kind": "type", "replace": "sampler3D"},
+    "textureCube": {"kind": "type", "replace": "samplerCube"},
+    "textureShadow": {"kind": "type", "replace": "sampler2DShadow"},
     "round": {"kind": "function", "call": {"": "int(round($args[0]$))"}},
     "EmitVertex": {"kind": "function", "call": {"": "EmitVertex()"}},
     "EndPrimitive": {"kind": "function", "call": {"": "EndPrimitive()"}},
@@ -351,6 +394,14 @@ bool trace_shadow(Ray ray, float max_t) {{
             return self.generate_if_statement(node)
         elif isinstance(node, fbusl.node.WhileStatement):
             return self.generate_while(node)
+        elif isinstance(node, fbusl.node.ForStatement):
+            return self.generate_for(node)
+        elif isinstance(node, fbusl.node.Break):
+            return "break"
+        elif isinstance(node, fbusl.node.Continue):
+            return "continue"
+        elif isinstance(node, fbusl.node.Discard):
+            return "discard"
         elif isinstance(node, fbusl.node.ArrayAccess):
             return self.generate_array_access(node)
         elif isinstance(node, fbusl.node.BufferBlock):
@@ -492,6 +543,20 @@ bool trace_shadow(Ray ray, float max_t) {{
     def generate_while(self, node: fbusl.node.WhileStatement):
         """Generates a `while` loop, recursively generating each statement in its body."""
         source = f"\nwhile ({self.generate_node(node.condition)}) {{\n"
+        for b_node in node.body:
+            stmt = self.generate_node(b_node).rstrip(";")
+            source += f"    {stmt};\n"
+        source += "}"
+        return source
+
+    def generate_for(self, node: fbusl.node.ForStatement):
+        """Generates `for i in range(...)` as a C-style loop, with `stop` held
+        in a second loop variable: range() evaluates it once, a C condition
+        would every iteration."""
+        name, end = node.name, f"_fb_end_{node.name}"
+        compare = "<" if node.step_value > 0 else ">"
+        source = (f"\nfor (int {name} = {self.generate_node(node.start)}, {end} = {self.generate_node(node.stop)}; "
+                  f"{name} {compare} {end}; {name} += {node.step_value}) {{\n")
         for b_node in node.body:
             stmt = self.generate_node(b_node).rstrip(";")
             source += f"    {stmt};\n"

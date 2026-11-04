@@ -47,9 +47,9 @@ for VulkanComputeShader to bind by name:
 """
 import fbusl
 from fbusl.node import (
-    ArrayAccess, BinOp, BufferBlock, Define, FuncCall, FunctionDef, Identifier, IfStatement,
-    InlineIf, Input, Literal, MemberAccess, Output, Return, Setter, SharedDecl, StructDef,
-    UnaryOp, Uniform, VarDecl, WhileStatement,
+    ArrayAccess, BinOp, Break, BufferBlock, Continue, Define, Discard, ForStatement, FuncCall, FunctionDef,
+    Identifier, IfStatement, InlineIf, Input, Literal, MemberAccess, Output, Return, Setter, SharedDecl,
+    StructDef, UnaryOp, Uniform, VarDecl, WhileStatement,
 )
 from FreeBodyEngine.graphics.texture import MAX_TEXTURE_STACK_SIZE
 from FreeBodyEngine.graphics.vulkan import spirv as sv
@@ -69,6 +69,9 @@ IMAGE_FORMAT = {"float": "r32f", "int": "r32i", "vec2": "rg32f", "vec4": "rgba32
 # trace_ray/trace_shadow ray flags.
 RAY_FLAG_OPAQUE = 0x1
 RAY_FLAG_TERMINATE_ON_FIRST_HIT = 0x4
+
+# Sampled image types with no uv_rect (see graphics_layout), and their shape.
+TYPED_TEXTURES = {"textureVolume": sv.DIM_3D, "textureCube": sv.DIM_CUBE, "textureShadow": sv.DIM_2D}
 
 # Vertices per input primitive, for a geometry stage's input arrays.
 GEOMETRY_INPUT_VERTICES = {"points": 1, "lines": 2, "lines_adjacency": 4, "triangles": 3,
@@ -94,6 +97,8 @@ def _walk(node):
         yield from _walk(node.body)
     if isinstance(node, (IfStatement, WhileStatement)):
         yield from _walk(node.condition)
+    if isinstance(node, ForStatement):
+        yield from _walk([node.start, node.stop])
     if isinstance(node, Setter):
         yield from _walk(node.node)
     if isinstance(node, Return):
@@ -125,6 +130,7 @@ class _Function:
         self.body: list[Instruction] = []
         self.terminated = False
         self.raw_types: dict[str, object] = {}  # declared types from the semantic scope
+        self.loops: list[tuple[int, int]] = []  # (continue label, merge label), innermost last
 
 
 class SPIRVGenerator(fbusl.generator.Generator):
@@ -291,7 +297,10 @@ class SPIRVGenerator(fbusl.generator.Generator):
             for node in tree:
                 if isinstance(node, Uniform):
                     t = _norm(node.type)
-                    if t in ("texture", "textureStack"):
+                    if t in TYPED_TEXTURES:
+                        if node.name not in {s for s, _ in samplers}:
+                            samplers.append((node.name, t))
+                    elif t in ("texture", "textureStack"):
                         if node.name not in {s for s, _ in samplers}:
                             samplers.append((node.name, t))
                             add(f"_ENGINE_{node.name}_uv_rect",
@@ -454,12 +463,15 @@ class SPIRVGenerator(fbusl.generator.Generator):
         self._declare_uniform_block([(name, t, None) for name, t in layout["uniforms"]])
 
         for name, kind in layout["samplers"]:
-            image = m.type_image_sampled_2d(m.type_float(), arrayed=(kind == "textureStack"))
+            if kind in TYPED_TEXTURES:
+                image = m.type_image_sampled(m.type_float(), TYPED_TEXTURES[kind], depth=(kind == "textureShadow"))
+            else:
+                image = m.type_image_sampled_2d(m.type_float(), arrayed=(kind == "textureStack"))
             sampled = m.type_sampled_image(image)
             binding = self._binding(name, "sampler", texture_kind=kind)
             var = self._resource_var(m.type_pointer(sv.STORAGE_UNIFORM_CONSTANT, sampled),
                                      sv.STORAGE_UNIFORM_CONSTANT, binding, name)
-            self.samplers[name] = {"var": var, "type": sampled, "kind": kind}
+            self.samplers[name] = {"var": var, "type": sampled, "image": image, "kind": kind}
 
         self._declare_buffers()
 
@@ -641,6 +653,8 @@ class SPIRVGenerator(fbusl.generator.Generator):
             yield from self._walk(node.body)
         if isinstance(node, (IfStatement, WhileStatement)):
             yield from self._walk(node.condition)
+        if isinstance(node, ForStatement):
+            yield from self._walk([node.start, node.stop])
         if isinstance(node, Setter):
             yield from self._walk(node.node)
         if isinstance(node, Return):
@@ -775,6 +789,14 @@ class SPIRVGenerator(fbusl.generator.Generator):
             self.if_statement(node)
         elif isinstance(node, WhileStatement):
             self.while_statement(node)
+        elif isinstance(node, ForStatement):
+            self.for_statement(node)
+        elif isinstance(node, Break):
+            self.terminate("Branch", self.ctx.loops[-1][1])
+        elif isinstance(node, Continue):
+            self.terminate("Branch", self.ctx.loops[-1][0])
+        elif isinstance(node, Discard):
+            self.terminate("Kill")
         elif isinstance(node, Return):
             if node.expression is None:
                 self.terminate("Return")
@@ -821,10 +843,44 @@ class SPIRVGenerator(fbusl.generator.Generator):
         cond, _ = self.expr(node.condition)
         self.terminate("BranchConditional", cond, body_label, merge)
         self.label(body_label)
+        self.ctx.loops.append((continue_label, merge))
         self.block(node.body)
+        self.ctx.loops.pop()
         if not self.ctx.terminated:
             self.terminate("Branch", continue_label)
         self.label(continue_label)
+        self.terminate("Branch", header)
+        self.label(merge)
+
+    def for_statement(self, node: ForStatement):
+        """`stop` goes in a variable of its own: range() reads it once."""
+        m = self.m
+        int_t = self.type_id("int")
+        if node.name not in self.ctx.vars:
+            self.ctx.vars[node.name] = (self.local_var(node.name, "int", node.name), "int")
+        counter = self.ctx.vars[node.name][0]
+        self.emit("Store", counter, self.expr(node.start)[0])
+        end = self.local_var(f"_fb_end_{node.name}", "int")
+        self.emit("Store", end, self.expr(node.stop)[0])
+
+        header, cond_label, body_label, continue_label, merge = (m.id() for _ in range(5))
+        self.terminate("Branch", header)
+        self.label(header)
+        self.emit("LoopMerge", merge, continue_label, 0)
+        self.terminate("Branch", cond_label)
+        self.label(cond_label)
+        compare = "SLessThan" if node.step_value > 0 else "SGreaterThan"
+        cond = self.op(self.type_id("bool"), compare, self.op(int_t, "Load", counter), self.op(int_t, "Load", end))
+        self.terminate("BranchConditional", cond, body_label, merge)
+        self.label(body_label)
+        self.ctx.loops.append((continue_label, merge))
+        self.block(node.body)
+        self.ctx.loops.pop()
+        if not self.ctx.terminated:
+            self.terminate("Branch", continue_label)
+        self.label(continue_label)
+        stepped = self.op(int_t, "IAdd", self.op(int_t, "Load", counter), m.constant_int(node.step_value))
+        self.emit("Store", counter, stepped)
         self.terminate("Branch", header)
         self.label(merge)
 
@@ -1119,6 +1175,12 @@ class SPIRVGenerator(fbusl.generator.Generator):
                 return self.op(rid, self._FLOAT_OPS[op], a, self.splat(b, lt)), result
         if lt == "float" and rt in VECTORS and op == "*":
             return self.op(rid, "VectorTimesScalar", b, a), result
+        if lt == "float" and rt in VECTORS:
+            return self.op(rid, self._FLOAT_OPS[op], self.splat(a, rt), b), result
+        if lt in VECTORS and VECTORS[lt][0] == "int":
+            return self.op(rid, self._INT_OPS[op], a, b if rt == lt else self.splat(b, lt)), result
+        if lt == "int" and rt in VECTORS and VECTORS[rt][0] == "int":
+            return self.op(rid, self._INT_OPS[op], self.splat(a, rt), b), result
         if lt in MATRICES and op == "*":
             if rt == "float":
                 return self.op(rid, "MatrixTimesScalar", a, b), result
@@ -1139,7 +1201,7 @@ class SPIRVGenerator(fbusl.generator.Generator):
 
     # == calls =================================================================
 
-    _UNARY_EXT = {"sqrt": "Sqrt", "floor": "Floor", "fract": "Fract", "sin": "Sin", "cos": "Cos",
+    _UNARY_EXT = {"sqrt": "Sqrt", "floor": "Floor", "ceil": "Ceil", "fract": "Fract", "sin": "Sin", "cos": "Cos",
                   "tan": "Tan", "sign": "FSign", "abs": "FAbs", "exp": "Exp", "log": "Log",
                   "acos": "Acos", "asin": "Asin", "normalize": "Normalize"}
     _UNSUPPORTED = {"image_store", "ray_aabb", "ray_triangle"}
@@ -1153,8 +1215,12 @@ class SPIRVGenerator(fbusl.generator.Generator):
         if name in self.functions:
             return self.user_call(node)
 
-        if name == "sample":
+        if name in ("sample", "sample_level"):
             return self.sample(node)
+        if name == "sample_texel":
+            return self.sample_texel(node)
+        if name == "sample_shadow":
+            return self.sample_shadow(node)
 
         if name in ("EmitVertex", "EndPrimitive", "input_position"):
             if self.shader_type != fbusl.ShaderType.GEOMETRY:
@@ -1199,6 +1265,11 @@ class SPIRVGenerator(fbusl.generator.Generator):
         if name in VECTORS:
             if len(ids) == 1 and types[0] in ("float", "int"):
                 return self.splat(ids[0], name), name
+            if len(ids) == 1 and types[0] == name:
+                return ids[0], name
+            if len(ids) == 1 and types[0] in VECTORS and VECTORS[types[0]][1] == VECTORS[name][1]:
+                convert = "ConvertSToF" if VECTORS[name][0] == "float" else "ConvertFToS"
+                return self.op(self.type_id(name), convert, ids[0]), name
             return self.op(self.type_id(name), "CompositeConstruct", *ids), name
         if name in MATRICES:
             n = MATRICES[name]
@@ -1229,13 +1300,22 @@ class SPIRVGenerator(fbusl.generator.Generator):
             if len(ids) == 1:
                 return self.ext("float", "Atan", ids[0]), "float"
             return self.ext("float", "Atan2", ids[0], ids[1]), "float"
+        if name in ("dFdx", "dFdy"):
+            return self.op(self.type_id(result), "DPdx" if name == "dFdx" else "DPdy", ids[0]), result
+        if name == "mod":
+            y = self.splat(ids[1], result) if types[1] == "float" and result != "float" else ids[1]
+            return self.op(self.type_id(result), "FMod", ids[0], y), result
+        if name == "step":
+            edge = self.splat(ids[0], result) if types[0] == "float" and result != "float" else ids[0]
+            return self.ext(result, "Step", edge, ids[1]), result
         if name in ("max", "min"):
             scalar = VECTORS[types[0]][0] if types[0] in VECTORS else types[0]
             inst = {"max": "FMax", "min": "FMin"}[name] if scalar == "float" else {"max": "SMax", "min": "SMin"}[name]
-            return self.ext(result, inst, ids[0], ids[1]), result
+            other = self.splat(ids[1], types[0]) if types[0] in VECTORS and types[1] == "float" else ids[1]
+            return self.ext(result, inst, ids[0], other), result
         if name == "clamp":
             lo, hi = ids[1], ids[2]
-            if types[0] in VECTORS:
+            if types[0] in VECTORS and types[1] == "float":
                 lo, hi = self.splat(lo, types[0]), self.splat(hi, types[0])
             return self.ext(result, "FClamp", ids[0], lo, hi), result
         if name == "mix":
@@ -1244,7 +1324,10 @@ class SPIRVGenerator(fbusl.generator.Generator):
                 a = self.splat(a, types[0])
             return self.ext(result, "FMix", ids[0], ids[1], a), result
         if name == "smoothstep":
-            return self.ext("float", "SmoothStep", ids[0], ids[1], ids[2]), "float"
+            lo, hi = ids[0], ids[1]
+            if types[2] in VECTORS and types[0] == "float":
+                lo, hi = self.splat(lo, types[2]), self.splat(hi, types[2])
+            return self.ext(result, "SmoothStep", lo, hi, ids[2]), result
         if name == "round":
             rounded = self.ext("float", "Round", ids[0])
             return self.op(self.type_id("int"), "ConvertFToS", rounded), "int"
@@ -1269,39 +1352,88 @@ class SPIRVGenerator(fbusl.generator.Generator):
 
         fbusl.fbusl_error(f"The SPIR-V backend has no lowering for '{name}'.", node.pos)
 
-    def sample(self, node: FuncCall):
-        """sample(tex, uv) / sample(stack, index, uv): reads through the
-        texture's sub-rect - uv_rect.xy + uv * uv_rect.zw, with uv_rect the
-        `_ENGINE_<name>_uv_rect` uniform the GL backends use too."""
-        m = self.m
+    def _texture_arg(self, node: FuncCall) -> dict:
         tex = node.args[0]
         if not (isinstance(tex, Identifier) and tex.value in self.samplers):
-            fbusl.fbusl_error("sample()'s first argument must be a `texture` or `textureStack` uniform.", node.pos)
-        info = self.samplers[tex.value]
+            fbusl.fbusl_error(f"{node.name}()'s first argument must be a texture @uniform.", node.pos)
+        return {**self.samplers[tex.value], "name": tex.value}
+
+    def _uv_rect(self, info: dict, index=None) -> int:
+        """The texture's `_ENGINE_<name>_uv_rect` uniform (a stack has one per
+        layer) - the sub-rect the GL backends remap through too."""
+        m = self.m
+        vec4 = self.type_id("vec4")
+        member, _ = self.uniform_members[f"_ENGINE_{info['name']}_uv_rect"]
+        chain = [m.constant_int(member)] if index is None else [m.constant_int(member), index]
+        return self.op(vec4, "Load", self.op(m.type_pointer(sv.STORAGE_UNIFORM, vec4), "AccessChain", self.ubo_var, *chain))
+
+    def sample(self, node: FuncCall):
+        """sample(tex, uv) and sample_level(tex, uv, level), and the same with
+        a stack's index before the uv. A `texture` or stack reads through its
+        sub-rect, uv_rect.xy + uv * uv_rect.zw; a volume or cube has none."""
+        m = self.m
+        info = self._texture_arg(node)
         vec2, vec4, f = self.type_id("vec2"), self.type_id("vec4"), self.type_id("float")
-        rect_name = f"_ENGINE_{tex.value}_uv_rect"
-        member, _ = self.uniform_members[rect_name]
-        if info["kind"] == "texture":
-            uv, _ = self.expr(node.args[1])
-            ptr = self.op(m.type_pointer(sv.STORAGE_UNIFORM, vec4), "AccessChain", self.ubo_var, m.constant_int(member))
-            index = None
+        args = list(node.args[1:])
+        level = self.expr(args.pop())[0] if node.name == "sample_level" else None
+        if info["kind"] in TYPED_TEXTURES:
+            coord, _ = self.expr(args[0])
         else:
-            index, _ = self.expr(node.args[1])
-            uv, _ = self.expr(node.args[2])
-            ptr = self.op(m.type_pointer(sv.STORAGE_UNIFORM, vec4), "AccessChain", self.ubo_var,
-                          m.constant_int(member), index)
-        rect = self.op(vec4, "Load", ptr)
-        origin = self.op(vec2, "VectorShuffle", rect, rect, 0, 1)
-        extent = self.op(vec2, "VectorShuffle", rect, rect, 2, 3)
-        coord = self.op(vec2, "FAdd", origin, self.op(vec2, "FMul", uv, extent))
-        if index is not None:
-            coord = self.op(self.type_id("vec3"), "CompositeConstruct", coord, self.op(f, "ConvertSToF", index))
+            index = self.expr(args[0])[0] if info["kind"] == "textureStack" else None
+            uv, _ = self.expr(args[-1])
+            rect = self._uv_rect(info, index)
+            origin = self.op(vec2, "VectorShuffle", rect, rect, 0, 1)
+            extent = self.op(vec2, "VectorShuffle", rect, rect, 2, 3)
+            coord = self.op(vec2, "FAdd", origin, self.op(vec2, "FMul", uv, extent))
+            if index is not None:
+                coord = self.op(self.type_id("vec3"), "CompositeConstruct", coord, self.op(f, "ConvertSToF", index))
         sampled = self.op(info["type"], "Load", info["var"])
-        if self.shader_type == fbusl.ShaderType.FRAGMENT:
+        if level is None and self.shader_type == fbusl.ShaderType.FRAGMENT:
             return self.op(vec4, "ImageSampleImplicitLod", sampled, coord), "vec4"
         # No derivatives outside a fragment shader, so the mip level is explicit.
         return self.op(vec4, "ImageSampleExplicitLod", sampled, coord, sv.IMAGE_OPERAND_LOD,
-                       m.constant_float(0.0)), "vec4"
+                       m.constant_float(0.0) if level is None else level), "vec4"
+
+    def sample_texel(self, node: FuncCall):
+        """sample_texel(tex, coord, level): one texel, counted from the corner
+        of the texture's sub-rect - so the rect's origin, a fraction of the
+        image, is scaled by that mip's size in texels and added."""
+        m = self.m
+        info = self._texture_arg(node)
+        ivec2, vec2 = self.type_id("ivec2"), self.type_id("vec2")
+        args = list(node.args[1:])
+        level, _ = self.expr(args.pop())
+        coord, _ = self.expr(args.pop())
+        image = self.op(info["image"], "Image", self.op(info["type"], "Load", info["var"]))
+        if info["kind"] != "textureVolume":
+            index = self.expr(args[0])[0] if info["kind"] == "textureStack" else None
+            m.capability(sv.CAP_IMAGE_QUERY)
+            if index is None:
+                size = self.op(ivec2, "ImageQuerySizeLod", image, level)
+            else:
+                full = self.op(self.type_id("ivec3"), "ImageQuerySizeLod", image, level)
+                size = self.op(ivec2, "VectorShuffle", full, full, 0, 1)
+            rect = self._uv_rect(info, index)
+            origin = self.op(vec2, "VectorShuffle", rect, rect, 0, 1)
+            scaled = self.op(vec2, "FMul", origin, self.op(vec2, "ConvertSToF", size))
+            coord = self.op(ivec2, "IAdd", self.op(ivec2, "ConvertFToS", scaled), coord)
+            if index is not None:
+                coord = self.op(self.type_id("ivec3"), "CompositeConstruct", coord, index)
+        return self.op(self.type_id("vec4"), "ImageFetch", image, coord, sv.IMAGE_OPERAND_LOD, level), "vec4"
+
+    def sample_shadow(self, node: FuncCall):
+        """sample_shadow(tex, uv, depth): the sampler does the comparing - see
+        VulkanTextureManager.wrap_shadow_texture()."""
+        m = self.m
+        info = self._texture_arg(node)
+        f = self.type_id("float")
+        uv, _ = self.expr(node.args[1])
+        depth, _ = self.expr(node.args[2])
+        sampled = self.op(info["type"], "Load", info["var"])
+        if self.shader_type == fbusl.ShaderType.FRAGMENT:
+            return self.op(f, "ImageSampleDrefImplicitLod", sampled, uv, depth), "float"
+        return self.op(f, "ImageSampleDrefExplicitLod", sampled, uv, depth, sv.IMAGE_OPERAND_LOD,
+                       m.constant_float(0.0)), "float"
 
     def user_call(self, node: FuncCall):
         sig = self.functions[node.name]

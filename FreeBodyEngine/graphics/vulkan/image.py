@@ -65,9 +65,11 @@ def image_barrier(cmd, image, old_layout, new_layout, aspect, mip=0, mip_count=1
 
 class GpuImage:
     def __init__(self, ctx, width: int, height: int, fmt: int, usage: int, mips: int = 1, layers: int = 1,
-                 array_view: bool = False):
+                 array_view: bool = False, depth: int = 0, cube: bool = False):
+        """`depth` > 0 makes a 3D image; `cube` a six-layer image viewed as a cube."""
         self.ctx = ctx
         self.width, self.height = max(int(width), 1), max(int(height), 1)
+        self.depth = max(int(depth), 1)
         self.format, self.mips, self.layers = fmt, mips, layers
         if fmt in DEPTH_FORMATS:
             self.aspect = vk.VK_IMAGE_ASPECT_DEPTH_BIT
@@ -78,8 +80,9 @@ class GpuImage:
             self.aspect = self.view_aspect = vk.VK_IMAGE_ASPECT_COLOR_BIT
         self.is_depth = fmt in DEPTH_FORMATS
         self.handle = vk.vkCreateImage(ctx.device, vk.VkImageCreateInfo(
-            imageType=vk.VK_IMAGE_TYPE_2D, format=fmt,
-            extent=vk.VkExtent3D(width=self.width, height=self.height, depth=1),
+            flags=vk.VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT if cube else 0,
+            imageType=vk.VK_IMAGE_TYPE_3D if depth else vk.VK_IMAGE_TYPE_2D, format=fmt,
+            extent=vk.VkExtent3D(width=self.width, height=self.height, depth=self.depth),
             mipLevels=mips, arrayLayers=layers, samples=vk.VK_SAMPLE_COUNT_1_BIT,
             tiling=vk.VK_IMAGE_TILING_OPTIMAL, usage=usage, sharingMode=vk.VK_SHARING_MODE_EXCLUSIVE,
             initialLayout=vk.VK_IMAGE_LAYOUT_UNDEFINED), None)
@@ -90,7 +93,9 @@ class GpuImage:
         vk.vkBindImageMemory(ctx.device, self.handle, self.memory, 0)
         self.view = vk.vkCreateImageView(ctx.device, vk.VkImageViewCreateInfo(
             image=self.handle,
-            viewType=vk.VK_IMAGE_VIEW_TYPE_2D_ARRAY if (layers > 1 or array_view) else vk.VK_IMAGE_VIEW_TYPE_2D,
+            viewType=(vk.VK_IMAGE_VIEW_TYPE_CUBE if cube else vk.VK_IMAGE_VIEW_TYPE_3D if depth
+                      else vk.VK_IMAGE_VIEW_TYPE_2D_ARRAY if (layers > 1 or array_view)
+                      else vk.VK_IMAGE_VIEW_TYPE_2D),
             format=fmt, subresourceRange=vk.VkImageSubresourceRange(
                 aspectMask=self.view_aspect, baseMipLevel=0, levelCount=mips, baseArrayLayer=0, layerCount=layers)),
             None)
@@ -119,12 +124,18 @@ class GpuImage:
                                      imageSubresource=vk.VkImageSubresourceLayers(
                                          aspectMask=self.aspect, mipLevel=0, baseArrayLayer=layer, layerCount=1),
                                      imageOffset=vk.VkOffset3D(0, 0, 0),
-                                     imageExtent=vk.VkExtent3D(self.width, self.height, 1))])
+                                     imageExtent=vk.VkExtent3D(self.width, self.height, self.depth))])
             if generate_mips and self.mips > 1:
                 self._generate_mips(cmd)
             else:
                 self.transition(cmd, vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
         staging.destroy()
+
+    def generate_mips(self):
+        """Fills every smaller mip from level 0, once all layers are uploaded."""
+        with self.ctx.commands() as cmd:
+            self.transition(cmd, vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+            self._generate_mips(cmd)
 
     def _generate_mips(self, cmd):
         """Downsamples level 0 into every smaller level with blits - what
